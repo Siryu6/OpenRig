@@ -1,0 +1,2 @@
+# Firmware settings added to config.txt, kept by system updates. E.g. for
+# a sound HAT: dtoverlay=pisound

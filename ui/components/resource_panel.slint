@@ -1,0 +1,231 @@
+import { Theme } from "../theme.slint";
+import { ResourceStatus } from "../types.slint";
+import { Icon, Button } from "controls.slint";
+
+// Label, value text and a horizontal gauge (fraction 0..1, -1 = unknown)
+component Gauge inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <float> fraction: -1;
+    // Optional second marker (e.g. peak load)
+    in property <float> marker: -1;
+    in property <color> fill: Theme.success;
+
+    spacing: 4px;
+    HorizontalLayout {
+        Text {
+            text: root.label;
+            color: Theme.text-secondary;
+            font-size: Theme.font-small;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: root.value;
+            color: root.fraction < 0 ? Theme.text-muted : Theme.text-primary;
+            font-size: Theme.font-small;
+            font-weight: Theme.weight-semibold;
+        }
+    }
+    track := Rectangle {
+        height: 6px;
+        border-radius: 3px;
+        background: Theme.surface-hover;
+        Rectangle {
+            x: 0;
+            width: track.width * clamp(root.fraction, 0, 1);
+            border-radius: 3px;
+            background: root.fill;
+            animate width { duration: 300ms; }
+        }
+        if root.marker >= 0: Rectangle {
+            x: track.width * clamp(root.marker, 0, 1) - 1px;
+            width: 2px;
+            height: 10px;
+            y: -2px;
+            background: Theme.text-primary;
+            animate x { duration: 300ms; }
+        }
+    }
+}
+
+// Small fact: caption above a value
+component Fact inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <color> value-color: Theme.text-primary;
+    spacing: 2px;
+    horizontal-stretch: 1;
+    Text {
+        text: root.label;
+        color: Theme.text-muted;
+        font-size: Theme.font-caption;
+        font-weight: Theme.weight-bold;
+    }
+    Text {
+        text: root.value;
+        color: root.value-color;
+        font-size: Theme.font-small;
+        font-weight: Theme.weight-semibold;
+        overflow: elide;
+    }
+}
+
+// Modal detail view of the resource monitor
+export component ResourcePanel inherits Rectangle {
+    in property <bool> show: false;
+    in property <ResourceStatus> status;
+    in property <bool> audio-running: false;
+    callback close();
+
+    // Colour for a value against warning / critical thresholds
+    pure function tone(value: float, warning: float, critical: float) -> color {
+        if (value >= critical) {
+            return Theme.danger;
+        }
+        if (value >= warning) {
+            return Theme.warning;
+        }
+        return Theme.success;
+    }
+
+    width: 100%;
+    height: 100%;
+    visible: root.show;
+    background: Theme.scrim;
+
+    // Tap outside the card closes the panel
+    TouchArea {
+        clicked => {
+            root.close();
+        }
+    }
+
+    card := Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: min(parent.width - 32px, 460px);
+        height: min(parent.height - 24px, content.preferred-height);
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        clip: true;
+
+        // Swallow taps on the card
+        TouchArea { }
+
+        content := VerticalLayout {
+            padding: Theme.space-lg;
+            spacing: Theme.space-md;
+
+            HorizontalLayout {
+                spacing: Theme.space-sm;
+                Text {
+                    text: "System resources";
+                    color: Theme.text-primary;
+                    font-size: Theme.font-title;
+                    font-weight: Theme.weight-semibold;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Button {
+                    icon: "close";
+                    variant: "ghost";
+                    clicked => {
+                        root.close();
+                    }
+                }
+            }
+
+            // Overall state
+            Rectangle {
+                height: 36px;
+                border-radius: Theme.radius-md;
+                background: root.status.level == 2 ? Theme.danger-soft
+                    : root.status.level == 1 ? Theme.warning-soft : Theme.success-soft;
+                HorizontalLayout {
+                    padding-left: Theme.space-md;
+                    padding-right: Theme.space-md;
+                    spacing: Theme.space-sm;
+                    VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            name: root.status.level == 0 ? "check" : "info";
+                            size: 16px;
+                            color: root.status.level == 2 ? Theme.danger
+                                : root.status.level == 1 ? Theme.warning : Theme.success;
+                        }
+                    }
+                    Text {
+                        text: root.status.message != "" ? root.status.message
+                            : root.audio-running ? "All good: headroom available" : "Audio engine not running";
+                        color: Theme.text-primary;
+                        font-size: Theme.font-small;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            Gauge {
+                label: "DSP load (effects)";
+                value: root.status.dsp-load < 0 ? "n/a"
+                    : round(root.status.dsp-load * 100) + "%  ·  peak " + round(root.status.dsp-peak * 100) + "%";
+                fraction: root.status.dsp-load;
+                marker: root.status.dsp-peak;
+                fill: root.tone(max(root.status.dsp-load, root.status.dsp-peak * 0.9), 0.7, 0.9);
+            }
+            Gauge {
+                label: "JACK total load";
+                value: root.status.jack-load < 0 ? "n/a" : round(root.status.jack-load * 100) + "%";
+                fraction: root.status.jack-load;
+                fill: root.tone(root.status.jack-load, 0.7, 0.9);
+            }
+            Gauge {
+                label: "CPU";
+                value: root.status.cpu < 0 ? "n/a"
+                    : round(root.status.cpu * 100) + "%  ·  busiest core " + round(root.status.cpu-max-core * 100) + "%";
+                fraction: root.status.cpu;
+                marker: root.status.cpu-max-core;
+                fill: root.tone(root.status.cpu-max-core, 0.8, 0.95);
+            }
+            Gauge {
+                // Scale 30-90 °C: the Pi throttles from 80-85 °C
+                label: "Temperature";
+                value: root.status.temperature < 0 ? "n/a" : round(root.status.temperature) + " °C";
+                fraction: root.status.temperature < 0 ? -1 : (root.status.temperature - 30) / 60;
+                fill: root.tone(root.status.temperature, 70, 80);
+            }
+            Gauge {
+                label: "Memory";
+                value: root.status.memory-total-mb <= 0 ? "n/a"
+                    : round(root.status.memory-used-mb / 102.4) / 10 + " / " + round(root.status.memory-total-mb / 102.4) / 10 + " GB";
+                fraction: root.status.memory-total-mb <= 0 ? -1 : root.status.memory-used-mb / root.status.memory-total-mb;
+                fill: root.tone(root.status.memory-used-mb / max(1, root.status.memory-total-mb), 0.8, 0.9);
+            }
+
+            HorizontalLayout {
+                spacing: Theme.space-md;
+                Fact {
+                    label: "DROPOUTS";
+                    value: root.audio-running ? root.status.xruns : "n/a";
+                    value-color: root.status.xruns > 0 ? Theme.warning : Theme.text-primary;
+                }
+                Fact {
+                    label: "LATENCY";
+                    value: root.status.latency-ms < 0 ? "n/a"
+                        : round(root.status.latency-ms * 10) / 10 + " ms";
+                }
+                Fact {
+                    label: "BUFFER";
+                    value: root.status.buffer-info != "" ? root.status.buffer-info : "n/a";
+                }
+                Fact {
+                    label: "POWER / CLOCK";
+                    value: root.status.throttling != "" ? root.status.throttling : "n/a";
+                    value-color: root.status.throttling == "OK" || root.status.throttling == "" ? Theme.text-primary : Theme.danger;
+                }
+            }
+        }
+    }
+}

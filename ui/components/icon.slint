@@ -1,0 +1,72 @@
+import { Theme } from "../theme.slint";
+
+// Vector icon set (24x24 grid, 2px strokes) drawn with Path so it renders the
+// same everywhere, without depending on emoji / symbol fonts.
+export component Icon {
+    in property <string> name;
+    in property <color> color: Theme.text-primary;
+    in property <length> size: Theme.icon-size;
+    in property <length> stroke: 2px;
+
+    width: root.size;
+    height: root.size;
+
+    // Icons drawn as solid shapes instead of outlines
+    private property <bool> filled: root.name == "play" || root.name == "stop" || root.name == "record"
+        || root.name == "menu" || root.name == "dot";
+
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: 24;
+        viewbox-height: 24;
+        fill: root.filled ? root.color : transparent;
+        stroke: root.filled ? transparent : root.color;
+        stroke-width: root.stroke;
+        commands:
+            root.name == "rack" ? "M4 7 H20 M4 17 H20 M9 4 V10 M15 14 V20" :
+            root.name == "presets" ? "M4 7 V18 Q4 19 5 19 H19 Q20 19 20 18 V9 Q20 8 19 8 H12 L10 5 H5 Q4 5 4 6 Z" :
+            root.name == "scenes" ? "M4 4 H10 V10 H4 Z M14 4 H20 V10 H14 Z M4 14 H10 V20 H4 Z M14 14 H20 V20 H14 Z" :
+            root.name == "tuner" ? "M3.5 17 A8.5 8.5 0 0 1 20.5 17 M12 17 L16 10 M3 20 H21" :
+            root.name == "looper" ? "M17 3 L20 6 L17 9 M4 12 V11 Q4 6 9 6 H20 M7 21 L4 18 L7 15 M20 12 V13 Q20 18 15 18 H4" :
+            root.name == "menu" ? "M10.5 5 A1.5 1.5 0 1 0 13.5 5 A1.5 1.5 0 1 0 10.5 5 Z M10.5 12 A1.5 1.5 0 1 0 13.5 12 A1.5 1.5 0 1 0 10.5 12 Z M10.5 19 A1.5 1.5 0 1 0 13.5 19 A1.5 1.5 0 1 0 10.5 19 Z" :
+            root.name == "dot" ? "M8 12 A4 4 0 1 0 16 12 A4 4 0 1 0 8 12 Z" :
+            root.name == "back" ? "M15 5 L8 12 L15 19" :
+            root.name == "chevron-right" ? "M9 5 L16 12 L9 19" :
+            root.name == "chevron-left" ? "M15 5 L8 12 L15 19" :
+            root.name == "chevron-down" ? "M6 9 L12 15 L18 9" :
+            root.name == "plus" ? "M12 5 V19 M5 12 H19" :
+            root.name == "minus" ? "M5 12 H19" :
+            root.name == "close" ? "M6 6 L18 18 M18 6 L6 18" :
+            root.name == "check" ? "M5 12 L10 17 L19 7" :
+            root.name == "trash" ? "M4 7 H20 M9 7 V4 H15 V7 M6 7 L7 20 H17 L18 7 M10 11 V16 M14 11 V16" :
+            root.name == "power" ? "M12 3 V11 M7 6.8 A8 8 0 1 0 17 6.8" :
+            root.name == "split" ? "M3 12 H8 M8 12 L13 6 H21 M8 12 L13 18 H21" :
+            root.name == "edit" ? "M4 20 V16 L15 5 L19 9 L8 20 Z M13 7 L17 11" :
+            root.name == "save" ? "M5 4 H16 L20 8 V20 H4 V4 Z M8 4 V9 H15 V4 M7 20 V14 H17 V20" :
+            root.name == "play" ? "M7 4 L20 12 L7 20 Z" :
+            root.name == "stop" ? "M6 6 H18 V18 H6 Z" :
+            root.name == "record" ? "M5 12 A7 7 0 1 0 19 12 A7 7 0 1 0 5 12 Z" :
+            root.name == "overdub" ? "M4 12 A8 8 0 1 0 20 12 A8 8 0 1 0 4 12 Z M12 8 V16 M8 12 H16" :
+            root.name == "undo" ? "M9 14 L4 9 L9 4 M4 9 H15 Q20 9 20 14 Q20 19 15 19 H11" :
+            root.name == "mute" ? "M4 9 H8 L13 5 V19 L8 15 H4 Z M16 9 L21 15 M21 9 L16 15" :
+            root.name == "volume" ? "M4 9 H8 L13 5 V19 L8 15 H4 Z M16 9 Q18 12 16 15 M18.5 6.5 Q22.5 12 18.5 17.5" :
+            root.name == "settings" ? "M9 12 A3 3 0 1 0 15 12 A3 3 0 1 0 9 12 Z M12 2 V5 M12 19 V22 M2 12 H5 M19 12 H22 M4.9 4.9 L7 7 M17 17 L19.1 19.1 M4.9 19.1 L7 17 M17 7 L19.1 4.9" :
+            root.name == "info" ? "M3 12 A9 9 0 1 0 21 12 A9 9 0 1 0 3 12 Z M12 11 V17 M12 7 V8.5" :
+            root.name == "stereo" ? "M3 12 A5 5 0 1 0 13 12 A5 5 0 1 0 3 12 Z M11 12 A5 5 0 1 0 21 12 A5 5 0 1 0 11 12 Z" :
+            root.name == "mono" ? "M7 12 A5 5 0 1 0 17 12 A5 5 0 1 0 7 12 Z" :
+            root.name == "footswitch" ? "M4 4 H20 V20 H4 Z M8 12 A4 4 0 1 0 16 12 A4 4 0 1 0 8 12 Z" :
+            root.name == "wifi" ? "M2 9 Q12 0 22 9 M5.5 12.5 Q12 6.5 18.5 12.5 M9 16 Q12 13.5 15 16 M12 19.5 V19.6" :
+            root.name == "lock" ? "M5 11 H19 V21 H5 Z M8 11 V7 Q8 3 12 3 Q16 3 16 7 V11" :
+            root.name == "refresh" ? "M20 5 V10 H15 M19.5 10 A8 8 0 1 0 20 14" :
+            root.name == "plug" ? "M9 3 V8 M15 3 V8 M6 8 H18 V12 Q18 17 12 17 Q6 17 6 12 Z M12 17 V21" :
+            root.name == "live" ? "M3 5 H21 V19 H3 Z M6 9 H18 M6 15 A1.5 1.5 0 1 0 9 15 A1.5 1.5 0 1 0 6 15 Z M10.5 15 A1.5 1.5 0 1 0 13.5 15 A1.5 1.5 0 1 0 10.5 15 Z M15 15 A1.5 1.5 0 1 0 18 15 A1.5 1.5 0 1 0 15 15 Z" :
+            root.name == "tap" ? "M8 20 L10.5 4 H13.5 L16 20 Z M12 15 L17.5 6" :
+            root.name == "setlist" ? "M9 6 H20 M9 12 H20 M9 18 H20 M4 5 H6 V7 H4 Z M4 11 H6 V13 H4 Z M4 17 H6 V19 H4 Z" :
+            root.name == "midi" ? "M3 12 A9 9 0 1 0 21 12 A9 9 0 1 0 3 12 Z M7.5 12 V12.1 M16.5 12 V12.1 M9 8.5 V8.6 M15 8.5 V8.6 M12 7 V7.1 M10 17.5 H14" :
+            root.name == "routing" ? "M4 6 H10 L14 18 H20 M4 18 H10 L11.5 13.5 M12.5 10.5 L14 6 H20" :
+            "M5 12 A7 7 0 1 0 19 12 A7 7 0 1 0 5 12 Z";
+    }
+}

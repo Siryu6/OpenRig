@@ -1,0 +1,19 @@
+# Raspberry Pi 5 firmware settings of the pedalboard OS
+# (https://www.raspberrypi.com/documentation/computers/config_txt.html)
+
+kernel=Image
+
+# KMS display driver: the UI draws straight on it
+dtoverlay=vc4-kms-v3d
+# Official touch displays and other DSI panels are detected
+display_auto_detect=1
+camera_auto_detect=0
+disable_overscan=1
+
+# Quiet, fast boot
+disable_splash=1
+boot_delay=0
+
+# Settings of this card (overlays, display): extra.txt, kept by updates.
+# Sound HATs need their overlay there, e.g. dtoverlay=pisound
+include extra.txt

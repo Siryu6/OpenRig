@@ -1,0 +1,48 @@
+#!/bin/sh
+#
+# Boot slots of the Raspberry Pi (see pedalboard-update). autoboot.txt, on
+# the first partition, gives the boot partition: 2 for slot A, 3 for B.
+# Its [tryboot] one starts instead, once, after a reboot with the
+# firmware's tryboot flag set.
+#
+#   boot-slots primary          slot started by default
+#   boot-slots set-primary A|B  start this slot by default
+#   boot-slots arm A|B          the next tryboot reboot starts this slot once
+#   boot-slots reboot-trial     reboot into the armed slot
+
+AUTOBOOT=/boot/autoboot.txt
+
+part() {
+	if [ "$1" = B ]; then echo 3; else echo 2; fi
+}
+
+slot() {
+	if [ "$1" = 3 ]; then echo B; else echo A; fi
+}
+
+# Rewrite autoboot.txt in place: always the same length (one-digit
+# partitions), so a power cut cannot leave it cut short
+write() {
+	mount -o remount,rw /boot || return 1
+	printf '[all]\ntryboot_a_b=1\nboot_partition=%s\n[tryboot]\nboot_partition=%s\n' "$1" "$2" |
+		dd of="$AUTOBOOT" conv=notrunc,fsync status=none
+	result=$?
+	sync
+	mount -o remount,ro /boot
+	return $result
+}
+
+primary() {
+	slot "$(sed -n '/^\[all\]/,/^\[tryboot\]/s/^boot_partition=//p' "$AUTOBOOT")"
+}
+
+case "$1" in
+primary) primary ;;
+set-primary) write "$(part "$2")" "$(part "$2")" ;;
+arm) write "$(part "$(primary)")" "$(part "$2")" ;;
+reboot-trial) /usr/sbin/rpi-tryboot && reboot ;;
+*)
+	echo "usage: $0 primary | set-primary A|B | arm A|B | reboot-trial" >&2
+	exit 2
+	;;
+esac

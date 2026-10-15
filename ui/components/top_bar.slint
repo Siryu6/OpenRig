@@ -1,0 +1,308 @@
+import { Theme } from "../theme.slint";
+import { Icon, Button } from "controls.slint";
+import { ResourceStatus } from "../types.slint";
+import { LogoMark } from "logo.slint";
+
+// One navigation tab: icon above label, lit (LED strip) when active.
+component NavTab inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> active: false;
+    callback clicked();
+
+    width: 76px;
+    border-radius: Theme.radius-md;
+    background: ta.pressed ? Theme.surface-hover : transparent;
+
+    if root.active: Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: parent.height - 2px;
+        width: 32px;
+        height: 3px;
+        background: Theme.accent;
+    }
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 2px;
+        HorizontalLayout {
+            alignment: center;
+            Icon {
+                name: root.icon;
+                size: 20px;
+                color: root.active ? Theme.accent : Theme.text-secondary;
+            }
+        }
+        Text {
+            text: root.label.to-uppercase();
+            color: root.active ? Theme.text-primary : Theme.text-secondary;
+            font-size: 10px;
+            font-weight: Theme.weight-bold;
+            letter-spacing: 0.8px;
+            horizontal-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// Global top bar: context on the left (preset or back + title), primary
+// navigation tabs on the right. Same on every view.
+export component TopBar inherits Rectangle {
+    // Active tab: "rack" | "presets" | "live" | "tuner" | "looper"
+    in property <string> active-tab: "rack";
+    in property <string> current-view-name: "Rack";
+    in property <string> preset-name: "Default";
+    in property <string> scene-name: "";        // scene of the preset
+    in property <float> tempo: 120;
+    in property <bool> show-back-button: false;
+    in property <bool> audio-running: false;
+    in property <ResourceStatus> resources;
+
+    callback back-clicked();
+    callback resources-clicked();
+    callback menu-clicked();
+    callback rack-clicked();
+    callback tuner-clicked();
+    callback presets-clicked();
+    callback live-clicked();
+    callback looper-clicked();
+
+    height: Theme.top-bar-height;
+    background: Theme.panel;
+
+    HorizontalLayout {
+        padding-left: Theme.space-sm;
+        padding-right: Theme.space-sm;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        spacing: Theme.space-sm;
+
+        // Left: back button (sub-views) or preset selector
+        if root.show-back-button: Button {
+            icon: "back";
+            text: "Rack";
+            variant: "ghost";
+            clicked => {
+                root.back-clicked();
+            }
+        }
+
+        if root.show-back-button: Text {
+            text: root.current-view-name;
+            color: Theme.text-primary;
+            font-size: Theme.font-title;
+            font-weight: Theme.weight-semibold;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+
+        if !root.show-back-button: VerticalLayout {
+            alignment: center;
+            padding-left: Theme.space-xs;
+            padding-right: Theme.space-xs;
+            LogoMark {
+                size: 30px;
+            }
+        }
+
+        // Patch display: the preset, as on the screen of a modeler
+        if !root.show-back-button: Rectangle {
+            width: 240px;
+            border-radius: Theme.radius-md;
+            background: preset-ta.pressed ? Theme.surface-hover : Theme.display;
+            border-width: 1px;
+            border-color: #000000;
+
+            // Inset: shadow on top, light at the bottom
+            Rectangle {
+                x: 1px;
+                y: 1px;
+                width: parent.width - 2px;
+                height: 2px;
+                background: #00000099;
+            }
+            Rectangle {
+                x: Theme.radius-md;
+                y: parent.height;
+                width: parent.width - 2 * Theme.radius-md;
+                height: 1px;
+                background: Theme.edge-light;
+            }
+
+            HorizontalLayout {
+                padding-left: Theme.space-md;
+                padding-right: Theme.space-sm;
+                spacing: Theme.space-sm;
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 0px;
+                    HorizontalLayout {
+                        alignment: start;
+                        spacing: 6px;
+                        Text {
+                            text: root.scene-name != "" ? root.scene-name.to-uppercase() : "PRESET";
+                            color: root.scene-name != "" ? Theme.accent : Theme.text-muted;
+                            font-size: Theme.font-caption;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: 0.8px;
+                            overflow: elide;
+                        }
+                        Text {
+                            horizontal-stretch: 0;
+                            text: "· " + round(root.tempo) + " BPM";
+                            color: Theme.text-muted;
+                            font-size: Theme.font-caption;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: 0.8px;
+                        }
+                    }
+                    Text {
+                        text: root.preset-name;
+                        color: Theme.text-primary;
+                        font-size: 20px;
+                        font-weight: Theme.weight-bold;
+                        overflow: elide;
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    Icon {
+                        name: "chevron-down";
+                        size: 16px;
+                        color: Theme.text-secondary;
+                    }
+                }
+            }
+
+            preset-ta := TouchArea {
+                clicked => {
+                    root.presets-clicked();
+                }
+            }
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+
+        // Audio engine / resource monitor indicator; tap for details
+        monitor := Rectangle {
+            width: 84px;
+            border-radius: Theme.radius-md;
+            background: monitor-ta.pressed ? Theme.surface-hover
+                : root.resources.level == 2 ? Theme.danger-soft
+                : root.resources.level == 1 ? Theme.warning-soft : transparent;
+
+            property <color> state-color: !root.audio-running ? Theme.text-muted
+                : root.resources.level == 2 ? Theme.danger
+                : root.resources.level == 1 ? Theme.warning : Theme.success;
+
+            HorizontalLayout {
+                alignment: center;
+                spacing: 6px;
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: monitor.state-color;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 0px;
+                    Text {
+                        text: !root.audio-running ? "No audio"
+                            : root.resources.dsp-load < 0 ? "Audio"
+                            : "DSP " + round(root.resources.dsp-load * 100) + "%";
+                        color: root.audio-running ? Theme.text-primary : Theme.text-muted;
+                        font-size: Theme.font-caption;
+                        font-weight: Theme.weight-bold;
+                    }
+                    Text {
+                        text: root.resources.temperature >= 0 ? round(root.resources.temperature) + " °C"
+                            : root.resources.cpu >= 0 ? "CPU " + round(root.resources.cpu * 100) + "%" : "";
+                        visible: self.text != "";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-caption;
+                    }
+                }
+            }
+
+            monitor-ta := TouchArea {
+                clicked => {
+                    root.resources-clicked();
+                }
+            }
+        }
+
+        // Primary navigation
+        HorizontalLayout {
+            spacing: 2px;
+            NavTab {
+                icon: "rack";
+                label: "Rack";
+                active: root.active-tab == "rack";
+                clicked => {
+                    root.rack-clicked();
+                }
+            }
+            NavTab {
+                icon: "presets";
+                label: "Presets";
+                active: root.active-tab == "presets";
+                clicked => {
+                    root.presets-clicked();
+                }
+            }
+            NavTab {
+                icon: "live";
+                label: "Live";
+                active: root.active-tab == "live";
+                clicked => {
+                    root.live-clicked();
+                }
+            }
+            NavTab {
+                icon: "tuner";
+                label: "Tuner";
+                active: root.active-tab == "tuner";
+                clicked => {
+                    root.tuner-clicked();
+                }
+            }
+            NavTab {
+                icon: "looper";
+                label: "Looper";
+                active: root.active-tab == "looper";
+                clicked => {
+                    root.looper-clicked();
+                }
+            }
+        }
+
+        Button {
+            icon: "menu";
+            variant: "ghost";
+            clicked => {
+                root.menu-clicked();
+            }
+        }
+    }
+
+    // Bottom hairline
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Theme.border;
+    }
+}

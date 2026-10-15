@@ -1,0 +1,248 @@
+import { Theme } from "../theme.slint";
+import { PresetInfo } from "../types.slint";
+import { Badge, Button, EmptyState, SectionHeader, Segmented } from "../components/controls.slint";
+import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
+
+export { PresetInfo }
+
+// Preset list: tap to load, save the chain over the current preset or as a
+// new one, delete with confirmation.
+export component PresetManager inherits Rectangle {
+    in property <[PresetInfo]> presets: [];
+    in property <string> current-preset-name: "Default";
+    in property <string> current-preset-id: ""; // empty: unsaved
+
+    callback preset-selected(string); // preset id
+    callback save-preset(string);     // name, as a new preset
+    callback update-preset();         // over the current preset
+    callback delete-preset(string);   // preset id
+    callback close();
+    callback show-setlists(int); // 0 = list, 1 = footswitch slots
+
+
+    in-out property <bool> show-save-dialog: false;
+    in-out property <string> save-preset-name: "";
+    private property <string> confirm-delete-id: "";
+
+    width: 100%;
+    height: 100%;
+
+    VerticalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-md;
+
+        // Header
+        HorizontalLayout {
+            height: 48px;
+            spacing: Theme.space-md;
+            Segmented {
+                width: 300px;
+                options: ["Presets", "Setlists", "Slots"];
+                current-index: 0;
+                activated(i) => {
+                    if (i > 0) {
+                        root.show-setlists(i - 1);
+                    }
+                }
+            }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 2px;
+                SectionHeader {
+                    text: "CURRENT PRESET";
+                }
+                Text {
+                    text: root.current-preset-name;
+                    color: Theme.text-primary;
+                    font-size: Theme.font-body;
+                    font-weight: Theme.weight-semibold;
+                    overflow: elide;
+                }
+            }
+            if root.current-preset-id != "": Button {
+                horizontal-stretch: 0;
+                icon: "save";
+                text: "Save";
+                variant: "primary";
+                clicked => {
+                    root.update-preset();
+                }
+            }
+            Button {
+                horizontal-stretch: 0;
+                icon: "save";
+                text: "Save as new";
+                variant: root.current-preset-id != "" ? "secondary" : "primary";
+                clicked => {
+                    root.save-preset-name = root.current-preset-id != "" ? root.current-preset-name : "";
+                    root.show-save-dialog = true;
+                }
+            }
+        }
+
+        if root.presets.length == 0: Rectangle {
+            vertical-stretch: 1;
+            EmptyState {
+                icon: "presets";
+                title: "No presets yet";
+                message: "Save your current chain to create the first one.";
+            }
+        }
+
+        if root.presets.length > 0: Flickable {
+            vertical-stretch: 1;
+            min-height: 0px;
+            viewport-height: max(self.height, list.preferred-height);
+            interactive: list.preferred-height > self.height;
+
+            list := VerticalLayout {
+                spacing: Theme.space-sm;
+
+                for preset[i] in root.presets: row := Rectangle {
+                    property <bool> is-current: preset.id == root.current-preset-id;
+                    property <bool> confirming: root.confirm-delete-id == preset.id;
+                    height: 64px;
+                    border-radius: Theme.radius-lg;
+                    background: self.confirming ? Theme.danger-soft : row-ta.pressed ? Theme.surface-hover : Theme.panel;
+                    border-width: 1px;
+                    border-color: self.confirming ? Theme.danger : self.is-current ? Theme.accent : Theme.border;
+
+                    row-ta := TouchArea {
+                        enabled: !row.confirming;
+                        clicked => {
+                            root.confirm-delete-id = "";
+                            root.preset-selected(preset.id);
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding: Theme.space-sm + 2px;
+                        padding-left: Theme.space-md;
+                        spacing: Theme.space-md;
+
+                        // Patch number, on a small display; lit when loaded
+                        Rectangle {
+                            width: 52px;
+                            border-radius: Theme.radius-sm;
+                            background: Theme.display;
+                            border-width: 1px;
+                            border-color: row.is-current ? Theme.accent : #000000;
+                            Text {
+                                text: (i < 9 ? "0" : "") + (i + 1);
+                                color: row.is-current ? Theme.accent : Theme.text-secondary;
+                                font-size: 22px;
+                                font-weight: Theme.weight-bold;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: row.confirming ? "Delete \"" + preset.name + "\"?" : preset.name;
+                                color: Theme.text-primary;
+                                font-size: Theme.font-body;
+                                font-weight: Theme.weight-semibold;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: row.confirming ? "This cannot be undone." :
+                                    (preset.plugin-count == 1 ? "1 block" : preset.plugin-count + " blocks")
+                                    + (preset.modified-date != "" ? "  ·  " + preset.modified-date : "")
+                                    + (preset.description != "" ? "  ·  " + preset.description : "");
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-small;
+                                overflow: elide;
+                            }
+                        }
+
+                        if row.is-current && !row.confirming: VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 0;
+                            Badge {
+                                text: "LOADED";
+                                tone: "accent";
+                            }
+                        }
+
+                        if !row.confirming: Button {
+
+                            horizontal-stretch: 0;
+                            icon: "trash";
+                            variant: "ghost";
+                            clicked => {
+                                root.confirm-delete-id = preset.id;
+                            }
+                        }
+                        if row.confirming: Button {
+                            horizontal-stretch: 0;
+                            text: "Cancel";
+                            clicked => {
+                                root.confirm-delete-id = "";
+                            }
+                        }
+                        if row.confirming: Button {
+                            horizontal-stretch: 0;
+                            text: "Delete";
+                            variant: "solid-danger";
+                            clicked => {
+                                root.confirm-delete-id = "";
+                                root.delete-preset(preset.id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Save dialog: title + keyboard
+    if root.show-save-dialog: Rectangle {
+        background: Theme.scrim;
+        TouchArea { }
+
+        VerticalLayout {
+            Rectangle {
+                vertical-stretch: 1;
+                background: Theme.panel;
+                VerticalLayout {
+                    alignment: center;
+                    padding-left: Theme.space-lg;
+                    spacing: 2px;
+                    Text {
+                        text: "Save preset";
+                        color: Theme.text-primary;
+                        font-size: Theme.font-headline;
+                        font-weight: Theme.weight-bold;
+                    }
+                    Text {
+                        text: "Saves the current chain as a new preset.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                    }
+                }
+            }
+            VirtualKeyboard {
+                current-text: root.save-preset-name;
+                placeholder: "Preset name";
+                submit-label: "Save";
+                text-changed(t) => {
+                    root.save-preset-name = t;
+                }
+                submit => {
+                    if (root.save-preset-name != "") {
+                        root.save-preset(root.save-preset-name);
+                    }
+                    root.show-save-dialog = false;
+                }
+                cancel => {
+                    root.show-save-dialog = false;
+                }
+            }
+        }
+    }
+}

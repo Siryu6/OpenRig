@@ -1,0 +1,1 @@
+pedalboard -1 pedalboard -1 * /data/pedalboard /bin/sh audio,video,render,input,gpio,netdev Pedalboard

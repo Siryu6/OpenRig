@@ -1,0 +1,37 @@
+config BR2_PACKAGE_PEDALBOARD
+	bool "pedalboard"
+	depends on BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS
+	depends on BR2_INSTALL_LIBSTDCPP # jack2, NeuralAudio
+	depends on BR2_TOOLCHAIN_GCC_AT_LEAST_10 # C++20 (NeuralAudio)
+	depends on BR2_PACKAGE_HAS_UDEV # libinput
+	select BR2_PACKAGE_HOST_RUSTC
+	select BR2_PACKAGE_ALSA_LIB
+	select BR2_PACKAGE_ALSA_LIB_SEQ # MIDI input
+	select BR2_PACKAGE_JACK2
+	select BR2_PACKAGE_LILV
+	select BR2_PACKAGE_LIBINPUT
+	select BR2_PACKAGE_LIBXKBCOMMON
+	select BR2_PACKAGE_LIBDRM
+	select BR2_PACKAGE_FONTCONFIG # loaded at run time by the UI
+	select BR2_PACKAGE_DEJAVU
+	select BR2_PACKAGE_CA_CERTIFICATES # TONE3000 over HTTPS
+	help
+	  Guitar pedalboard: LV2 host, NAM / IR blocks, touch UI drawn
+	  straight on the display (DRM/KMS), on a JACK server.
+
+	  Needs an OpenGL ES / EGL / GBM provider (mesa3d) at run time.
+
+if BR2_PACKAGE_PEDALBOARD
+
+config BR2_PACKAGE_PEDALBOARD_GPIO
+	bool "footswitches and encoder on GPIO"
+	depends on BR2_aarch64
+	help
+	  Footswitches and rotary encoder on the Raspberry Pi GPIO.
+
+endif
+
+comment "pedalboard needs a toolchain w/ C++, gcc >= 10, udev and a Rust target"
+	depends on !BR2_PACKAGE_HOST_RUSTC_TARGET_ARCH_SUPPORTS || \
+		!BR2_INSTALL_LIBSTDCPP || !BR2_TOOLCHAIN_GCC_AT_LEAST_10 || \
+		!BR2_PACKAGE_HAS_UDEV

@@ -1,0 +1,1 @@
+root=PARTUUID=5eda1b0a-7007-4000-8000-00000000000a rauc.slot=A rootfstype=ext4 rootwait ro panic=10 rcutree.kthread_prio=90 console=ttyAMA10,115200 quiet loglevel=3 vt.global_cursor_default=0 consoleblank=0 logo.nologo usbcore.autosuspend=-1

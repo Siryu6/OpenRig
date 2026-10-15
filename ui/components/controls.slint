@@ -1,0 +1,637 @@
+import { Theme } from "../theme.slint";
+import { Icon } from "icon.slint";
+
+export { Icon }
+
+// ---------------------------------------------------------------------------
+// Button: the single button used across the app.
+//   variant: "primary" | "secondary" | "ghost" | "danger" | "solid-danger"
+//            | "success" | "warning"
+//   active:  tinted accent state (for toggle-like buttons)
+// Minimum size is the touch target (44x44); icon-only when text is empty.
+// ---------------------------------------------------------------------------
+export component Button inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <string> variant: "secondary";
+    in property <bool> enabled: true;
+    in property <bool> active: false;
+    in property <length> font-size: Theme.font-body;
+    in property <length> icon-size: Theme.icon-size;
+    out property <bool> pressed: root.down;
+    private property <bool> down: ta.pressed && root.enabled;
+
+    callback clicked();
+
+    private property <color> fg:
+        root.active ? Theme.accent :
+        root.variant == "primary" ? Theme.accent :
+        root.variant == "solid-danger" ? Theme.on-semantic :
+        root.variant == "danger" ? Theme.danger :
+        root.variant == "success" ? Theme.success :
+        root.variant == "warning" ? Theme.warning :
+        root.variant == "ghost" ? Theme.text-secondary :
+        Theme.text-primary;
+
+    // Physical key look: raised gradient with a lit top edge, sunk when pressed
+    private property <bool> keycap: root.variant != "ghost";
+
+    min-width: Theme.touch-target;
+    min-height: Theme.touch-target;
+    border-radius: Theme.radius-md;
+    opacity: root.enabled ? 1.0 : 0.4;
+    border-width: root.keycap ? Theme.border-width : 0px;
+    border-color: root.active ? Theme.accent
+        : root.variant == "primary" ? Theme.accent.with-alpha(0.55)
+        : root.variant == "solid-danger" ? Theme.danger.darker(0.3)
+        : root.variant == "danger" ? Theme.danger.with-alpha(0.45)
+        : root.variant == "success" ? Theme.success.with-alpha(0.45)
+        : root.variant == "warning" ? Theme.warning.with-alpha(0.45)
+        : #00000080;
+    background:
+        root.variant == "solid-danger" ? (root.down ? Theme.danger.darker(0.2) : Theme.danger) :
+        root.variant == "ghost" ? (root.down ? Theme.surface-hover : transparent) :
+        (root.down ? Theme.key-pressed : Theme.key);
+
+    // Lit top edge (hidden while pressed: the key is down)
+    if root.keycap && !root.down: Rectangle {
+        x: root.border-radius / 2;
+        y: 1px;
+        width: parent.width - root.border-radius;
+        height: 1px;
+        background: Theme.edge-light;
+    }
+    // Lit key (toggle on, main action): LED strip under the label
+    if root.active || (root.variant == "primary" && root.enabled): Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: parent.height - 5px;
+        width: min(parent.width - 12px, 28px);
+        height: 2px;
+        background: Theme.accent;
+    }
+
+    HorizontalLayout {
+        padding-left: root.text == "" ? 0px : Theme.space-lg;
+        padding-right: root.text == "" ? 0px : Theme.space-lg;
+        spacing: Theme.space-sm;
+        alignment: center;
+
+        if root.icon != "": VerticalLayout {
+            alignment: center;
+            Icon {
+                name: root.icon;
+                size: root.icon-size;
+                color: root.fg;
+            }
+        }
+
+        if root.text != "": Text {
+            text: root.text;
+            color: root.fg;
+            font-size: root.font-size;
+            font-weight: Theme.weight-semibold;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    // Stays enabled when the button is not: a tap on a disabled button must
+    // not fall through to what lies behind it
+    ta := TouchArea {
+        clicked => {
+            if (root.enabled) {
+                root.clicked();
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Card: graphite panel with a lit top edge.
+// ---------------------------------------------------------------------------
+export component Card inherits Rectangle {
+    background: Theme.panel;
+    border-radius: Theme.radius-lg;
+    border-width: Theme.border-width;
+    border-color: Theme.border;
+
+    Rectangle {
+        x: root.border-radius;
+        y: 1px;
+        width: parent.width - 2 * root.border-radius;
+        height: 1px;
+        background: Theme.edge-light;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Display: inset screen (tuner, looper), darker than the panels around it.
+// ---------------------------------------------------------------------------
+export component Display inherits Rectangle {
+    border-radius: Theme.radius-lg;
+    background: Theme.display;
+    border-width: Theme.border-width;
+    border-color: #000000;
+
+    // Inset shadow
+    Rectangle {
+        x: 1px;
+        y: 1px;
+        width: parent.width - 2px;
+        height: 3px;
+        background: #0000008c;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Overline section header ("PRESETS", "PARAMETERS", ...)
+// ---------------------------------------------------------------------------
+export component SectionHeader inherits Text {
+    color: Theme.text-muted;
+    font-size: Theme.font-caption;
+    font-weight: Theme.weight-bold;
+    vertical-alignment: center;
+}
+
+// ---------------------------------------------------------------------------
+// Badge: small pill label. tone: "neutral" | "accent" | "success" | "warning" | "danger"
+// ---------------------------------------------------------------------------
+export component Badge inherits Rectangle {
+    in property <string> text;
+    in property <string> tone: "neutral";
+
+    private property <color> fg:
+        root.tone == "accent" ? Theme.accent :
+        root.tone == "success" ? Theme.success :
+        root.tone == "warning" ? Theme.warning :
+        root.tone == "danger" ? Theme.danger :
+        Theme.text-secondary;
+
+    height: 22px;
+    border-radius: Theme.radius-sm;
+    background: root.tone == "neutral" ? Theme.surface-hover : root.fg.with-alpha(0.14);
+
+    HorizontalLayout {
+        padding-left: Theme.space-sm;
+        padding-right: Theme.space-sm;
+        Text {
+            text: root.text;
+            color: root.fg;
+            font-size: Theme.font-caption;
+            font-weight: Theme.weight-bold;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Chip: selectable pill (filters, categories)
+// ---------------------------------------------------------------------------
+export component Chip inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected: false;
+    callback clicked();
+
+    min-height: Theme.touch-target;
+    border-radius: Theme.radius-md;
+    background: ta.pressed ? Theme.key-pressed : Theme.key;
+    border-width: Theme.border-width;
+    border-color: root.selected ? Theme.accent : #00000080;
+
+    HorizontalLayout {
+        padding-left: Theme.space-lg;
+        padding-right: Theme.space-lg;
+        Text {
+            text: root.text;
+            color: root.selected ? Theme.accent : Theme.text-secondary;
+            font-size: Theme.font-small;
+            font-weight: Theme.weight-semibold;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Toggle switch (44px tall hit area). Controlled: the parent owns `checked`
+// and updates it in response to `toggled(new-value)`.
+// ---------------------------------------------------------------------------
+export component Toggle inherits Rectangle {
+    in property <bool> checked: false;
+    in property <bool> enabled: true;
+    in property <color> accent: Theme.accent;
+    callback toggled(bool);
+
+    width: 56px;
+    height: Theme.touch-target;
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    track := Rectangle {
+        y: (parent.height - self.height) / 2;
+        width: 100%;
+        height: 28px;
+        border-radius: Theme.radius-sm;
+        background: Theme.display;
+        border-width: Theme.border-width;
+        border-color: #000000;
+
+        // Lit slot behind the cap
+        Rectangle {
+            x: 3px;
+            y: 3px;
+            width: parent.width - 6px;
+            height: parent.height - 6px;
+            border-radius: 1px;
+            background: root.checked ? root.accent.with-alpha(0.85) : transparent;
+            animate background { duration: Theme.motion-normal; }
+        }
+        // Cap
+        Rectangle {
+            x: root.checked ? parent.width - self.width - 3px : 3px;
+            y: 3px;
+            width: 24px;
+            height: parent.height - 6px;
+            border-radius: 1px;
+            background: @linear-gradient(180deg, #4a4c51 0%, #2a2b2f 100%);
+            border-width: 1px;
+            border-color: #000000a0;
+            animate x { duration: Theme.motion-normal; easing: ease-out; }
+            // Grip line
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: 5px;
+                width: 2px;
+                height: parent.height - 10px;
+                background: #00000080;
+            }
+        }
+    }
+
+    TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.toggled(!root.checked);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Horizontal slider (value in [minimum, maximum]). Controlled: shows the live
+// drag value while pressed, then `value` (owned by the parent / backend).
+// ---------------------------------------------------------------------------
+export component Slider inherits Rectangle {
+    in property <float> value: 0.5;
+    out property <bool> dragging: ta.pressed;
+    out property <float> shown-value: ta.pressed ? root.live-value : root.value;
+    private property <float> live-value: root.value;
+    in property <float> minimum: 0.0;
+    in property <float> maximum: 1.0;
+    in property <bool> enabled: true;
+    // Fill from the middle of the track (pan, balance) instead of its start
+    in property <bool> centered: false;
+    callback changed(float);
+
+    private property <float> norm: (root.maximum - root.minimum) == 0 ? 0 :
+        max(0, min(1, (root.shown-value - root.minimum) / (root.maximum - root.minimum)));
+    private property <length> thumb: 24px;
+
+    min-width: 120px;
+    height: Theme.touch-target;
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    // Track
+    Rectangle {
+        x: root.thumb / 2;
+        y: (parent.height - self.height) / 2;
+        width: parent.width - root.thumb;
+        height: 4px;
+        background: #000000;
+
+        Rectangle {
+            x: root.centered ? parent.width * min(0.5, root.norm) : 0;
+            width: parent.width * (root.centered ? abs(root.norm - 0.5) : root.norm);
+            height: 100%;
+            background: Theme.accent;
+        }
+    }
+
+    // Thumb
+    Rectangle {
+        x: root.thumb / 2 + (parent.width - root.thumb) * root.norm - self.width / 2;
+        y: (parent.height - self.height) / 2;
+        width: 14px;
+        height: 30px;
+        border-radius: 2px;
+        background: @linear-gradient(180deg, #55575c 0%, #2c2d31 100%);
+        border-width: 1px;
+        border-color: #000000;
+        // Index line, across the travel
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: 3px;
+            width: 2px;
+            height: parent.height - 6px;
+            background: #ffffffd0;
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        function update(px: length) {
+            let value = root.minimum + (root.maximum - root.minimum)
+                * max(0, min(1, (px - root.thumb / 2) / max(1px, root.width - root.thumb)));
+            // Only report real moves (each one reaches the audio engine)
+            if (value != root.live-value) {
+                root.live-value = value;
+                root.changed(value);
+            }
+        }
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                self.update(self.mouse-x);
+            }
+        }
+        moved => {
+            if (self.pressed) {
+                self.update(self.mouse-x);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rotary knob: 270 degree arc, drag vertically to change. Controlled like
+// Slider: live value while dragging, then the parent-owned `value`.
+// ---------------------------------------------------------------------------
+export component Knob inherits Rectangle {
+    in property <float> value: 0.5;
+    out property <float> shown-value: ta.pressed ? root.live-value : root.value;
+    private property <float> live-value: root.value;
+    in property <float> minimum: 0.0;
+    in property <float> maximum: 1.0;
+    in property <bool> integer: false;
+    in property <bool> focused: false;
+    in property <bool> enabled: true;
+    in property <length> size: 76px;
+    in property <color> accent: Theme.accent;      // value arc (the block's colour)
+    out property <bool> dragging: ta.pressed;
+    callback changed(float);
+
+    private property <float> norm: (root.maximum - root.minimum) == 0 ? 0 :
+        max(0, min(1, (root.shown-value - root.minimum) / (root.maximum - root.minimum)));
+    // Angles in degrees, clockwise from +x (screen coordinates)
+    private property <float> angle: 135 + 270 * root.norm;
+    private property <float> start-norm: 0;
+    private property <length> start-y: 0;
+    private property <float> pending: 0;
+
+    width: root.size;
+    height: root.size;
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    // Value arc around the knob (viewbox 100x100, radius 44)
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        stroke: #000000a0;
+        stroke-width: 6px;
+        fill: transparent;
+        commands: "M 18.89 81.11 A 44 44 0 1 1 81.11 81.11";
+    }
+
+    if root.norm > 0.004: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        stroke: root.focused || ta.pressed ? root.accent.brighter(0.25) : root.accent;
+        stroke-width: 6px;
+        fill: transparent;
+        commands: "M 18.89 81.11 A 44 44 0 " + (270 * root.norm > 180 ? "1" : "0") + " 1 "
+            + (50 + 44 * cos(root.angle * 1deg)) + " " + (50 + 44 * sin(root.angle * 1deg));
+    }
+
+    // Skirt
+    Rectangle {
+        x: parent.width * 0.17;
+        y: parent.height * 0.17;
+        width: parent.width * 0.66;
+        height: parent.height * 0.66;
+        border-radius: self.width / 2;
+        background: #0c0d10;
+        border-width: 1px;
+        border-color: root.focused ? root.accent : #30343c;
+    }
+
+    // Cap: lit from above
+    Rectangle {
+        x: parent.width * 0.24;
+        y: parent.height * 0.24;
+        width: parent.width * 0.52;
+        height: parent.height * 0.52;
+        border-radius: self.width / 2;
+        background: ta.pressed ? @linear-gradient(180deg, #34383f 0%, #1e2126 100%)
+            : @linear-gradient(180deg, #41464f 0%, #1f2227 100%);
+        border-width: 1px;
+        border-color: #00000099;
+    }
+
+    // Pointer, from the cap centre to the skirt
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        stroke: #f4f6f8;
+        stroke-width: 3px;
+        fill: transparent;
+        commands: "M " + (50 + 8 * cos(root.angle * 1deg)) + " " + (50 + 8 * sin(root.angle * 1deg))
+            + " L " + (50 + 31 * cos(root.angle * 1deg)) + " " + (50 + 31 * sin(root.angle * 1deg));
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                root.live-value = root.value;
+                root.start-norm = root.norm;
+                root.start-y = self.mouse-y;
+            }
+        }
+        moved => {
+            if (self.pressed) {
+                // 160px of vertical travel = full range
+                root.pending = root.minimum + (root.maximum - root.minimum)
+                    * max(0, min(1, root.start-norm + (root.start-y - self.mouse-y) / 160px));
+                if (root.integer) {
+                    root.pending = round(root.pending);
+                }
+                if (root.pending != root.live-value) {
+                    root.live-value = root.pending;
+                    root.changed(root.pending);
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Segmented control (equal-width options). Controlled: parent updates
+// `current-index` in response to `activated(index)`.
+// ---------------------------------------------------------------------------
+export component Segmented inherits Rectangle {
+    in property <[string]> options;
+    in property <int> current-index: 0;
+    in property <length> font-size: Theme.font-small;
+    callback activated(int);
+
+    min-height: Theme.touch-target;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-raised;
+    border-width: Theme.border-width;
+    border-color: Theme.border;
+
+    HorizontalLayout {
+        padding: 3px;
+        spacing: 2px;
+        for option[i] in root.options: Rectangle {
+            horizontal-stretch: 1;
+            min-width: 36px;
+            border-radius: Theme.radius-sm;
+            background: i == root.current-index ? Theme.key : (seg-ta.pressed ? Theme.surface-hover : transparent);
+            border-width: i == root.current-index ? 1px : 0px;
+            border-color: #00000080;
+
+            if i == root.current-index: Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: parent.height - 5px;
+                width: min(parent.width - 12px, 28px);
+                height: 2px;
+                background: Theme.accent;
+            }
+
+            Text {
+                text: option;
+                color: i == root.current-index ? Theme.text-primary : Theme.text-secondary;
+                font-size: root.font-size;
+                font-weight: Theme.weight-semibold;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            seg-ta := TouchArea {
+                clicked => {
+                    root.activated(i);
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stepper: [-] value [+]
+// ---------------------------------------------------------------------------
+export component Stepper inherits Rectangle {
+    in property <string> text;
+    in property <bool> can-decrement: true;
+    in property <bool> can-increment: true;
+    callback decrement();
+    callback increment();
+
+    min-height: Theme.touch-target;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-raised;
+    border-width: Theme.border-width;
+    border-color: Theme.border;
+
+    HorizontalLayout {
+        Button {
+            icon: "minus";
+            variant: "ghost";
+            enabled: root.can-decrement;
+            clicked => {
+                root.decrement();
+            }
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.text;
+            color: Theme.text-primary;
+            font-size: Theme.font-body;
+            font-weight: Theme.weight-semibold;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Button {
+            icon: "plus";
+            variant: "ghost";
+            enabled: root.can-increment;
+            clicked => {
+                root.increment();
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Empty state: centred icon + title + message
+// ---------------------------------------------------------------------------
+export component EmptyState inherits VerticalLayout {
+    in property <string> icon: "info";
+    in property <string> title;
+    in property <string> message;
+
+    alignment: center;
+    spacing: Theme.space-md;
+
+    HorizontalLayout {
+        alignment: center;
+        Rectangle {
+            width: 56px;
+            height: 56px;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface-raised;
+            Icon {
+                name: root.icon;
+                size: 26px;
+                color: Theme.text-muted;
+            }
+        }
+    }
+
+    Text {
+        text: root.title;
+        color: Theme.text-primary;
+        font-size: Theme.font-title;
+        font-weight: Theme.weight-semibold;
+        horizontal-alignment: center;
+    }
+
+    if root.message != "": Text {
+        text: root.message;
+        color: Theme.text-secondary;
+        font-size: Theme.font-small;
+        horizontal-alignment: center;
+        wrap: word-wrap;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Thin separator lines
+// ---------------------------------------------------------------------------
+export component VDivider inherits Rectangle {
+    width: 1px;
+    background: Theme.border;
+}

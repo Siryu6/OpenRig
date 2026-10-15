@@ -1,0 +1,6 @@
+# Partitions of the card (board/rpi5/genimage.cfg.in): 1 settings, 2 and 3
+# boot A and B, 4 and 5 system A and B, 6 data. System B and data are made
+# on first boot.
+ROOT_B_NR=5
+ROOT_B_UUID=5eda1b0a-7007-4000-8000-00000000000b
+DATA_NR=6

@@ -1,0 +1,75 @@
+# Card image (GPT):
+#   1  PEDALBOARD  settings: autoboot.txt (boot slot), pedalboard.txt
+#   2  boot A      firmware, kernel, config.txt, cmdline.txt, extra.txt
+#   3  boot B      written by updates
+#   4  system A    read-only root
+# System B (5, same size as A) and data (6, the rest of the card) are
+# created on first boot. UUIDs: /etc/rauc/system.conf, cmdline.txt,
+# /etc/pedalboard/partitions, rauc-post-install.
+
+image settings.vfat {
+	vfat {
+		label = "PEDALBOARD"
+		files = {
+			"autoboot.txt",
+			"pedalboard.txt",
+		}
+	}
+
+	size = 32M
+}
+
+image boot.vfat {
+	vfat {
+		label = "SYSTEM"
+		files = {
+#BOOT_FILES#
+		}
+	}
+
+	size = 128M
+}
+
+image boot-empty.vfat {
+	vfat {
+		label = "SYSTEM"
+		files = {
+			"slot-b.txt",
+		}
+	}
+
+	size = 128M
+}
+
+image sdcard.img {
+	hdimage {
+		partition-table-type = "gpt"
+		disk-uuid = 5eda1b0a-0000-4000-8000-000000000000
+	}
+
+	partition settings {
+		partition-type-uuid = F
+		partition-uuid = 5eda1b0a-c0f1-4000-8000-000000000001
+		image = "settings.vfat"
+		offset = 1M
+	}
+
+	partition boot-a {
+		partition-type-uuid = F
+		partition-uuid = 5eda1b0a-b007-4000-8000-00000000000a
+		image = "boot.vfat"
+	}
+
+	partition boot-b {
+		partition-type-uuid = F
+		partition-uuid = 5eda1b0a-b007-4000-8000-00000000000b
+		image = "boot-empty.vfat"
+	}
+
+	partition system-a {
+		partition-type-uuid = L
+		partition-uuid = 5eda1b0a-7007-4000-8000-00000000000a
+		image = "rootfs.ext4"
+		size = 1G
+	}
+}

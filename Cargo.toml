@@ -1,0 +1,112 @@
+[package]
+name = "pedalboard"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+# The rustc of the OS image (Buildroot): dependencies are resolved for it
+rust-version = "1.88"
+resolver = "3"
+
+[lib]
+name = "pedalboard"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pedalboard"
+path = "src/main.rs"
+
+# Boot splash of the pedalboard OS: draws a logo on the Linux framebuffer
+# until the UI takes the display over
+[[bin]]
+name = "pedalboard-splash"
+path = "src/bin/splash.rs"
+required-features = ["splash"]
+
+[features]
+default = ["winit", "lv2", "nam", "tone3000", "midi"]
+# Desktop window (X11 / Wayland)
+winit = ["slint/backend-winit", "slint/renderer-femtovg"]
+# Full screen straight on the display (DRM/KMS + libinput), without X11 or
+# Wayland: the pedalboard OS image. With winit too, it is the fallback when
+# there is no display server. Needs libinput, libxkbcommon, libgbm and EGL.
+kms = ["slint/backend-linuxkms-noseat", "slint/renderer-femtovg"]
+# Real LV2 hosting through liblilv (system library: liblilv-dev / lilv)
+lv2 = ["dep:lilv", "dep:lv2_raw"]
+# Footswitches and rotary encoder on Raspberry Pi GPIO
+gpio = ["dep:rppal"]
+# Built-in neural amp block (NAM / RTNeural models through NeuralAudio,
+# built from third_party/NeuralAudio; needs cmake and a C++20 compiler)
+nam = ["dep:cmake"]
+# "TONE3000 Connect" in Settings: link a tone3000.com account (HTTPS client + QR code)
+tone3000 = ["dep:ureq", "dep:qrcodegen"]
+# MIDI input from USB / DIN interfaces (ALSA on Linux: libasound2-dev / alsa-lib)
+midi = ["dep:midir"]
+# pedalboard-splash (Linux framebuffer)
+splash = ["dep:png", "dep:libc"]
+
+[dependencies]
+lilv = { version = "0.2.4", optional = true }
+# femtovg (OpenGL): the UI draws icons and connectors with Path, which the
+# software renderer does not support. Qt is left out (aborts without a display).
+# The backend and the renderer come from the `winit` / `kms` features (without
+# either, the app builds but has no display: tests, headless checks).
+slint = { version = "1.9", default-features = false, features = ["std", "compat-1-2"] }
+
+# Audio
+jack = "0.11"
+lv2_raw = { version = "0.2", optional = true }  # Same version as the one lilv uses, so LV2Feature types match
+
+# Concurrency
+crossbeam-channel = "0.5"  # Lock-free channels for RT-safe communication
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# System directories
+dirs = "5.0"
+
+# Date/time formatting
+chrono = "0.4"
+
+# GPIO (for Raspberry Pi hardware)
+rppal = { version = "0.19", optional = true }
+fft-convolver = "0.4"
+hound = "3"
+ureq = { version = "3.4", features = ["json"], optional = true }
+qrcodegen = { version = "1.8", optional = true }
+midir = { version = "0.11.0", optional = true }  # MIDI input: ALSA, CoreMIDI, WinMM
+png = { version = "0.18", optional = true }
+libc = { version = "0.2", optional = true }
+
+[build-dependencies]
+slint-build = "1.9"
+cmake = { version = "0.1.54", optional = true }
+
+# The convolution must keep up in real time even in debug builds
+[profile.dev.package.rustfft]
+opt-level = 3
+[profile.dev.package.realfft]
+opt-level = 3
+[profile.dev.package.fft-convolver]
+opt-level = 3
+
+# Inlining across crates (FFT, DSP, Slint) for the release and image builds
+[profile.release]
+lto = "thin"
+
+[patch.crates-io]
+# lilv 0.2.4 does not build where c_char is u8 (ARM Linux): fixed copy
+lilv = { path = "third_party/lilv" }
+# Slint's KMS backend asks for framebuffer modifiers even where the driver
+# takes none (virtio-gpu in QEMU…): copy that retries without them
+i-slint-backend-linuxkms = { path = "third_party/i-slint-backend-linuxkms" }

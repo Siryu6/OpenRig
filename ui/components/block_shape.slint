@@ -1,0 +1,172 @@
+import { Theme } from "../theme.slint";
+
+// Rack block drawn after the gear it stands for, so the chain reads at a
+// glance: an amp head is a flat box with its control panel, a combo adds a
+// grille, a cabinet shows its speakers, a pedal has its footswitch, a space
+// is a rounded box. Other blocks are plain cards.
+// Faces are dark (black tolex, grilles, graphite enclosures): the block's
+// colour (its family's, or the user's) is only its frame and trim, plus a
+// faint glow while it plays. A bypassed block loses its colour and its LED.
+export component BlockShape {
+    in property <string> kind;          // "amp" | "combo" | "cab" | "pedal" | "space" | ""
+    in property <string> name;
+    in property <color> tint;           // the user's colour, else the family's
+    in property <bool> tinted: false;   // tint chosen by the user
+    in property <bool> bypassed: false;
+    in property <bool> selected: false;
+    in property <bool> pressed: false;
+
+    // Size of the gear (the rack keeps the same cells for every kind)
+    out property <length> shape-width: root.kind == "amp" ? 90px : root.kind == "combo" ? 82px
+        : root.kind == "cab" ? 68px : root.kind == "pedal" ? 62px : 84px;
+    out property <length> shape-height: root.kind == "amp" ? 46px : root.kind == "combo" ? 58px
+        : root.kind == "cab" ? 58px : root.kind == "pedal" ? 60px : root.kind == "space" ? 46px : 52px;
+
+    private property <bool> gear: root.kind != "";
+    // Frame and trim colour
+    private property <color> trim: root.bypassed ? #34363b : root.tint;
+    private property <color> face: root.pressed ? #2a2b2f : #1b1c1f;
+    private property <length> radius: root.kind == "space" ? 6px
+        : root.kind == "pedal" ? 4px : 3px;
+    // Amp control panel strip
+    private property <bool> has-panel: root.kind == "amp" || root.kind == "combo";
+    private property <length> panel-h: 12px;
+
+    width: root.shape-width;
+    height: root.shape-height;
+
+    // Glow of a block that plays (no blur: a soft halo)
+    if !root.bypassed: Rectangle {
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: root.radius + 3px;
+        background: root.tint.with-alpha(0.16);
+    }
+
+    // Selection ring, outside the gear
+    if root.selected: Rectangle {
+        x: -4px;
+        y: -4px;
+        width: parent.width + 8px;
+        height: parent.height + 8px;
+        border-radius: root.radius + 4px;
+        border-width: 2px;
+        border-color: Theme.selection;
+    }
+
+    Rectangle {
+        border-radius: root.radius;
+        background: @linear-gradient(180deg, root.face.brighter(0.15) 0%, root.face.darker(0.25) 100%);
+        border-width: 2px;
+        border-color: root.trim;
+        clip: true;
+
+        // Amp head / combo: control panel with a row of knobs
+        if root.has-panel: Rectangle {
+            y: 0;
+            height: root.panel-h;
+            background: @linear-gradient(180deg, #3a3b40 0%, #26272b 100%);
+            // Trim under the panel
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: root.trim;
+            }
+            for k in 5: Rectangle {
+                x: parent.width / 2 + (k - 2) * 11px - 2.5px;
+                y: (parent.height - 5px) / 2;
+                width: 5px;
+                height: 5px;
+                border-radius: 2.5px;
+                background: root.bypassed ? #5a5f68 : #f2f2f2d0;
+            }
+        }
+
+        // Combo and cabinet: grille cloth
+        if root.kind == "combo" || root.kind == "cab": Rectangle {
+            x: 4px;
+            y: root.kind == "combo" ? root.panel-h + 3px : 4px;
+            width: parent.width - 8px;
+            height: parent.height - self.y - 4px;
+            border-radius: 1px;
+            background: #0b0b0c;
+            border-width: 1px;
+            border-color: #000000;
+
+            // Speakers
+            for s in root.kind == "cab" ? 2 : 1: Rectangle {
+                property <length> d: min(parent.height - 6px, root.kind == "cab" ? 24px : 30px);
+                x: root.kind == "cab" ? parent.width / 2 + (s == 0 ? -self.d - 1px : 1px) : (parent.width - self.d) / 2;
+                y: (parent.height - self.d) / 2;
+                width: self.d;
+                height: self.d;
+                border-radius: self.d / 2;
+                border-width: 1px;
+                border-color: #ffffff1c;
+                Rectangle {
+                    width: parent.d / 3;
+                    height: parent.d / 3;
+                    border-radius: parent.d / 6;
+                    background: #ffffff0c;
+                }
+            }
+        }
+
+        // Pedal: two knobs on top, footswitch at the bottom
+        if root.kind == "pedal": Rectangle {
+            for k in 2: Rectangle {
+                x: k == 0 ? 8px : parent.width - 8px - 8px;
+                y: 6px;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: root.bypassed ? #5a5f68 : #f2f2f2d0;
+            }
+            Rectangle {
+                x: (parent.width - 12px) / 2;
+                y: parent.height - 15px;
+                width: 12px;
+                height: 12px;
+                border-radius: 6px;
+                background: #c9ccd2;
+                border-width: 1px;
+                border-color: #6b7280;
+            }
+        }
+
+        Text {
+            x: 3px;
+            y: root.has-panel ? root.panel-h : root.kind == "pedal" ? 15px : 3px;
+            width: parent.width - 6px;
+            height: parent.height - self.y - (root.kind == "pedal" ? 17px : 2px);
+            text: root.name;
+            color: root.bypassed ? Theme.text-muted : #ffffff;
+            font-size: root.kind == "pedal" || root.kind == "cab" ? 10px : Theme.font-caption;
+            font-weight: Theme.weight-semibold;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            wrap: word-wrap;
+            overflow: elide;
+        }
+    }
+
+    // Status LED, with a halo when lit
+    if !root.bypassed: Rectangle {
+        x: led.x - 3px;
+        y: led.y - 3px;
+        width: led.width + 6px;
+        height: led.height + 6px;
+        border-radius: self.width / 2;
+        background: (root.kind == "pedal" ? Theme.led-red : Theme.led-green).with-alpha(0.35);
+    }
+    led := Rectangle {
+        x: root.kind == "pedal" ? (parent.width - self.width) / 2 : parent.width - 11px;
+        y: root.kind == "pedal" ? 8px : root.has-panel ? 4px : 6px;
+        width: 5px;
+        height: 5px;
+        border-radius: 2.5px;
+        background: root.bypassed ? Theme.led-off : root.kind == "pedal" ? Theme.led-red : Theme.led-green;
+    }
+}

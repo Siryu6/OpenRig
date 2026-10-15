@@ -1,0 +1,3 @@
+#!/bin/sh
+# Boot slot handler of RAUC (bootloader-custom-backend in system.conf)
+exec /usr/sbin/pedalboard-update rauc-backend "$@"

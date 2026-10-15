@@ -1,0 +1,246 @@
+import { Theme } from "../theme.slint";
+import { Card, Display, Icon, Stepper, Toggle } from "../components/controls.slint";
+
+// Chromatic tuner: big note between flat / sharp arrows, LED meter, mute and
+// reference pitch.
+export component TunerView {
+    in property <float> frequency: 0;            // detected frequency (Hz), <= 0 when no signal
+    in property <string> note-name: "A";
+    in property <int> octave: 4;
+    in property <float> cents: 0.0;              // -50 .. +50
+    in property <bool> is-tuned: false;          // within +-5 cents
+    in-out property <bool> mute-enabled: false;
+    in-out property <float> reference-pitch: 440.0;
+
+    callback mute-toggled(bool);
+    callback reference-pitch-changed(float);
+
+    private property <bool> has-signal: root.frequency > 0;
+    private property <float> clamped-cents: max(-50, min(50, root.cents));
+    private property <color> state-color: !root.has-signal ? Theme.text-muted :
+        root.is-tuned ? Theme.success :
+        abs(root.cents) < 15 ? Theme.warning : Theme.danger;
+
+    width: 100%;
+    height: 100%;
+
+    VerticalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-md;
+
+        // ---------------- Main display ----------------
+        // A stage tuner: the note between two arrows, over a row of LEDs
+        Display {
+            vertical-stretch: 1;
+
+            VerticalLayout {
+                padding: Theme.space-lg;
+                spacing: Theme.space-sm;
+                alignment: center;
+
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: Theme.space-2xl;
+
+                    // Flat: tune up
+                    VerticalLayout {
+                        alignment: center;
+                        Path {
+                            width: 30px;
+                            height: 40px;
+                            viewbox-width: 30;
+                            viewbox-height: 40;
+                            fill: !root.has-signal ? Theme.led-off
+                                : root.is-tuned ? Theme.success
+                                : root.cents < 0 ? Theme.danger : Theme.led-off;
+                            commands: "M 0 0 L 30 20 L 0 40 Z";
+                        }
+                    }
+
+                    // Note + octave
+                    HorizontalLayout {
+                        width: 180px;
+                        alignment: center;
+                        spacing: Theme.space-xs;
+                        Text {
+                            text: root.has-signal ? root.note-name : "–";
+                            color: root.has-signal ? (root.is-tuned ? Theme.success : Theme.text-primary) : Theme.text-muted;
+                            font-size: Theme.font-hero;
+                            font-weight: Theme.weight-bold;
+                            vertical-alignment: center;
+                        }
+                        if root.has-signal: VerticalLayout {
+                            alignment: end;
+                            padding-bottom: 22px;
+                            Text {
+                                text: root.octave;
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-headline;
+                                font-weight: Theme.weight-semibold;
+                            }
+                        }
+                    }
+
+                    // Sharp: tune down
+                    VerticalLayout {
+                        alignment: center;
+                        Path {
+                            width: 30px;
+                            height: 40px;
+                            viewbox-width: 30;
+                            viewbox-height: 40;
+                            fill: !root.has-signal ? Theme.led-off
+                                : root.is-tuned ? Theme.success
+                                : root.cents > 0 ? Theme.danger : Theme.led-off;
+                            commands: "M 30 0 L 0 20 L 30 40 Z";
+                        }
+                    }
+                }
+
+                Text {
+                    text: !root.has-signal ? "Play a string" :
+                        root.is-tuned ? "In tune" :
+                        root.cents < 0 ? "Too low, tune up" : "Too high, tune down";
+                    color: root.state-color;
+                    font-size: Theme.font-body;
+                    font-weight: Theme.weight-semibold;
+                    horizontal-alignment: center;
+                }
+
+                // LED meter: 21 segments of 5 cents, the one under the pitch lit
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 5px;
+                    for i in 21: VerticalLayout {
+                        alignment: center;
+                        property <int> seg: i - 10;
+                        property <bool> lit: root.has-signal && round(root.clamped-cents / 5) == self.seg;
+                        property <color> led: self.seg == 0 ? Theme.success
+                            : abs(self.seg) <= 2 ? Theme.warning : Theme.danger;
+                        Rectangle {
+                            width: 20px;
+                            height: seg == 0 ? 40px : 30px;
+                            border-radius: 3px;
+                            background: lit ? led : seg == 0 ? Theme.success.with-alpha(0.16) : Theme.led-off;
+                            border-width: 1px;
+                            border-color: lit ? led.brighter(0.4) : #00000080;
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 21 * 20px + 20 * 5px;
+                        height: 16px;
+                        for t in [-50, 0, 50]: Text {
+                            x: parent.width * (t + 50) / 100 - 20px;
+                            width: 40px;
+                            text: t > 0 ? "+" + t : t;
+                            color: Theme.text-muted;
+                            font-size: Theme.font-caption;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                Text {
+                    text: root.has-signal
+                        ? (round(root.frequency * 10) / 10) + " Hz   ·   " + (root.cents >= 0 ? "+" : "") + round(root.cents) + " cents"
+                        : "Waiting for signal";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-small;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        // ---------------- Settings row ----------------
+        HorizontalLayout {
+            height: 72px;
+            spacing: Theme.space-md;
+
+            Card {
+                horizontal-stretch: 1;
+                HorizontalLayout {
+                    padding-left: Theme.space-lg;
+                    padding-right: Theme.space-md;
+                    spacing: Theme.space-md;
+                    VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            name: root.mute-enabled ? "mute" : "volume";
+                            color: root.mute-enabled ? Theme.accent : Theme.text-secondary;
+                        }
+                    }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        Text {
+                            text: "Mute while tuning";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-body;
+                            font-weight: Theme.weight-semibold;
+                        }
+                        Text {
+                            text: root.mute-enabled ? "Output is silenced" : "Signal passes through";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Toggle {
+                            checked: root.mute-enabled;
+                            toggled(on) => {
+                                root.mute-enabled = on;
+                                root.mute-toggled(on);
+                            }
+                        }
+                    }
+                }
+            }
+
+            Card {
+                horizontal-stretch: 1;
+                HorizontalLayout {
+                    padding-left: Theme.space-lg;
+                    padding-right: Theme.space-md;
+                    spacing: Theme.space-md;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        Text {
+                            text: "Reference";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-body;
+                            font-weight: Theme.weight-semibold;
+                        }
+                        Text {
+                            text: "Pitch of A4";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Stepper {
+                            width: 168px;
+                            text: round(root.reference-pitch) + " Hz";
+                            can-decrement: root.reference-pitch > 430;
+                            can-increment: root.reference-pitch < 450;
+                            decrement => {
+                                root.reference-pitch = max(430, root.reference-pitch - 1);
+                                root.reference-pitch-changed(root.reference-pitch);
+                            }
+                            increment => {
+                                root.reference-pitch = min(450, root.reference-pitch + 1);
+                                root.reference-pitch-changed(root.reference-pitch);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

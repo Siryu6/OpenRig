@@ -1,0 +1,10 @@
+#!/bin/sh
+#
+# Boot splash: the logo on the screen from the moment the display driver is
+# up until the UI takes it over (pedalboard-splash waits for the driver, in
+# the background). Replace /usr/share/pedalboard/splash.png to change it.
+
+[ "$1" = start ] || exit 0
+. /run/pedalboard/config 2>/dev/null || . /etc/pedalboard/defaults
+setsid /usr/libexec/pedalboard/splash /usr/share/pedalboard/splash.png \
+	"$display_rotation" </dev/null >/dev/null 2>&1 &

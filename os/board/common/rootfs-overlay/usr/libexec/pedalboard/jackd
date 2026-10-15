@@ -1,0 +1,36 @@
+#!/bin/sh
+#
+# JACK server on the audio interface set in pedalboard.txt. Run by init and
+# started again when it exits (interface unplugged, crash).
+
+. /run/pedalboard/config 2>/dev/null || . /etc/pedalboard/defaults
+
+# ALSA card for "auto": the first one that is not an HDMI output
+pick_card() {
+	sed -n 's/^ *[0-9][0-9]* \[\([^] ]*\) *\]: \(.*\)$/\1 \2/p' /proc/asound/cards |
+		while read -r id description; do
+			case "$id $description" in
+			*[Hh][Dd][Mm][Ii]*) ;;
+			*) echo "$id" && break ;;
+			esac
+		done
+}
+
+card=$audio_device
+[ "$card" = auto ] && card=$(pick_card)
+if [ -z "$card" ] || ! grep -q "\[$card *\]" /proc/asound/cards; then
+	# Not plugged in yet: look again in a moment
+	sleep 3
+	exit 1
+fi
+
+logger -t jackd "starting on $card: $sample_rate Hz, $period x $periods frames"
+# Real-time priority for the server and its clients, without root (util-linux
+# prlimit and setpriv, not the BusyBox applets of the same name)
+/usr/bin/prlimit --rtprio=95 --memlock=unlimited \
+	/usr/bin/setpriv --reuid=pedalboard --regid=pedalboard --init-groups --reset-env \
+	jackd -R -P 80 -d alsa -d "hw:$card" \
+	-r "$sample_rate" -p "$period" -n "$periods" 2>&1 |
+	logger -t jackd
+# Do not restart in a tight loop when the interface refuses the settings
+sleep 2

@@ -1,0 +1,62 @@
+import { Theme } from "../theme.slint";
+
+// OpenRig mark: a pedal open at the top, three knobs and the footswitch.
+// Same drawing as the boot splash (os/board/common/splash/splash.svg).
+export component LogoMark {
+    in property <length> size: 28px;   // height
+    in property <color> color: Theme.accent;
+
+    height: root.size;
+    width: root.size * 132 / 160;
+
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 214;
+        viewbox-y: 14;
+        viewbox-width: 132;
+        viewbox-height: 160;
+        fill: transparent;
+        stroke: root.color;
+        stroke-width: root.size * 7 / 160;
+        stroke-line-cap: round;
+        commands: "M262 22 H238 A16 16 0 0 0 222 38 V150 A16 16 0 0 0 238 166 H322 A16 16 0 0 0 338 150 V38 A16 16 0 0 0 322 22 H298"
+            + " M235 62 A11 11 0 1 0 257 62 A11 11 0 1 0 235 62 Z M246 62 L239 55"
+            + " M269 62 A11 11 0 1 0 291 62 A11 11 0 1 0 269 62 Z M280 62 V52"
+            + " M303 62 A11 11 0 1 0 325 62 A11 11 0 1 0 303 62 Z M314 62 L321 55"
+            + " M260 128 A20 20 0 1 0 300 128 A20 20 0 1 0 260 128 Z";
+    }
+
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 214;
+        viewbox-y: 14;
+        viewbox-width: 132;
+        viewbox-height: 160;
+        fill: root.color;
+        commands: "M272 128 A8 8 0 1 0 288 128 A8 8 0 1 0 272 128 Z";
+    }
+}
+
+// "openrig" wordmark: light "open", bold "rig"
+export component LogoText inherits HorizontalLayout {
+    in property <length> font-size: 24px;
+    in property <color> color: Theme.accent;
+
+    spacing: 0px;
+    Text {
+        text: "open";
+        color: root.color;
+        font-size: root.font-size;
+        font-weight: 300;
+        letter-spacing: root.font-size * 0.05;
+    }
+    Text {
+        text: "rig";
+        color: root.color;
+        font-size: root.font-size;
+        font-weight: Theme.weight-bold;
+        letter-spacing: root.font-size * 0.05;
+    }
+}

@@ -1,0 +1,9 @@
+// Runtime feature flags, set by Rust through `app.global::<Features>()`.
+// Pages show or hide optional features from these instead of passing
+// properties down every component.
+export global Features {
+    // A TONE3000 account is connected: show the TONE3000 features
+    in-out property <bool> tone3000: false;
+    // The OS can switch the board off or restart it for the app
+    in-out property <bool> power: false;
+}

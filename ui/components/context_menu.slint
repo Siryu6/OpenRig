@@ -1,0 +1,88 @@
+import { Theme } from "../theme.slint";
+import { MenuItem } from "../types.slint";
+import { Icon } from "controls.slint";
+
+export { MenuItem }
+
+// Popup menu: list of items with an icon (Icon name) and a label.
+export component ContextMenu inherits Rectangle {
+    in property <[MenuItem]> items: [];
+    callback item-clicked(string);
+
+    width: 240px;
+    height: root.items.length * 48px + 2 * Theme.space-sm;
+    background: Theme.surface-raised;
+    border-radius: Theme.radius-lg;
+    border-width: 1px;
+    border-color: Theme.border-strong;
+
+    TouchArea { }
+
+    VerticalLayout {
+        padding: Theme.space-sm;
+        for item in root.items: Rectangle {
+            height: 48px;
+            border-radius: Theme.radius-md;
+            background: item-ta.pressed && item.enabled ? Theme.surface-hover : transparent;
+            opacity: item.enabled ? 1.0 : 0.4;
+
+            HorizontalLayout {
+                padding-left: Theme.space-md;
+                padding-right: Theme.space-md;
+                spacing: Theme.space-md;
+                VerticalLayout {
+                    alignment: center;
+                    Icon {
+                        name: item.icon;
+                        color: Theme.text-secondary;
+                    }
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: item.label;
+                    color: Theme.text-primary;
+                    font-size: Theme.font-body;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+
+            item-ta := TouchArea {
+                enabled: item.enabled;
+                clicked => {
+                    root.item-clicked(item.id);
+                }
+            }
+        }
+    }
+}
+
+// Full-window overlay hosting a ContextMenu; tap outside to dismiss.
+export component ContextMenuOverlay inherits Rectangle {
+    in property <[MenuItem]> menu-items: [];
+    in property <bool> show-menu: false;
+    in property <length> menu-x: 0px;
+    in property <length> menu-y: 0px;
+
+    callback menu-item-clicked(string);
+    callback close-menu();
+
+    visible: root.show-menu;
+    background: Theme.scrim.with-alpha(0.35);
+
+    TouchArea {
+        enabled: root.show-menu;
+        clicked => {
+            root.close-menu();
+        }
+    }
+
+    if root.show-menu: ContextMenu {
+        x: max(Theme.space-sm, min(root.menu-x, root.width - self.width - Theme.space-sm));
+        y: max(Theme.space-sm, min(root.menu-y, root.height - self.height - Theme.space-sm));
+        items: root.menu-items;
+        item-clicked(id) => {
+            root.menu-item-clicked(id);
+        }
+    }
+}

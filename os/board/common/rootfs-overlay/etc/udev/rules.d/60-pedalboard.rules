@@ -1,0 +1,3 @@
+# Footswitches and encoder: GPIO access for the pedalboard user
+SUBSYSTEM=="gpio", KERNEL=="gpiochip*", GROUP="gpio", MODE="0660"
+KERNEL=="gpiomem*", GROUP="gpio", MODE="0660"

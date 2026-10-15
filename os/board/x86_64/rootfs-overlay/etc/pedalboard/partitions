@@ -1,0 +1,5 @@
+# Partitions of the disk (board/x86_64/genimage.cfg): 1 EFI and settings,
+# 2 and 3 system A and B, 4 data. System B and data are made on first boot.
+ROOT_B_NR=3
+ROOT_B_UUID=0b5c1e7d-6a1f-4a8e-9d3b-70ed1b0a0003
+DATA_NR=4

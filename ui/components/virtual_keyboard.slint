@@ -1,0 +1,304 @@
+import { Theme } from "../theme.slint";
+import { Button, Icon } from "controls.slint";
+
+// Result of an edit: the new text and the caret position (UTF-8 bytes)
+export struct TextEdit {
+    text: string,
+    cursor: int,
+}
+
+// String edits from the backend (Slint has no substring). Offsets are UTF-8
+// byte offsets, like TextInput's caret.
+export global TextEditing {
+    // Replace the bytes from `start` to `end` with `insert`
+    pure callback replace(text: string, start: int, end: int, insert: string) -> TextEdit;
+    // Erase the bytes from `start` to `end`, or the character before `start`
+    // when they are equal
+    pure callback erase(text: string, start: int, end: int) -> TextEdit;
+}
+
+component Key inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <bool> special: false;
+    in property <bool> active: false;
+    in property <string> font-family;
+    callback pressed-key();
+
+    horizontal-stretch: 1;
+    min-width: 40px;
+    height: Theme.touch-target;
+    border-radius: Theme.radius-sm;
+    background: root.active ? Theme.accent-soft : ta.pressed ? Theme.surface-hover
+        : root.special ? Theme.surface : Theme.surface-raised;
+    border-width: 1px;
+    border-color: root.active ? Theme.accent : Theme.border;
+
+    if root.icon == "": Text {
+        text: root.text;
+        color: root.active ? Theme.accent : Theme.text-primary;
+        font-family: root.font-family;
+        font-size: root.special ? Theme.font-small : Theme.font-title;
+        font-weight: Theme.weight-medium;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if root.icon != "": Icon {
+        name: root.icon;
+        color: root.active ? Theme.accent : Theme.text-primary;
+    }
+
+    ta := TouchArea {
+        clicked => {
+            root.pressed-key();
+        }
+    }
+}
+
+// On-screen QWERTY keyboard with an integrated text field.
+export component VirtualKeyboard inherits Rectangle {
+    in-out property <string> current-text: "";
+    in property <string> placeholder: "Enter a name";
+    in property <string> submit-label: "Done";
+    // Passwords: the text is hidden until "Show" is tapped
+    in property <bool> secret: false;
+    // Keys and codes: shown in a font where 0 and O differ
+    in property <bool> code: false;
+
+    callback text-changed(string);
+    callback submit();
+    callback cancel();
+
+
+    private property <bool> uppercase: true;
+    private property <bool> symbols: false;
+    private property <bool> reveal: false;
+    private property <[string]> row1-upper: ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"];
+    private property <[string]> row1-lower: ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"];
+    private property <[string]> row2-upper: ["A", "S", "D", "F", "G", "H", "J", "K", "L"];
+    private property <[string]> row2-lower: ["a", "s", "d", "f", "g", "h", "j", "k", "l"];
+    private property <[string]> row3-upper: ["Z", "X", "C", "V", "B", "N", "M"];
+    private property <[string]> row3-lower: ["z", "x", "c", "v", "b", "n", "m"];
+    private property <[string]> row1-symbols: ["!", "@", "#", "$", "%", "^", "&", "*", "(", ")"];
+    private property <[string]> row2-symbols: ["~", "`", "+", "=", "[", "]", "{", "}", "|"];
+    private property <[string]> row3-symbols: [";", ":", "'", "\"", ",", ".", "?"];
+
+    // Keys type at the caret, replacing the selection
+    function type-text(t: string) {
+        root.apply(TextEditing.replace(root.current-text, root.selection-start(), root.selection-end(), t));
+    }
+
+    function erase() {
+        root.apply(TextEditing.erase(root.current-text, root.selection-start(), root.selection-end()));
+    }
+
+    function selection-start() -> int {
+        return min(field.cursor-position-byte-offset, field.anchor-position-byte-offset);
+    }
+
+    function selection-end() -> int {
+        return max(field.cursor-position-byte-offset, field.anchor-position-byte-offset);
+    }
+
+    function apply(edit: TextEdit) {
+        if (edit.text != root.current-text) {
+            root.current-text = edit.text;
+            root.text-changed(edit.text);
+        }
+        field.set-selection-offsets(edit.cursor, edit.cursor);
+    }
+
+    height: 320px;
+    background: Theme.surface;
+
+    Rectangle {
+        y: 0;
+        height: 1px;
+        background: Theme.border;
+    }
+
+    VerticalLayout {
+        padding: Theme.space-md;
+        spacing: 6px;
+
+        // Text field
+        Rectangle {
+            height: Theme.touch-target;
+            border-radius: Theme.radius-md;
+            background: Theme.background;
+            border-width: 1px;
+            border-color: Theme.accent;
+
+            // A real text input, so a USB keyboard (and paste) works too
+            Rectangle {
+                x: Theme.space-md;
+                width: parent.width - 2 * Theme.space-md - (root.secret ? 72px : 0);
+                if root.current-text == "": Text {
+                    width: 100%;
+                    text: root.placeholder;
+                    color: Theme.text-muted;
+                    font-size: Theme.font-title;
+                    vertical-alignment: center;
+                }
+                field := TextInput {
+                    width: 100%;
+                    text <=> root.current-text;
+                    color: Theme.text-primary;
+                    font-family: root.code || root.secret ? Theme.font-code : "";
+                    font-size: Theme.font-title;
+                    vertical-alignment: center;
+                    single-line: true;
+                    input-type: root.secret && !root.reveal ? InputType.password : InputType.text;
+                    selection-background-color: Theme.accent-soft;
+                    init => {
+                        self.focus();
+                    }
+                    edited => {
+                        root.text-changed(self.text);
+                    }
+                    accepted => {
+                        if (self.text != "") {
+                            root.submit();
+                        }
+                    }
+                }
+            }
+            if root.secret: Rectangle {
+                x: parent.width - self.width;
+                width: 72px;
+                Text {
+                    text: root.reveal ? "Hide" : "Show";
+                    color: Theme.accent;
+                    font-size: Theme.font-small;
+                    font-weight: Theme.weight-medium;
+                }
+                TouchArea {
+                    clicked => {
+                        root.reveal = !root.reveal;
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            for k in ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]: Key {
+                text: k;
+                font-family: Theme.font-code;
+                pressed-key => {
+                    root.type-text(k);
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            for k[i] in root.row1-upper: Key {
+                text: root.symbols ? root.row1-symbols[i] : root.uppercase ? k : root.row1-lower[i];
+                pressed-key => {
+                    root.type-text(self.text);
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            padding-left: 38px;
+            padding-right: 38px;
+            for k[i] in root.row2-upper: Key {
+                text: root.symbols ? root.row2-symbols[i] : root.uppercase ? k : root.row2-lower[i];
+                pressed-key => {
+                    root.type-text(self.text);
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            if !root.symbols: Key {
+                horizontal-stretch: 1.6;
+                text: "Shift";
+                special: true;
+                active: root.uppercase;
+                pressed-key => {
+                    root.uppercase = !root.uppercase;
+                }
+            }
+            if root.symbols: Key {
+                text: "<";
+                pressed-key => {
+                    root.type-text("<");
+                }
+            }
+            for k[i] in root.row3-upper: Key {
+                text: root.symbols ? root.row3-symbols[i] : root.uppercase ? k : root.row3-lower[i];
+                pressed-key => {
+                    root.type-text(self.text);
+                }
+            }
+            if root.symbols: Key {
+                text: ">";
+                pressed-key => {
+                    root.type-text(">");
+                }
+            }
+            Key {
+                horizontal-stretch: 1.6;
+                text: "Delete";
+                special: true;
+                pressed-key => {
+                    root.erase();
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            Button {
+                width: 120px;
+                text: "Cancel";
+                variant: "secondary";
+                clicked => {
+                    root.cancel();
+                }
+            }
+            Key {
+                horizontal-stretch: 1.4;
+                text: root.symbols ? "ABC" : "#+=";
+                special: true;
+                pressed-key => {
+                    root.symbols = !root.symbols;
+                }
+            }
+            Key {
+                text: root.symbols ? "/" : "-";
+                pressed-key => {
+                    root.type-text(self.text);
+                }
+            }
+            Key {
+                text: root.symbols ? "\\" : "_";
+                pressed-key => {
+                    root.type-text(self.text);
+                }
+            }
+            Key {
+                horizontal-stretch: 2;
+                text: "Space";
+                special: true;
+                pressed-key => {
+                    root.type-text(" ");
+                }
+            }
+            Button {
+                width: 120px;
+                text: root.submit-label;
+                variant: "primary";
+                enabled: root.current-text != "";
+                clicked => {
+                    root.submit();
+                }
+            }
+        }
+    }
+}

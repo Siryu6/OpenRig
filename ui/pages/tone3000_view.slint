@@ -1,0 +1,363 @@
+import { Theme } from "../theme.slint";
+import { T3kTone, T3kModel } from "../types.slint";
+import { Badge, Button, Card, Chip, EmptyState, Icon, Segmented } from "../components/controls.slint";
+
+export { T3kTone, T3kModel }
+
+// TONE3000 library: the user's favorites / own / downloaded tones and the
+// trending / latest lists, filtered by gear. Opening a tone lists its models;
+// each is downloaded only when asked, then usable in a NAM or IR block.
+export component Tone3000View inherits Rectangle {
+    in property <int> tab: 0;                        // index in tab-names
+    in property <string> gear: "";                   // API value, "" = all
+    in property <[T3kTone]> tones: [];
+    in property <bool> loading: false;
+    in property <string> error: "";
+    in property <bool> has-more: false;
+    // Open tone
+    in-out property <bool> detail-open: false;
+    in property <T3kTone> detail;
+    in property <[T3kModel]> models: [];
+    in property <bool> models-loading: false;
+    in property <string> detail-url: "";
+    // Block the library was opened from ("" = none): downloaded models can be loaded in it
+    in property <string> target-name: "";
+    private property <bool> can-use: root.target-name != "" && root.detail.usable;
+    // Gear filters ("" = all); only the block's gears when opened from a block
+    in property <[string]> gear-ids: [];
+    in property <[string]> gear-names: [];
+
+    callback load(int, string);                      // tab, gear
+    callback load-more();
+    callback open-tone(int);                         // index in tones
+    callback download(int);                          // index in models
+    callback use-model(string);                      // relative path
+    callback add-model(string, string);              // block URI, relative path
+
+    private property <[string]> tab-names: ["Favorites", "My tones", "Downloaded", "Trending", "Latest"];
+    private property <length> row-height: 60px;
+
+    width: 100%;
+    height: 100%;
+
+    VerticalLayout {
+        padding: Theme.space-md;
+        padding-bottom: Theme.space-sm;
+        spacing: Theme.space-sm;
+
+        Segmented {
+            options: root.tab-names;
+            current-index: root.tab;
+            activated(i) => {
+                root.load(i, root.gear);
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            for name[i] in root.gear-names: Chip {
+                text: name;
+                selected: root.gear-ids[i] == root.gear;
+                clicked => {
+                    root.load(root.tab, root.gear-ids[i]);
+                }
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+
+            if root.tones.length == 0 && root.loading: Text {
+                text: "Loading…";
+                color: Theme.text-secondary;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            if root.tones.length == 0 && !root.loading && root.error == "": EmptyState {
+                icon: root.tab == 0 ? "check" : "info";
+                title: root.tab == 0 ? "No favorites yet" : root.tab == 1 ? "No tones published yet" :
+                    root.tab == 2 ? "Nothing downloaded yet" : "Nothing here";
+                message: root.tab == 0 ? "Favorite tones on tone3000.com from your phone or computer: they show up here."
+                    : root.gear != "" ? "Try another gear filter." : "";
+            }
+
+            if root.error != "": EmptyState {
+                icon: "info";
+                title: "TONE3000 is not reachable";
+                message: root.error;
+            }
+
+            if root.tones.length > 0: Flickable {
+                viewport-height: (root.tones.length + (root.has-more ? 1 : 0)) * (root.row-height + 4px);
+                interactive: self.viewport-height > self.height;
+
+                for tone[i] in root.tones: Rectangle {
+                    y: i * (root.row-height + 4px);
+                    height: root.row-height;
+                    border-radius: Theme.radius-md;
+                    background: row-ta.pressed ? Theme.surface-hover : Theme.surface;
+                    opacity: tone.supported ? 1.0 : 0.55;
+
+                    HorizontalLayout {
+                        padding-left: Theme.space-md;
+                        padding-right: Theme.space-md;
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: tone.title;
+                                color: Theme.text-primary;
+                                font-size: Theme.font-body;
+                                font-weight: Theme.weight-semibold;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: "by @" + tone.creator + " · " + tone.detail
+                                    + (tone.license != "" ? " · " + tone.license : "");
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-small;
+                                overflow: elide;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Badge {
+                                text: tone.gear;
+                                tone: tone.supported ? "accent" : "neutral";
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            width: 20px;
+                            if tone.on-board: Icon {
+                                name: "check";
+                                color: Theme.success;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                name: "chevron-right";
+                                color: Theme.text-muted;
+                            }
+                        }
+                    }
+
+                    row-ta := TouchArea {
+                        clicked => {
+                            root.open-tone(i);
+                        }
+                    }
+                }
+
+                if root.has-more: Button {
+                    x: (parent.width - self.width) / 2;
+                    y: root.tones.length * (root.row-height + 4px) + 8px;
+                    width: 200px;
+                    text: root.loading ? "Loading…" : "Load more";
+                    enabled: !root.loading;
+                    clicked => {
+                        root.load-more();
+                    }
+                }
+            }
+        }
+
+        // Attribution required by the TONE3000 API terms
+        HorizontalLayout {
+            alignment: start;
+            spacing: Theme.space-sm;
+            Text {
+                text: "Powered by TONE3000";
+                color: Theme.text-secondary;
+                font-size: Theme.font-caption;
+                font-weight: Theme.weight-bold;
+            }
+            Text {
+                text: "tone3000.com";
+                color: Theme.accent;
+                font-size: Theme.font-caption;
+            }
+        }
+    }
+
+    // ---------------- Tone sheet ----------------
+    if root.detail-open: Rectangle {
+        background: Theme.scrim;
+
+        TouchArea {
+            clicked => {
+                root.detail-open = false;
+            }
+        }
+
+        Card {
+            x: (parent.width - self.width) / 2;
+            y: Theme.space-md;
+            width: parent.width - 2 * Theme.space-xl;
+            height: parent.height - 2 * Theme.space-md;
+            background: Theme.surface-raised;
+
+            TouchArea { }
+
+            VerticalLayout {
+                padding: Theme.space-lg;
+                spacing: Theme.space-sm;
+
+                HorizontalLayout {
+                    spacing: Theme.space-md;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 2px;
+                        Text {
+                            text: root.detail.title;
+                            color: Theme.text-primary;
+                            font-size: Theme.font-title;
+                            font-weight: Theme.weight-semibold;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: "by @" + root.detail.creator + " · " + root.detail.gear
+                                + (root.detail.license != "" ? " · License: " + root.detail.license : "");
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: root.detail-url;
+                            color: Theme.accent;
+                            font-size: Theme.font-caption;
+                            overflow: elide;
+                        }
+                    }
+                    Button {
+                        horizontal-stretch: 0;
+                        icon: "close";
+                        variant: "ghost";
+                        clicked => {
+                            root.detail-open = false;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Theme.border;
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+
+                    if !root.detail.supported: EmptyState {
+                        icon: "info";
+                        title: "Format not supported yet";
+                        message: "The pedalboard loads NAM captures and IRs (.wav).";
+                    }
+
+                    if root.detail.supported && root.models-loading: Text {
+                        text: "Loading models…";
+                        color: Theme.text-secondary;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    if root.detail.supported && !root.models-loading: Flickable {
+                        viewport-height: root.models.length * 52px;
+                        interactive: self.viewport-height > self.height;
+
+                        for model[k] in root.models: Rectangle {
+                            y: k * 52px;
+                            height: 48px;
+                            border-radius: Theme.radius-md;
+                            background: Theme.surface;
+
+                            HorizontalLayout {
+                                padding-left: Theme.space-md;
+                                padding-right: Theme.space-xs;
+                                spacing: Theme.space-md;
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: model.name;
+                                    color: Theme.text-primary;
+                                    font-size: Theme.font-body;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: model.detail;
+                                    color: Theme.text-muted;
+                                    font-size: Theme.font-small;
+                                    vertical-alignment: center;
+                                }
+                                if model.state == "remote": Button {
+                                    width: 128px;
+                                    text: "Download";
+                                    variant: "ghost";
+                                    clicked => {
+                                        root.download(k);
+                                    }
+                                }
+                                if model.state == "downloading": Text {
+                                    width: 128px;
+                                    text: "Downloading…";
+                                    color: Theme.text-secondary;
+                                    font-size: Theme.font-small;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                                if model.state == "local" && !root.can-use && root.detail.block-uri != "": Button {
+                                    width: 128px;
+                                    text: "Add";
+                                    variant: "primary";
+                                    clicked => {
+                                        root.add-model(root.detail.block-uri, model.path);
+                                    }
+                                }
+                                if model.state == "local" && !root.can-use && root.detail.block-uri == "": HorizontalLayout {
+                                    width: 128px;
+                                    alignment: center;
+                                    spacing: Theme.space-xs;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Icon {
+                                            name: "check";
+                                            color: Theme.success;
+                                        }
+                                    }
+                                    Text {
+                                        text: "On board";
+                                        color: Theme.success;
+                                        font-size: Theme.font-small;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                if model.state == "local" && root.can-use: Button {
+                                    width: 128px;
+                                    text: "Use";
+                                    variant: "primary";
+                                    clicked => {
+                                        root.use-model(model.path);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if root.can-use: Text {
+                    text: "Use loads the model in " + root.target-name + ".";
+                    color: Theme.text-muted;
+                    font-size: Theme.font-caption;
+                }
+                if !root.can-use && root.detail.block-uri != "": Text {
+                    text: "Add puts the model in a new " + root.detail.block-name + " block at the end of the chain.";
+                    color: Theme.text-muted;
+                    font-size: Theme.font-caption;
+                }
+            }
+        }
+    }
+}

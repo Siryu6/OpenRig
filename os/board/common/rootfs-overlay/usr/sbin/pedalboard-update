@@ -1,0 +1,188 @@
+#!/bin/sh
+#
+# System updates. The disk holds two copies of the system, slots A and B,
+# and one data partition. An update (a RAUC bundle signed with the key of
+# the build, see docs/OS.md) is written to the slot not running, tried once
+# at the next reboot, and kept only if the pedalboard starts on it;
+# otherwise the board is back on the previous system at the next start.
+#
+#   pedalboard-update install <file.raucb>  write an update to the other slot
+#   pedalboard-update reboot                restart, trying the update once
+#   pedalboard-update status                slots, version, last update
+#   pedalboard-update check                 at boot (S95update): keep the
+#                                           update tried, or report it failed
+#   pedalboard-update keep                  keep the update tried now (the UI
+#                                           asked to power off or restart:
+#                                           it runs)
+#
+# RAUC calls /usr/libexec/pedalboard/rauc-backend for the boot slots; the
+# board's /usr/libexec/pedalboard/boot-slots switches them.
+
+SLOTS=/usr/libexec/pedalboard/boot-slots
+DIR=/data/update
+# "installed B", "trying B", "updated B" or "failed B"
+STATE=$DIR/state
+# How long the UI must keep running on an update for it to be kept, and
+# how long to wait for that
+UI_UP_SECS=30
+UI_WAIT_SECS=240
+
+log() {
+	echo "$*"
+	logger -t pedalboard-update "$*"
+}
+
+booted() {
+	sed -n 's/.*rauc\.slot=\([AB]\).*/\1/p' /proc/cmdline
+}
+
+other() {
+	if [ "$1" = A ]; then echo B; else echo A; fi
+}
+
+state() {
+	cat "$STATE" 2>/dev/null
+}
+
+# BusyBox sync takes no file: it syncs everything
+set_state() {
+	mkdir -p "$DIR" &&
+		echo "$*" >"$STATE.tmp" &&
+		sync &&
+		mv "$STATE.tmp" "$STATE" &&
+		sync
+}
+
+clear_state() {
+	rm -f "$STATE"
+	sync
+}
+
+# Boot slot handler of RAUC (custom backend): RAUC marks the slot it
+# writes bad, then primary once written; `rauc status mark-good` marks the
+# running one good. A slot only becomes the default once it started well.
+rauc_backend() {
+	case "$1" in
+	get-primary) "$SLOTS" primary ;;
+	get-current) booted ;;
+	get-state)
+		if [ -e "$DIR/bad.$2" ]; then echo bad; else echo good; fi
+		;;
+	set-primary)
+		[ "$2" = "$("$SLOTS" primary)" ] && exit 0
+		mkdir -p "$DIR" && rm -f "$DIR/bad.$2" && set_state installed "$2"
+		;;
+	set-state)
+		case "$3" in
+		bad)
+			mkdir -p "$DIR" && touch "$DIR/bad.$2" || exit 1
+			case "$(state)" in "installed $2" | "trying $2") clear_state ;; esac
+			;;
+		good)
+			rm -f "$DIR/bad.$2"
+			if [ "$2" = "$(booted)" ] && [ "$2" != "$("$SLOTS" primary)" ]; then
+				"$SLOTS" set-primary "$2"
+			fi
+			;;
+		*) exit 1 ;;
+		esac
+		;;
+	*)
+		echo "unknown backend command: $*" >&2
+		exit 1
+		;;
+	esac
+}
+
+# True once the UI has kept running for UI_UP_SECS
+ui_runs() {
+	up=0
+	waited=0
+	while [ $waited -lt $UI_WAIT_SECS ]; do
+		if pidof pedalboard >/dev/null; then
+			up=$((up + 1))
+			[ $up -ge $UI_UP_SECS ] && return 0
+		else
+			up=0
+		fi
+		sleep 1
+		waited=$((waited + 1))
+	done
+	return 1
+}
+
+keep() {
+	[ "$(state)" = "trying $(booted)" ] || return 0
+	rauc status mark-good >/dev/null &&
+		set_state updated "$(booted)" &&
+		log "update kept: $(version)"
+}
+
+check() {
+	current=$(booted)
+	case "$(state)" in
+	"trying $current")
+		if ui_runs; then
+			keep
+		else
+			# The firmware / GRUB tried this slot once: a reboot goes back
+			log "the pedalboard does not start on the update: back to the previous system"
+			reboot
+		fi
+		;;
+	"trying "*)
+		failed=$(other "$current")
+		rauc status mark-bad other >/dev/null
+		set_state failed "$failed"
+		log "the update did not start: still on the previous system"
+		;;
+	esac
+}
+
+version() {
+	sed -n 's/^VERSION="\(.*\)"/\1/p' /etc/pedalboard-release
+}
+
+case "$1" in
+install)
+	[ -n "$2" ] || {
+		echo "usage: $0 install <file.raucb>" >&2
+		exit 2
+	}
+	case "$(state)" in "trying "*)
+		echo "An update is being tried: wait for it to be kept" >&2
+		exit 1
+		;;
+	esac
+	mkdir -p /data/rauc
+	rauc install "$2" || exit 1
+	log "update written to slot $(other "$(booted)"): restart with '$0 reboot' to use it"
+	;;
+reboot)
+	case "$(state)" in
+	"installed "*)
+		slot=$(state)
+		slot=${slot#installed }
+		"$SLOTS" arm "$slot" && set_state trying "$slot" || exit 1
+		log "restarting on slot $slot"
+		exec "$SLOTS" reboot-trial
+		;;
+	*) exec reboot ;;
+	esac
+	;;
+status)
+	echo "running:  slot $(booted), $(version)"
+	echo "default:  slot $("$SLOTS" primary)"
+	echo "update:   $(state || true)"
+	;;
+check) check ;;
+keep) keep ;;
+rauc-backend)
+	shift
+	rauc_backend "$@"
+	;;
+*)
+	sed -n '9,16s/^# \{0,1\}//p' "$0" >&2
+	exit 2
+	;;
+esac

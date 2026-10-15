@@ -1,0 +1,8 @@
+/target
+# Fallback data folder (may hold TONE3000 tokens)
+/pedalboard-data/
+# Pedalboard OS: Buildroot downloads and build outputs
+/os/.cache/
+/os/output/
+# Signing key of the OS updates (os/board/common/update-keys.sh)
+/os/keys/

@@ -1,0 +1,459 @@
+import { Theme } from "../theme.slint";
+import { SceneInfo, SceneSlotInfo, PresetInfo } from "../types.slint";
+import { Badge, Button, Card, EmptyState, Icon, SectionHeader, Segmented } from "../components/controls.slint";
+import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
+
+export { SceneInfo, SceneSlotInfo }
+
+// Setlists: list of setlists + the presets of the current one on the 8
+// footswitch slots. (Named "scenes" in the code, from before scenes within
+// a preset.)
+export component SceneManager inherits Rectangle {
+    in property <[SceneInfo]> scenes: [];
+    in property <[SceneSlotInfo]> scene-slots: [];
+    in property <[PresetInfo]> presets: [];
+    in property <string> current-scene-name: "No setlist";
+    in-out property <int> view-mode: 0; // 0 = setlist list, 1 = footswitch slots
+
+    callback scene-selected(string);      // scene id
+    callback create-scene(string);        // name
+    callback delete-scene(string);        // scene id
+    callback slot-assign(int, string);    // slot number, preset id
+    callback slot-clear(int);             // slot number
+    callback footswitch-pressed(int);     // slot number (0-7)
+    callback close();
+    callback show-presets();
+
+
+    in-out property <bool> show-create-dialog: false;
+    in-out property <string> new-scene-name: "";
+    private property <string> confirm-delete-id: "";
+    private property <int> assign-slot: -1;   // slot waiting for a preset
+
+    width: 100%;
+    height: 100%;
+
+    VerticalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-md;
+
+        // Header
+        HorizontalLayout {
+            height: 48px;
+            spacing: Theme.space-md;
+            Segmented {
+                width: 300px;
+                options: ["Presets", "Setlists", "Slots"];
+                current-index: root.view-mode + 1;
+                activated(i) => {
+                    if (i == 0) {
+                        root.show-presets();
+                    } else {
+                        root.view-mode = i - 1;
+                    }
+                }
+            }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 2px;
+                SectionHeader {
+                    text: "CURRENT SETLIST";
+                }
+                Text {
+                    text: root.current-scene-name;
+                    color: Theme.text-primary;
+                    font-size: Theme.font-body;
+                    font-weight: Theme.weight-semibold;
+                    overflow: elide;
+                }
+            }
+            if root.view-mode == 0: Button {
+                horizontal-stretch: 0;
+                icon: "plus";
+                text: "New setlist";
+                variant: "primary";
+                clicked => {
+                    root.new-scene-name = "";
+                    root.show-create-dialog = true;
+                }
+            }
+        }
+
+        // ---------------- Scene list ----------------
+        if root.view-mode == 0 && root.scenes.length == 0: Rectangle {
+            vertical-stretch: 1;
+            EmptyState {
+                icon: "setlist";
+                title: "No setlists yet";
+                message: "A setlist puts up to 8 presets on the footswitches, in the order of the gig.";
+            }
+        }
+
+        if root.view-mode == 0 && root.scenes.length > 0: Flickable {
+            vertical-stretch: 1;
+            min-height: 0px;
+            viewport-height: max(self.height, scene-list.preferred-height);
+            interactive: scene-list.preferred-height > self.height;
+
+            scene-list := VerticalLayout {
+                spacing: Theme.space-sm;
+                for scene in root.scenes: srow := Rectangle {
+                    property <bool> is-current: scene.name == root.current-scene-name;
+                    property <bool> confirming: root.confirm-delete-id == scene.id;
+                    height: 64px;
+                    border-radius: Theme.radius-lg;
+                    background: self.confirming ? Theme.danger-soft : srow-ta.pressed ? Theme.surface-hover : Theme.surface;
+                    border-width: 1px;
+                    border-color: self.confirming ? Theme.danger : self.is-current ? Theme.accent : Theme.border;
+
+                    srow-ta := TouchArea {
+                        enabled: !srow.confirming;
+                        clicked => {
+                            root.confirm-delete-id = "";
+                            root.scene-selected(scene.id);
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding: Theme.space-sm + 2px;
+                        padding-left: Theme.space-md;
+                        spacing: Theme.space-md;
+
+                        Rectangle {
+                            width: 44px;
+                            border-radius: Theme.radius-md;
+                            background: srow.is-current ? Theme.accent-soft : Theme.surface-raised;
+                            Icon {
+                                name: "setlist";
+                                color: srow.is-current ? Theme.accent : Theme.text-secondary;
+                            }
+                        }
+
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: srow.confirming ? "Delete \"" + scene.name + "\"?" : scene.name;
+                                color: Theme.text-primary;
+                                font-size: Theme.font-body;
+                                font-weight: Theme.weight-semibold;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: srow.confirming ? "This cannot be undone." :
+                                    (scene.preset-count == 1 ? "1 preset" : scene.preset-count + " presets")
+                                    + (scene.description != "" ? "  ·  " + scene.description : "");
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-small;
+                                overflow: elide;
+                            }
+                        }
+
+                        if srow.is-current && !srow.confirming: VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 0;
+                            Badge {
+                                text: "ACTIVE";
+                                tone: "accent";
+                            }
+                        }
+                        if !srow.confirming: Button {
+                            horizontal-stretch: 0;
+                            icon: "trash";
+                            variant: "ghost";
+                            clicked => {
+                                root.confirm-delete-id = scene.id;
+                            }
+                        }
+                        if srow.confirming: Button {
+                            horizontal-stretch: 0;
+                            text: "Cancel";
+                            clicked => {
+                                root.confirm-delete-id = "";
+                            }
+                        }
+                        if srow.confirming: Button {
+                            horizontal-stretch: 0;
+                            text: "Delete";
+                            variant: "solid-danger";
+                            clicked => {
+                                root.confirm-delete-id = "";
+                                root.delete-scene(scene.id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---------------- Footswitch grid ----------------
+        if root.view-mode == 1 && root.scene-slots.length == 0: Rectangle {
+            vertical-stretch: 1;
+            EmptyState {
+                icon: "footswitch";
+                title: "No setlist loaded";
+                message: "Load or create a setlist to put presets on the footswitches.";
+            }
+        }
+
+        if root.view-mode == 1 && root.scene-slots.length > 0: grid := Rectangle {
+            vertical-stretch: 1;
+            property <length> cell-w: (self.width - 3 * Theme.space-md) / 4;
+            property <length> cell-h: (self.height - Theme.space-md) / 2;
+
+            for slot[i] in root.scene-slots: Rectangle {
+                x: mod(i, 4) * (grid.cell-w + Theme.space-md);
+                y: floor(i / 4) * (grid.cell-h + Theme.space-md);
+                width: grid.cell-w;
+                height: grid.cell-h;
+                border-radius: Theme.radius-lg;
+                background: Theme.panel;
+                border-width: 1px;
+                border-color: slot.active ? Theme.accent : #00000080;
+
+                slot-ta := TouchArea {
+                    clicked => {
+                        if (slot.is-empty) {
+                            root.assign-slot = slot.slot-number;
+                        } else {
+                            root.footswitch-pressed(slot.slot-number);
+                        }
+                    }
+                }
+
+                // Scribble strip: number and preset name
+                strip := Rectangle {
+                    x: Theme.space-sm;
+                    y: Theme.space-sm;
+                    width: parent.width - 2 * Theme.space-sm;
+                    height: 52px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.display;
+                    border-width: 1px;
+                    border-color: #000000;
+
+                    Text {
+                        x: Theme.space-sm;
+                        y: 4px;
+                        text: slot.slot-number + 1;
+                        color: slot.active ? Theme.accent : Theme.text-muted;
+                        font-size: Theme.font-caption;
+                        font-weight: Theme.weight-bold;
+                    }
+                    Text {
+                        x: Theme.space-sm;
+                        y: 14px;
+                        width: parent.width - 2 * Theme.space-sm;
+                        height: parent.height - 16px;
+                        text: slot.is-empty ? "Assign preset" : slot.preset-name;
+                        color: slot.is-empty ? Theme.text-muted : slot.active ? Theme.accent : Theme.text-primary;
+                        font-size: slot.is-empty ? Theme.font-small : Theme.font-body;
+                        font-weight: Theme.weight-bold;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+
+                // LED over the switch, lit for the active slot
+                property <length> switch-d: min(52px, self.height - strip.height - 48px);
+                property <length> switch-y: strip.y + strip.height + 22px + (self.height - strip.y - strip.height - 22px - self.switch-d) / 2;
+                if slot.active: Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    y: parent.switch-y - 19px;
+                    width: 16px;
+                    height: 16px;
+                    border-radius: 8px;
+                    background: Theme.accent.with-alpha(0.3);
+                }
+                Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    y: parent.switch-y - 15px;
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: slot.active ? Theme.accent : Theme.led-off;
+                }
+
+                // Footswitch: metal button, "+" when the slot is free
+                Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    y: parent.switch-y;
+                    width: parent.switch-d;
+                    height: parent.switch-d;
+                    border-radius: self.width / 2;
+                    background: slot-ta.pressed ? @linear-gradient(180deg, #6b7079 0%, #9aa0a8 100%)
+                        : @linear-gradient(180deg, #c3c8cf 0%, #6b7079 100%);
+                    border-width: 2px;
+                    border-color: #2a2d33;
+                    opacity: slot.is-empty ? 0.35 : 1.0;
+                    Rectangle {
+                        width: parent.width * 0.62;
+                        height: parent.height * 0.62;
+                        border-radius: self.width / 2;
+                        background: slot-ta.pressed ? #858a93 : @linear-gradient(180deg, #9ea4ac 0%, #d2d6db 100%);
+                        border-width: 1px;
+                        border-color: #00000040;
+                    }
+                    if slot.is-empty: Icon {
+                        name: "plus";
+                        color: #20232a;
+                    }
+                }
+
+                // Clear the slot
+                if !slot.is-empty: Button {
+                    x: parent.width - self.width - Theme.space-xs;
+                    y: parent.height - self.height - Theme.space-xs;
+                    width: 40px;
+                    height: 40px;
+                    icon: "close";
+                    icon-size: 16px;
+                    variant: "ghost";
+                    clicked => {
+                        root.slot-clear(slot.slot-number);
+                    }
+                }
+            }
+        }
+    }
+
+    // Preset picker for an empty footswitch slot
+    if root.assign-slot >= 0: Rectangle {
+        background: Theme.scrim;
+        TouchArea {
+            clicked => {
+                root.assign-slot = -1;
+            }
+        }
+
+        Card {
+            x: (parent.width - self.width) / 2;
+            y: Theme.space-lg;
+            width: 420px;
+            height: parent.height - 2 * Theme.space-lg;
+            background: Theme.surface-raised;
+            TouchArea { }
+
+            VerticalLayout {
+                padding: Theme.space-lg;
+                spacing: Theme.space-md;
+
+                HorizontalLayout {
+                    Text {
+                        horizontal-stretch: 1;
+                        text: "Footswitch " + (root.assign-slot + 1);
+                        color: Theme.text-primary;
+                        font-size: Theme.font-title;
+                        font-weight: Theme.weight-semibold;
+                        vertical-alignment: center;
+                    }
+                    Button {
+                        horizontal-stretch: 0;
+                        icon: "close";
+                        variant: "ghost";
+                        clicked => {
+                            root.assign-slot = -1;
+                        }
+                    }
+                }
+
+                if root.presets.length == 0: Text {
+                    vertical-stretch: 1;
+                    text: "No presets available. Save a preset first.";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-small;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                if root.presets.length > 0: Flickable {
+                    vertical-stretch: 1;
+                    min-height: 0px;
+                    viewport-height: root.presets.length * 52px;
+                    interactive: self.viewport-height > self.height;
+                    for preset[k] in root.presets: Rectangle {
+                        y: k * 52px;
+                        height: 48px;
+                        border-radius: Theme.radius-md;
+                        background: pick-ta.pressed ? Theme.surface-hover : transparent;
+                        HorizontalLayout {
+                            padding-left: Theme.space-md;
+                            padding-right: Theme.space-md;
+                            spacing: Theme.space-md;
+                            VerticalLayout {
+                                alignment: center;
+                                Icon {
+                                    name: "presets";
+                                    color: Theme.text-secondary;
+                                }
+                            }
+                            Text {
+                                horizontal-stretch: 1;
+                                text: preset.name;
+                                color: Theme.text-primary;
+                                font-size: Theme.font-body;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                        pick-ta := TouchArea {
+                            clicked => {
+                                root.slot-assign(root.assign-slot, preset.id);
+                                root.assign-slot = -1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // New scene dialog
+    if root.show-create-dialog: Rectangle {
+        background: Theme.scrim;
+        TouchArea { }
+
+        VerticalLayout {
+            Rectangle {
+                vertical-stretch: 1;
+                background: Theme.panel;
+                VerticalLayout {
+                    alignment: center;
+                    padding-left: Theme.space-lg;
+                    spacing: 2px;
+                    Text {
+                        text: "New setlist";
+                        color: Theme.text-primary;
+                        font-size: Theme.font-headline;
+                        font-weight: Theme.weight-bold;
+                    }
+                    Text {
+                        text: "Name the setlist, then put presets on its footswitches.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                    }
+                }
+            }
+            VirtualKeyboard {
+                current-text: root.new-scene-name;
+                placeholder: "Setlist name";
+                submit-label: "Create";
+                text-changed(t) => {
+                    root.new-scene-name = t;
+                }
+                submit => {
+                    if (root.new-scene-name != "") {
+                        root.create-scene(root.new-scene-name);
+                    }
+                    root.show-create-dialog = false;
+                }
+                cancel => {
+                    root.show-create-dialog = false;
+                }
+            }
+        }
+    }
+}

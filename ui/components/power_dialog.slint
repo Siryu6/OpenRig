@@ -1,0 +1,94 @@
+import { Theme } from "../theme.slint";
+import { Button, Card, Icon } from "controls.slint";
+
+// Power off / restart, asked from the menu where the OS can do it. Once
+// chosen, the screen stays on a message until the board goes off.
+export component PowerDialog inherits Rectangle {
+    in-out property <bool> show: false;
+    // "" while asking, then "poweroff" or "reboot"
+    in-out property <string> action: "";
+
+    callback power(string);
+
+    visible: root.show;
+    background: Theme.scrim;
+
+    // Taps outside the card close it (not once switching off)
+    TouchArea {
+        clicked => {
+            if (root.action == "") {
+                root.show = false;
+            }
+        }
+    }
+
+    Card {
+        width: 420px;
+        height: self.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+
+        // Swallows taps on the card
+        TouchArea { }
+
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-md;
+
+            HorizontalLayout {
+                spacing: Theme.space-md;
+                VerticalLayout {
+                    alignment: center;
+                    Icon {
+                        name: "power";
+                        color: Theme.accent;
+                    }
+                }
+                Text {
+                    text: root.action == "poweroff" ? "Switching off…"
+                        : root.action == "reboot" ? "Restarting…" : "Power";
+                    color: Theme.text-primary;
+                    font-size: Theme.font-title;
+                    font-weight: Theme.weight-semibold;
+                    vertical-alignment: center;
+                }
+            }
+            Text {
+                text: root.action == "poweroff"
+                    ? "The session is saved. Unplug the power once the screen is off; on a Raspberry Pi, its power button starts it again."
+                    : root.action == "reboot" ? "The session is saved. The pedalboard is back in a few seconds."
+                    : "Switch off before unplugging the power: the session and the card are left clean.";
+                color: Theme.text-secondary;
+                font-size: Theme.font-small;
+                wrap: word-wrap;
+            }
+            if root.action == "": HorizontalLayout {
+                spacing: Theme.space-sm;
+                Button {
+                    horizontal-stretch: 1;
+                    text: "Cancel";
+                    clicked => {
+                        root.show = false;
+                    }
+                }
+                Button {
+                    horizontal-stretch: 1;
+                    text: "Restart";
+                    clicked => {
+                        root.action = "reboot";
+                        root.power("reboot");
+                    }
+                }
+                Button {
+                    horizontal-stretch: 1;
+                    text: "Power off";
+                    variant: "primary";
+                    clicked => {
+                        root.action = "poweroff";
+                        root.power("poweroff");
+                    }
+                }
+            }
+        }
+    }
+}

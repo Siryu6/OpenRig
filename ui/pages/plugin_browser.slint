@@ -1,0 +1,213 @@
+import { Theme } from "../theme.slint";
+import { PluginItem } from "../types.slint";
+import { Badge, Chip, EmptyState, Icon, SectionHeader } from "../components/controls.slint";
+import { BlockShape } from "../components/block_shape.slint";
+
+// Short code shown in the category tile of a plugin row
+export global CategoryCode {
+    pure public function code(category: string) -> string {
+        return category == "Distortion" ? "DST" :
+            category == "Dynamics" ? "DYN" :
+            category == "Filter" ? "EQ" :
+            category == "Modulation" ? "MOD" :
+            category == "Delay" ? "DLY" :
+            category == "Reverb" ? "REV" :
+            category == "Simulator" ? "AMP" :
+            category == "Utility" ? "UTL" :
+            category == "Generator" ? "GEN" : "FX";
+    }
+}
+
+// Plugin browser: category filter chips + list of available plugins.
+export component PluginBrowser {
+    in property <[PluginItem]> plugins: [];
+    in property <int> selected-index: 0;
+    in property <string> target-label: "Main chain";
+    in property <bool> demo-plugins: false;
+    in-out property <string> category-filter: "All";
+
+    callback plugin-selected(int, string); // index, uri
+
+    private property <[string]> categories: ["All", "Distortion", "Dynamics", "Filter", "Modulation",
+        "Delay", "Reverb", "Simulator", "Utility", "Generator", "Unknown"];
+
+    width: 100%;
+    height: 100%;
+
+    VerticalLayout {
+        padding-top: Theme.space-md;
+        spacing: Theme.space-md;
+
+        // Header
+        HorizontalLayout {
+            padding-left: Theme.space-lg;
+            padding-right: Theme.space-lg;
+            spacing: Theme.space-sm;
+
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 2px;
+                SectionHeader {
+                    text: "INSERT INTO";
+                }
+                Text {
+                    text: root.target-label;
+                    color: Theme.text-primary;
+                    font-size: Theme.font-body;
+                    font-weight: Theme.weight-semibold;
+                    overflow: elide;
+                }
+            }
+
+            if root.demo-plugins: VerticalLayout {
+                alignment: center;
+                Badge {
+                    text: "DEMO PLUGINS";
+                    tone: "warning";
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Badge {
+                    text: root.plugins.length + " AVAILABLE";
+                }
+            }
+        }
+
+        // Category chips (horizontal scroll)
+        Flickable {
+            min-width: 0px;
+            height: Theme.touch-target;
+            viewport-width: chips.preferred-width;
+            interactive: chips.preferred-width > self.width;
+
+            chips := HorizontalLayout {
+                padding-left: Theme.space-lg;
+                padding-right: Theme.space-lg;
+                spacing: Theme.space-sm;
+                for c in root.categories: Chip {
+                    text: c == "Unknown" ? "Other" : c;
+                    selected: root.category-filter == c;
+                    clicked => {
+                        root.category-filter = c;
+                    }
+                }
+            }
+        }
+
+        // Plugin list
+        if root.plugins.length == 0: Rectangle {
+            vertical-stretch: 1;
+            EmptyState {
+                icon: "plug";
+                title: "No plugins found";
+                message: "Install LV2 plugins and restart the pedalboard.";
+            }
+        }
+
+        if root.plugins.length > 0: list := Flickable {
+            vertical-stretch: 1;
+            min-height: 0px;
+            viewport-height: max(self.height, rows.preferred-height);
+            interactive: rows.preferred-height > self.height;
+
+            rows := VerticalLayout {
+                padding-left: Theme.space-lg;
+                padding-right: Theme.space-lg;
+                padding-bottom: Theme.space-lg;
+
+                for plugin[idx] in root.plugins: VerticalLayout {
+                    if root.category-filter == "All" || plugin.category == root.category-filter: Rectangle {
+                        height: 64px + Theme.space-sm;
+
+                        Rectangle {
+                            y: 0;
+                            height: 64px;
+                            border-radius: Theme.radius-lg;
+                            background: row-ta.pressed ? Theme.surface-hover : Theme.surface;
+                            border-width: 1px;
+                            border-color: idx == root.selected-index ? Theme.accent : Theme.border;
+
+                            HorizontalLayout {
+                                padding: Theme.space-sm + 2px;
+                                padding-left: Theme.space-md;
+                                padding-right: Theme.space-md;
+                                spacing: Theme.space-md;
+
+                                // Built-in blocks show the gear they are drawn as in the rack
+                                if plugin.kind != "": Rectangle {
+                                    width: 56px;
+                                    gear := BlockShape {
+                                        kind: plugin.kind;
+                                        name: "";
+                                        tint: plugin.color;
+                                        transform-origin: { x: self.width / 2, y: self.height / 2 };
+                                        transform-scale: min(parent.width / self.shape-width, parent.height / self.shape-height);
+                                    }
+                                }
+
+                                if plugin.kind == "": Rectangle {
+                                    width: 56px;
+                                    border-radius: Theme.radius-md;
+                                    background: @linear-gradient(180deg, plugin.color.brighter(0.18) 0%, plugin.color.darker(0.12) 100%);
+                                    border-width: 1px;
+                                    border-color: plugin.color.brighter(0.5);
+                                    Text {
+                                        text: CategoryCode.code(plugin.category);
+                                        color: #ffffff;
+                                        font-size: Theme.font-caption;
+                                        font-weight: Theme.weight-bold;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text {
+                                        text: plugin.name;
+                                        color: Theme.text-primary;
+                                        font-size: Theme.font-body;
+                                        font-weight: Theme.weight-semibold;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: plugin.hint != "" ? plugin.hint
+                                            : plugin.author == "" ? plugin.category : plugin.author + "  ·  " + plugin.category;
+                                        color: Theme.text-secondary;
+                                        font-size: Theme.font-small;
+                                        overflow: elide;
+                                    }
+                                }
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        width: 32px;
+                                        height: 32px;
+                                        border-radius: Theme.radius-md;
+                                        background: Theme.surface-raised;
+                                        Icon {
+                                            name: "plus";
+                                            size: 18px;
+                                            color: Theme.accent;
+                                        }
+                                    }
+                                }
+                            }
+
+                            row-ta := TouchArea {
+                                clicked => {
+                                    root.plugin-selected(idx, plugin.uri);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

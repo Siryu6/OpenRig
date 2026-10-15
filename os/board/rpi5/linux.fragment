@@ -1,0 +1,7 @@
+# Mount the boot partition (vfat, default charset) without loading a module
+CONFIG_NLS_ISO8859_1=y
+
+# Plain .ko modules: the Raspberry Pi defconfig compresses them with xz,
+# which neither kmod (built without xz) nor this kernel can load, so no
+# driver (display, USB audio, Wi-Fi) would load
+# CONFIG_MODULE_COMPRESS is not set

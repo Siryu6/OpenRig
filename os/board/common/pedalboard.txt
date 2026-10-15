@@ -1,0 +1,21 @@
+# Pedalboard settings, read at boot. This file is on the small FAT partition
+# of the card: edit it from any computer, then restart the pedalboard.
+
+# Audio interface: "auto" (the first USB interface or sound HAT), or a card
+# name as listed in /proc/asound/cards, e.g. AudioBox or pisound
+audio_device=auto
+
+# Sample rate (Hz) and buffer (period frames x periods). 128 x 2 at 48 kHz
+# adds about 5 ms each way; use 256 if you hear clicks.
+sample_rate=48000
+period=128
+periods=2
+
+# Screen rotation in degrees: 0, 90, 180 or 270
+display_rotation=0
+
+# Wi-Fi country, two letters (FR, DE, US...): opens the channels allowed there
+wifi_country=
+
+# SSH: put your public keys in a file named authorized_keys next to this one
+# to log in as root (keys only, no password).

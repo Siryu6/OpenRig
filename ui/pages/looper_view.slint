@@ -1,0 +1,283 @@
+import { Theme } from "../theme.slint";
+import { LooperState } from "../types.slint";
+import { Button, Display, Icon, Slider } from "../components/controls.slint";
+
+export { LooperState }
+
+// Large transport key (record / overdub / play / stop), with a LED that
+// lights in its colour while that mode runs
+component TransportButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <color> tone: Theme.text-primary;
+    in property <bool> active: false;
+    callback clicked();
+
+    min-height: Theme.touch-large;
+    border-radius: Theme.radius-lg;
+    background: ta.pressed ? Theme.key-pressed : Theme.key;
+    border-width: 1px;
+    border-color: root.active ? root.tone : #00000080;
+
+    if !ta.pressed: Rectangle {
+        x: Theme.radius-lg;
+        y: 1px;
+        width: parent.width - 2 * Theme.radius-lg;
+        height: 1px;
+        background: Theme.edge-light;
+    }
+    // LED
+    if root.active: Rectangle {
+        x: 9px;
+        y: 7px;
+        width: 14px;
+        height: 14px;
+        border-radius: 7px;
+        background: root.tone.with-alpha(0.35);
+    }
+    Rectangle {
+        x: 12px;
+        y: 10px;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: root.active ? root.tone : Theme.led-off;
+    }
+
+    HorizontalLayout {
+        alignment: center;
+        spacing: Theme.space-sm;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                name: root.icon;
+                size: 24px;
+                color: root.tone;
+            }
+        }
+        Text {
+            text: root.label;
+            color: Theme.text-primary;
+            font-size: Theme.font-body;
+            font-weight: Theme.weight-semibold;
+            vertical-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export global TimeFormat {
+    // seconds -> "m:ss.t"
+    pure public function format(t: float) -> string {
+        return floor(max(0, t) / 60) + ":"
+            + (max(0, t) - floor(max(0, t) / 60) * 60 < 10 ? "0" : "")
+            + floor(max(0, t) - floor(max(0, t) / 60) * 60) + "."
+            + floor(mod(max(0, t) * 10, 10));
+    }
+}
+
+// Looper: status, transport and level.
+export component LooperView inherits Rectangle {
+    in property <LooperState> state: LooperState.Stopped;
+    in property <float> loop-length: 0.0;      // seconds
+    in property <float> current-position: 0.0; // seconds
+    in property <int> layer-count: 0;
+    in property <float> level: 1.0;            // 0.0 .. 1.0
+
+    callback record-clicked();
+    callback play-clicked();
+    callback stop-clicked();
+    callback overdub-clicked();
+    callback undo-clicked();
+    callback clear-clicked();
+    callback level-changed(float);
+
+    private property <color> state-color:
+        root.state == LooperState.Recording ? Theme.danger :
+        root.state == LooperState.Overdubbing ? Theme.warning :
+        root.state == LooperState.Playing ? Theme.success : Theme.text-muted;
+    private property <float> progress: root.loop-length > 0 ? max(0, min(1, root.current-position / root.loop-length)) : 0;
+
+    width: 100%;
+    height: 100%;
+
+    VerticalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-md;
+
+        // ---------------- Status ----------------
+        Display {
+            vertical-stretch: 1;
+            border-color: root.state == LooperState.Stopped ? #000000 : root.state-color.with-alpha(0.6);
+
+            VerticalLayout {
+                padding: Theme.space-xl;
+                spacing: Theme.space-md;
+                alignment: center;
+
+                HorizontalLayout {
+                    spacing: Theme.space-sm;
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 10px;
+                            height: 10px;
+                            border-radius: 5px;
+                            background: root.state-color;
+                        }
+                    }
+                    Text {
+                        text: root.state == LooperState.Recording ? "RECORDING" :
+                            root.state == LooperState.Overdubbing ? "OVERDUBBING" :
+                            root.state == LooperState.Playing ? "PLAYING" :
+                            root.loop-length > 0 ? "STOPPED" : "EMPTY";
+                        color: root.state-color;
+                        font-size: Theme.font-small;
+                        font-weight: Theme.weight-bold;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: root.layer-count == 1 ? "1 layer" : root.layer-count + " layers";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        vertical-alignment: center;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: Theme.space-sm;
+                    Text {
+                        text: TimeFormat.format(root.current-position);
+                        color: Theme.text-primary;
+                        font-size: Theme.font-display;
+                        font-weight: Theme.weight-bold;
+                    }
+                    VerticalLayout {
+                        alignment: end;
+                        padding-bottom: 6px;
+                        Text {
+                            text: "/ " + TimeFormat.format(root.loop-length);
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-title;
+                        }
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+                }
+
+                // Progress bar
+                Rectangle {
+                    height: 6px;
+                    background: #000000;
+                    Rectangle {
+                        x: 0;
+                        width: parent.width * root.progress;
+                        height: 100%;
+                        background: root.state == LooperState.Stopped ? Theme.text-muted : root.state-color;
+                    }
+                }
+            }
+        }
+
+        // ---------------- Transport ----------------
+        HorizontalLayout {
+            spacing: Theme.space-md;
+            TransportButton {
+                horizontal-stretch: 1;
+                icon: "record";
+                label: "Record";
+                tone: Theme.danger;
+                active: root.state == LooperState.Recording;
+                clicked => {
+                    root.record-clicked();
+                }
+            }
+            TransportButton {
+                horizontal-stretch: 1;
+                icon: "overdub";
+                label: "Overdub";
+                tone: Theme.warning;
+                active: root.state == LooperState.Overdubbing;
+                clicked => {
+                    root.overdub-clicked();
+                }
+            }
+            TransportButton {
+                horizontal-stretch: 1;
+                icon: "play";
+                label: "Play";
+                tone: Theme.success;
+                active: root.state == LooperState.Playing;
+                clicked => {
+                    root.play-clicked();
+                }
+            }
+            TransportButton {
+                horizontal-stretch: 1;
+                icon: "stop";
+                label: "Stop";
+                tone: Theme.text-primary;
+                clicked => {
+                    root.stop-clicked();
+                }
+            }
+        }
+
+        // ---------------- Edit + level ----------------
+        HorizontalLayout {
+            spacing: Theme.space-md;
+            Button {
+                icon: "undo";
+                text: "Undo";
+                enabled: root.layer-count > 0;
+                clicked => {
+                    root.undo-clicked();
+                }
+            }
+            Button {
+                icon: "trash";
+                text: "Clear";
+                variant: "danger";
+                enabled: root.loop-length > 0 || root.layer-count > 0;
+                clicked => {
+                    root.clear-clicked();
+                }
+            }
+            Rectangle {
+                width: Theme.space-md;
+            }
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    name: "volume";
+                    color: Theme.text-secondary;
+                }
+            }
+            level-slider := Slider {
+                horizontal-stretch: 1;
+                value: root.level;
+                changed(v) => {
+                    root.level-changed(v);
+                }
+            }
+            Text {
+                width: 48px;
+                text: round(level-slider.shown-value * 100) + "%";
+                color: Theme.text-primary;
+                font-size: Theme.font-body;
+                font-weight: Theme.weight-semibold;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

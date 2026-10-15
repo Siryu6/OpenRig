@@ -1,0 +1,8 @@
+#!/bin/sh
+#
+# After an update: keep it once the pedalboard runs on it, or report that
+# it did not start (see pedalboard-update). Runs in the background.
+
+[ "$1" = start ] || exit 0
+[ -e /data/update/state ] || exit 0
+setsid /usr/sbin/pedalboard-update check </dev/null >/dev/null 2>&1 &

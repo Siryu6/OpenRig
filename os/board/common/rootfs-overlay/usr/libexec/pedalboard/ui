@@ -1,0 +1,57 @@
+#!/bin/sh
+#
+# Pedalboard UI, full screen on the display (no X11 / Wayland). Run by init
+# and started again when it exits; it quits by itself when the JACK server
+# stops or starts, to run on the new one.
+
+. /run/pedalboard/config 2>/dev/null || . /etc/pedalboard/defaults
+case "$display_rotation" in
+0 | 90 | 180 | 270) ;;
+*) display_rotation=0 ;;
+esac
+
+# At boot, give a starting JACK server a few seconds to accept clients
+n=0
+while [ $n -lt 10 ] && pidof jackd >/dev/null &&
+	! ls /dev/shm/jack_default_* >/dev/null 2>&1; do
+	sleep 0.5
+	n=$((n + 1))
+done
+
+# ALSA sequencer, for MIDI: not loaded by anything else
+modprobe -q snd-seq
+
+# Power off / restart from the menu: the app writes the action there and
+# quits; it is carried out here, as root
+power=/run/pedalboard/power
+install -d -o pedalboard -g pedalboard -m 700 "$power"
+rm -f "$power/request"
+
+# util-linux, not the BusyBox applets of the same name (fewer options)
+/usr/bin/prlimit --rtprio=95 --memlock=unlimited \
+	/usr/bin/setpriv --reuid=pedalboard --regid=pedalboard --init-groups --reset-env \
+	env PEDALBOARD_DATA_DIR=/data/pedalboard \
+	LV2_PATH=/data/pedalboard/lv2:/usr/lib/lv2 \
+	PEDALBOARD_EXIT_ON_AUDIO_CHANGE=1 \
+	PEDALBOARD_POWER_REQUEST="$power/request" \
+	SLINT_BACKEND=linuxkms \
+	SLINT_KMS_ROTATION="$display_rotation" \
+	/usr/bin/pedalboard 2>&1 |
+	logger -t pedalboard
+
+# The UI ran until asked: an update being tried is kept (the check at boot
+# would wait 30 s for it, and an early power off would undo the update)
+case "$(cat "$power/request" 2>/dev/null)" in
+poweroff)
+	/usr/sbin/pedalboard-update keep
+	logger -t pedalboard "switching off"
+	exec poweroff
+	;;
+reboot)
+	/usr/sbin/pedalboard-update keep
+	logger -t pedalboard "restarting"
+	# Starts an update waiting to be tried, else a plain reboot
+	exec /usr/sbin/pedalboard-update reboot
+	;;
+esac
+sleep 1

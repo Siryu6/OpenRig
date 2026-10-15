@@ -1,0 +1,94 @@
+// Pedalboard design system.
+//
+// Single source of truth for colours, spacing, radii, typography and motion.
+// Every page and component must use these tokens instead of literal values.
+//
+// Look: a hardware unit on a dark stage, not a web page. Minimal and dark:
+// neutral blacks (no blue tint), panels with a lit top edge, keys that look
+// pressable, near-square corners. ONE accent colour (amber, like the lamps and
+// displays of amps and studio gear), used for lines,
+// LEDs and text rather than fills; family colours on the blocks, plus
+// semantic success / warning / danger.
+// Target: 800x480 touchscreen, GPU or software renderer (no blur).
+
+export global Theme {
+    // --- Surfaces (darkest to lightest) ---
+    out property <color> background: #050506;      // app background
+    out property <color> surface: #0f1012;         // cards, panels, bars
+    out property <color> surface-raised: #18191c;  // controls, inputs, nodes
+    out property <color> surface-hover: #242528;   // pressed / hovered controls
+    out property <color> scrim: #000000b3;         // modal backdrop
+    // Hardware details
+    out property <color> edge-light: #ffffff14;    // lit top edge of panels and keys
+    out property <color> display: #08090a;         // inset "LCD" areas
+    out property <color> led-off: #2a2b2e;
+    out property <brush> key: @linear-gradient(180deg, #232427 0%, #18191b 100%);
+    out property <brush> key-pressed: @linear-gradient(180deg, #111214 0%, #18191b 100%);
+    out property <brush> panel: @linear-gradient(180deg, #131416 0%, #0e0f10 100%);
+
+    // --- Lines ---
+    out property <color> border: #1e1f22;          // subtle 1px separators
+    out property <color> border-strong: #36383d;   // connectors, outlines
+
+    // --- Text ---
+    // Keys and passwords: its zero is dotted, so 0 and O differ (the default
+    // font is used where it is missing)
+    out property <string> font-code: "DejaVu Sans Mono";
+    out property <color> text-primary: #ededee;
+    out property <color> text-secondary: #9c9da3;
+    out property <color> text-muted: #5f6066;
+
+    // --- Accent (the only "brand" colour) ---
+    out property <color> accent: #f0a43c;
+    out property <color> accent-soft: #f0a43c1f;   // tinted backgrounds
+
+    // --- Semantic ---
+    out property <color> success: #7fcf72;
+    out property <color> success-soft: #7fcf7224;
+    out property <color> warning: #e3cf4a;
+    out property <color> warning-soft: #e3cf4a24;
+    out property <color> danger: #e5594f;
+    out property <color> danger-soft: #e5594f24;
+    // Status LEDs (blocks on, pedal engaged)
+    out property <color> led-green: #8ee27a;
+    out property <color> led-red: #ff5a4a;
+    // Outline of the selected block (white: reads on every block colour)
+    out property <color> selection: #ecebe7;
+    out property <color> on-semantic: #0c0e13;
+
+    // --- Typography scale ---
+    out property <length> font-caption: 11px;   // badges, overlines
+    out property <length> font-small: 13px;     // secondary text
+    out property <length> font-body: 15px;      // default text, buttons
+    out property <length> font-title: 18px;     // card / section titles
+    out property <length> font-headline: 24px;  // page headlines
+    out property <length> font-display: 40px;   // big numbers
+    out property <length> font-hero: 96px;      // tuner note
+    out property <int> weight-regular: 400;
+    out property <int> weight-medium: 500;
+    out property <int> weight-semibold: 600;
+    out property <int> weight-bold: 700;
+
+    // --- Spacing scale ---
+    out property <length> space-xs: 4px;
+    out property <length> space-sm: 8px;
+    out property <length> space-md: 12px;
+    out property <length> space-lg: 16px;
+    out property <length> space-xl: 24px;
+    out property <length> space-2xl: 32px;
+
+    // --- Radius scale ---
+    out property <length> radius-sm: 2px;
+    out property <length> radius-md: 3px;
+    out property <length> radius-lg: 4px;
+
+    // --- Sizes ---
+    out property <length> touch-target: 44px;   // minimum hit area
+    out property <length> touch-large: 64px;    // primary transport buttons
+    out property <length> top-bar-height: 56px;
+    out property <length> icon-size: 20px;
+    out property <length> border-width: 1px;
+
+    // --- Motion (short and subtle only) ---
+    out property <duration> motion-normal: 180ms;
+}

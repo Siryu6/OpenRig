@@ -1,0 +1,10 @@
+#!/bin/sh
+#
+# Network up (Ethernet or Wi-Fi): set the clock now. The board has no
+# battery-backed clock, and chronyd waits longer and longer between
+# attempts when it started before the network.
+
+case "$2" in
+up | connectivity-change) chronyc refresh >/dev/null 2>&1 ;;
+esac
+exit 0

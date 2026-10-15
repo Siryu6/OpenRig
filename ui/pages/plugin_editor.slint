@@ -1,0 +1,897 @@
+import { Theme } from "../theme.slint";
+import { ParameterInfo, ModelChoice, ColorChoice } from "../types.slint";
+import { Button, Badge, Card, EmptyState, Icon, Knob, Stepper, Toggle } from "../components/controls.slint";
+import { Features } from "../features.slint";
+
+// Formats a parameter value for display ("12.5 dB", "40%", "3")
+export global ParamFormat {
+    pure public function format(v: float, kind: string, unit: string) -> string {
+        if unit == "Hz" && v >= 1000 {
+            return (round(v / 100) / 10) + " kHz";
+        }
+        return (kind == "int" || abs(v) >= 100 ? round(v) : abs(v) >= 10 ? round(v * 10) / 10 : round(v * 100) / 100)
+            + (unit == "" ? "" : unit == "%" ? "%" : " " + unit);
+    }
+}
+
+// Modal list of ModelChoice rows (title + subtitle), optionally starting
+// with "None (passthrough)"
+// Small-caps label of the MIDI range row
+component RangeLabel inherits Text {
+    color: Theme.text-secondary;
+    font-size: Theme.font-caption;
+    font-weight: Theme.weight-bold;
+    letter-spacing: 0.8px;
+    vertical-alignment: center;
+}
+
+// Small amber "CC n" plate on a MIDI-driven control
+component MidiTag inherits Rectangle {
+    in property <string> text;
+    width: label.preferred-width + 8px;
+    height: 14px;
+    border-radius: 2px;
+    background: Theme.display;
+    border-width: 1px;
+    border-color: Theme.accent.with-alpha(0.6);
+    label := Text {
+        text: root.text;
+        color: Theme.accent;
+        font-size: 9px;
+        font-weight: Theme.weight-bold;
+        letter-spacing: 0.8px;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+}
+
+component ChoiceSheet inherits Rectangle {
+    in property <string> title;
+    in property <[ModelChoice]> choices;
+    in property <bool> show-none: false;
+    in property <bool> none-current: false;
+    in property <string> empty-text: "";
+    callback chosen(string);                // file, "" for none
+    callback close();
+
+    private property <length> row-height: 56px;
+    private property <int> offset: root.show-none ? 1 : 0;
+
+    background: Theme.scrim;
+
+    TouchArea {
+        clicked => {
+            root.close();
+        }
+    }
+
+    Card {
+        x: (parent.width - self.width) / 2;
+        y: Theme.space-lg;
+        width: 560px;
+        height: parent.height - 2 * Theme.space-lg;
+        background: Theme.surface-raised;
+
+        TouchArea { }
+
+        VerticalLayout {
+            padding: Theme.space-lg;
+            spacing: Theme.space-md;
+
+            HorizontalLayout {
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.title;
+                    color: Theme.text-primary;
+                    font-size: Theme.font-title;
+                    font-weight: Theme.weight-semibold;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Button {
+                    icon: "close";
+                    variant: "ghost";
+                    clicked => {
+                        root.close();
+                    }
+                }
+            }
+
+            if root.choices.length == 0 && root.empty-text != "": Text {
+                vertical-stretch: 1;
+                text: root.empty-text;
+                color: Theme.text-secondary;
+                font-size: Theme.font-body;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+
+            if root.choices.length > 0 || root.empty-text == "": Flickable {
+                vertical-stretch: 1;
+                viewport-height: (root.choices.length + root.offset) * root.row-height;
+                interactive: self.viewport-height > self.height;
+
+                if root.show-none: Rectangle {
+                    y: 0;
+                    height: root.row-height - 4px;
+                    border-radius: Theme.radius-md;
+                    background: none-ta.pressed ? Theme.surface-hover : root.none-current ? Theme.accent-soft : transparent;
+                    Text {
+                        x: Theme.space-md;
+                        text: "None (passthrough)";
+                        color: root.none-current ? Theme.accent : Theme.text-secondary;
+                        font-size: Theme.font-body;
+                        vertical-alignment: center;
+                    }
+                    none-ta := TouchArea {
+                        clicked => {
+                            root.chosen("");
+                        }
+                    }
+                }
+
+                for choice[k] in root.choices: Rectangle {
+                    y: (k + root.offset) * root.row-height;
+                    height: root.row-height - 4px;
+                    border-radius: Theme.radius-md;
+                    background: choice-ta.pressed ? Theme.surface-hover : choice.current ? Theme.accent-soft : transparent;
+
+                    HorizontalLayout {
+                        padding-left: Theme.space-md;
+                        padding-right: Theme.space-md;
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 1px;
+                            Text {
+                                text: choice.title;
+                                color: choice.current ? Theme.accent : Theme.text-primary;
+                                font-size: Theme.font-body;
+                                overflow: elide;
+                            }
+                            if choice.subtitle != "": Text {
+                                text: choice.subtitle;
+                                color: Theme.text-muted;
+                                font-size: Theme.font-small;
+                                overflow: elide;
+                            }
+                        }
+                        if choice.current: VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                name: "check";
+                                color: Theme.accent;
+                            }
+                        }
+                    }
+
+                    choice-ta := TouchArea {
+                        clicked => {
+                            root.chosen(choice.file);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Plugin parameter editor: header with bypass + scrollable grid of controls
+// generated from the plugin's parameter list.
+export component PluginEditor {
+    in property <int> instance-id: -1;
+    in property <string> plugin-name: "";
+    in property <string> category: "";
+    in property <bool> bypassed: false;
+    in property <[ParameterInfo]> parameters: [];
+    in property <int> focused-param: 0;
+    // Blocks loading a model file (NAM, IR): current file, relative to models-dir
+    in property <bool> uses-file: false;
+    in property <string> file: "";
+    in property <string> file-label: "Model";
+    in property <string> file-types: "";
+    in property <string> file-title: "";            // tone of the current file
+    in property <string> file-subtitle: "";         // "by @creator"
+    in property <[ModelChoice]> presets: [];        // presets of that tone
+    in property <string> preset-name: "";
+    in property <[ModelChoice]> packs: [];          // tones the block can load
+    in property <[ColorChoice]> colors: [];         // block palette
+    in property <string> color: "";                 // colour of this block ("" = default)
+    in property <color> color-value;
+    in property <color> auto-color;                 // "Auto": the colour of its family
+    in property <string> models-dir: "";
+
+    callback parameter-changed(int, float); // LV2 param index, value
+    callback bypass-toggled();
+    callback models-requested();            // refresh `models` before showing them
+    callback model-chosen(string);          // "" unloads the model
+    callback browse-tone3000();
+    // MIDI learn: tap MIDI, then touch a control and move a controller
+    in property <bool> midi-available: false;
+    in property <bool> midi-learning: false;
+    in property <int> midi-learn-target: -2;        // -2 none, -1 on/off, n parameter n
+    in property <int> midi-learn-cc: -1;            // controller moved first
+    in property <string> midi-learn-message: "";
+    in property <bool> midi-learn-assigned: false;  // the touched control has a controller
+    in property <int> midi-learn-heel: 0;           // its range in percent, at CC 0…
+    in property <int> midi-learn-toe: 100;          // …and at CC 127
+    in property <float> cpu: -1;                    // share of a core it uses, -1 unknown
+    in property <string> bypass-midi: "";           // "CC n" driving on/off
+    callback midi-learn-toggled(bool);
+    callback midi-learn-touch(int);
+    callback midi-learn-clear(int);
+    callback midi-learn-range(int, int);
+
+    callback color-chosen(string);          // "" for the default look             // open the TONE3000 library for this block
+
+    private property <int> columns: 5;
+    private property <length> gap: Theme.space-md;
+    private property <int> picker-pos: -1;  // position in `parameters` of the open enum picker
+    private property <bool> model-picker-open: false;
+    private property <bool> preset-picker-open: false;
+    private property <bool> color-picker-open: false;
+
+    width: 100%;
+    height: 100%;
+
+    if root.instance-id < 0 && root.plugin-name == "": EmptyState {
+        icon: "plug";
+        title: "No block selected";
+        message: "Pick a block in the rack to edit its parameters.";
+    }
+
+    if root.instance-id >= 0 || root.plugin-name != "": VerticalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-md;
+
+        // ---------------- Header ----------------
+        Card {
+            height: 72px;
+            HorizontalLayout {
+                padding: Theme.space-md;
+                padding-left: Theme.space-lg;
+                spacing: Theme.space-md;
+
+                // The block's colour, dark when bypassed
+                Rectangle {
+                    width: 44px;
+                    border-radius: Theme.radius-md;
+                    background: root.bypassed ? Theme.surface-raised
+                        : @linear-gradient(180deg, root.color-value.brighter(0.18) 0%, root.color-value.darker(0.12) 100%);
+                    border-width: 1px;
+                    border-color: root.bypassed ? Theme.border-strong : root.color-value.brighter(0.5);
+                    Icon {
+                        name: "plug";
+                        size: 22px;
+                        color: root.bypassed ? Theme.text-muted : #ffffff;
+                    }
+                }
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: root.plugin-name;
+                        color: Theme.text-primary;
+                        font-size: Theme.font-title;
+                        font-weight: Theme.weight-semibold;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: (root.category != "" ? root.category + "  ·  " : "")
+                            + root.parameters.length + (root.parameters.length == 1 ? " parameter" : " parameters")
+                            + (root.cpu < 0 ? "" : root.cpu < 0.01 ? "  ·  CPU < 1 %" : "  ·  CPU " + round(root.cpu * 100) + " %");
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        overflow: elide;
+                    }
+                }
+
+                if root.bypassed: VerticalLayout {
+                    alignment: center;
+                    Badge {
+                        text: "BYPASSED";
+                        tone: "warning";
+                    }
+                }
+
+                // Colour of the block in the rack
+                if root.colors.length > 0: Rectangle {
+                    width: 96px;
+                    border-radius: Theme.radius-md;
+                    background: color-ta.pressed ? Theme.surface-hover : Theme.surface-raised;
+                    border-width: 1px;
+                    border-color: Theme.border-strong;
+                    HorizontalLayout {
+                        padding-left: Theme.space-md;
+                        padding-right: Theme.space-md;
+                        spacing: Theme.space-sm;
+                        alignment: center;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 22px;
+                                height: 22px;
+                                border-radius: Theme.radius-sm;
+                                background: root.color-value;
+                                border-width: 1px;
+                                border-color: Theme.border-strong;
+                            }
+                        }
+                        Text {
+                            text: "Color";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-body;
+                            font-weight: Theme.weight-semibold;
+                            vertical-alignment: center;
+                        }
+                    }
+                    color-ta := TouchArea {
+                        enabled: root.instance-id >= 0;
+                        clicked => {
+                            root.color-picker-open = true;
+                        }
+                    }
+                }
+
+                if root.midi-available: Button {
+                    horizontal-stretch: 0;
+                    width: 112px;
+                    icon: "midi";
+                    text: "MIDI";
+                    active: root.midi-learning;
+                    enabled: root.instance-id >= 0;
+                    clicked => {
+                        root.midi-learn-toggled(!root.midi-learning);
+                    }
+                }
+
+                // While learning, touching it picks the on/off as the target
+                Rectangle {
+                    horizontal-stretch: 0;
+                    width: 120px;
+                    Button {
+                        icon: "power";
+                        text: root.bypassed ? "Off" : "On";
+                        active: !root.bypassed;
+                        enabled: root.instance-id >= 0;
+                        clicked => {
+                            if (root.midi-learning) {
+                                root.midi-learn-touch(-1);
+                            } else {
+                                root.bypass-toggled();
+                            }
+                        }
+                    }
+                    if root.midi-learning: Rectangle {
+                        border-radius: Theme.radius-md;
+                        border-width: root.midi-learn-target == -1 ? 2px : 1px;
+                        border-color: root.midi-learn-target == -1 ? Theme.accent : Theme.accent.with-alpha(0.35);
+                    }
+                    if root.bypass-midi != "": MidiTag {
+                        x: parent.width - self.width - 4px;
+                        y: 3px;
+                        text: root.bypass-midi;
+                    }
+                }
+            }
+        }
+
+        // ---------------- MIDI learn ----------------
+        if root.midi-learning: Rectangle {
+            border-radius: Theme.radius-md;
+            background: Theme.display;
+            border-width: 1px;
+            border-color: Theme.accent.with-alpha(0.5);
+            VerticalLayout {
+                HorizontalLayout {
+                    height: 44px;
+                    padding-left: Theme.space-md;
+                    padding-right: 4px;
+                    spacing: Theme.space-sm;
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 8px;
+                            height: 8px;
+                            border-radius: 4px;
+                            background: Theme.accent;
+                        }
+                    }
+                    Text {
+                        text: "MIDI LEARN";
+                        color: Theme.accent;
+                        font-size: Theme.font-caption;
+                        font-weight: Theme.weight-bold;
+                        letter-spacing: 0.8px;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.midi-learn-message;
+                        color: Theme.text-primary;
+                        font-size: Theme.font-small;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    if root.midi-learn-target != -2 && root.midi-learn-assigned: Button {
+                        horizontal-stretch: 0;
+                        variant: "ghost";
+                        icon: "trash";
+                        text: "Clear";
+                        clicked => {
+                            root.midi-learn-clear(root.midi-learn-target);
+                        }
+                    }
+                    Button {
+                        horizontal-stretch: 0;
+                        variant: "ghost";
+                        icon: "check";
+                        text: "Done";
+                        clicked => {
+                            root.midi-learn-toggled(false);
+                        }
+                    }
+                }
+
+                // Range of the learned control: where the controller puts it at
+                // CC 0 (heel) and CC 127 (toe)
+                if root.midi-learn-target != -2 && root.midi-learn-assigned: HorizontalLayout {
+                    padding-left: Theme.space-md;
+                    padding-right: 4px;
+                    padding-bottom: 4px;
+                    spacing: Theme.space-sm;
+                    RangeLabel {
+                        text: "HEEL";
+                    }
+                    Stepper {
+                        width: 150px;
+                        text: root.midi-learn-heel + " %";
+                        can-decrement: root.midi-learn-heel > 0;
+                        can-increment: root.midi-learn-heel < 100;
+                        decrement => {
+                            root.midi-learn-range(max(0, root.midi-learn-heel - 5), root.midi-learn-toe);
+                        }
+                        increment => {
+                            root.midi-learn-range(min(100, root.midi-learn-heel + 5), root.midi-learn-toe);
+                        }
+                    }
+                    RangeLabel {
+                        text: "TOE";
+                    }
+                    Stepper {
+                        width: 150px;
+                        text: root.midi-learn-toe + " %";
+                        can-decrement: root.midi-learn-toe > 0;
+                        can-increment: root.midi-learn-toe < 100;
+                        decrement => {
+                            root.midi-learn-range(root.midi-learn-heel, max(0, root.midi-learn-toe - 5));
+                        }
+                        increment => {
+                            root.midi-learn-range(root.midi-learn-heel, min(100, root.midi-learn-toe + 5));
+                        }
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.midi-learn-toe < root.midi-learn-heel ? "Reversed" : "";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-small;
+                        vertical-alignment: center;
+                        horizontal-alignment: right;
+                    }
+                    Button {
+                        horizontal-stretch: 0;
+                        variant: "ghost";
+                        icon: "refresh";
+                        text: "Swap";
+                        clicked => {
+                            root.midi-learn-range(root.midi-learn-toe, root.midi-learn-heel);
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---------------- Model file ----------------
+        if root.uses-file: Card {
+            height: 64px;
+            HorizontalLayout {
+                padding: Theme.space-sm;
+                padding-left: Theme.space-lg;
+                spacing: Theme.space-sm;
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: root.file-label.to-uppercase() + (root.file-subtitle != "" ? "  ·  " + root.file-subtitle : "");
+                        color: Theme.text-muted;
+                        font-size: Theme.font-small;
+                        font-weight: Theme.weight-semibold;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.file != "" ? root.file-title : "Nothing loaded: audio passes through";
+                        color: root.file != "" ? Theme.text-primary : Theme.text-secondary;
+                        font-size: Theme.font-body;
+                        font-weight: root.file != "" ? Theme.weight-semibold : Theme.weight-regular;
+                        overflow: elide;
+                    }
+                }
+
+                if root.presets.length > 1: Button {
+                    horizontal-stretch: 0;
+                    width: 210px;
+                    icon: "chevron-down";
+                    text: root.preset-name;
+                    clicked => {
+                        root.preset-picker-open = true;
+                    }
+                }
+
+                if Features.tone3000: Button {
+                    horizontal-stretch: 0;
+                    text: "TONE3000";
+                    enabled: root.instance-id >= 0;
+                    clicked => {
+                        root.browse-tone3000();
+                    }
+                }
+
+                Button {
+                    horizontal-stretch: 0;
+                    width: 110px;
+                    text: "Choose";
+                    enabled: root.instance-id >= 0;
+                    clicked => {
+                        root.models-requested();
+                        root.model-picker-open = true;
+                    }
+                }
+            }
+        }
+
+        // ---------------- Parameter grid ----------------
+        if root.parameters.length == 0: Rectangle {
+            vertical-stretch: 1;
+            EmptyState {
+                icon: "rack";
+                title: "No adjustable parameters";
+                message: "This block has no controls to edit.";
+            }
+        }
+
+        if root.parameters.length > 0: grid := Flickable {
+            vertical-stretch: 1;
+            property <length> cell-width: (self.width - (root.columns - 1) * root.gap) / root.columns;
+            property <int> rows: ceil(root.parameters.length / root.columns);
+            // Two rows share the height (smaller knobs) rather than scroll
+            property <bool> compact: self.rows == 2 && self.height < 2 * 152px + root.gap;
+            property <length> cell-height: self.compact ? max(100px, (self.height - root.gap) / 2) : 152px;
+            // Space above and below the knob: name and value
+            property <length> top: self.compact ? 24px : 30px;
+            property <length> bottom: self.compact ? 26px : 40px;
+            viewport-height: max(self.height, self.rows * (self.cell-height + root.gap) - root.gap);
+            interactive: self.viewport-height > self.height;
+
+            for p[i] in root.parameters: Rectangle {
+                x: mod(i, root.columns) * (grid.cell-width + root.gap);
+                y: floor(i / root.columns) * (grid.cell-height + root.gap);
+                width: grid.cell-width;
+                height: grid.cell-height;
+                border-radius: Theme.radius-lg;
+                background: Theme.surface;
+                // Learning: only the control being learned is highlighted
+                border-color: root.midi-learning ? (root.midi-learn-target == p.index ? Theme.accent : Theme.border)
+                    : i == root.focused-param ? Theme.accent : Theme.border;
+                border-width: root.midi-learning && root.midi-learn-target == p.index ? 2px : 1px;
+                opacity: root.bypassed ? 0.6 : 1.0;
+
+                // Name
+                Text {
+                    x: Theme.space-sm;
+                    y: grid.compact ? 4px : Theme.space-sm;
+                    width: parent.width - 2 * Theme.space-sm;
+                    height: 20px;
+                    text: p.name.to-uppercase();
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-caption;
+                    font-weight: Theme.weight-bold;
+                    letter-spacing: 0.8px;
+                    horizontal-alignment: center;
+                    overflow: elide;
+                }
+
+                // Continuous / stepped value: knob + live value
+                if p.kind == "float" || p.kind == "int" || p.kind == "": Rectangle {
+                    knob := Knob {
+                        x: (parent.width - self.width) / 2;
+                        y: grid.top;
+                        size: min(80px, parent.height - grid.top - grid.bottom);
+                        value: p.value;
+                        minimum: p.min;
+                        maximum: p.max;
+                        integer: p.kind == "int";
+                        focused: i == root.focused-param;
+                        accent: root.color-value;
+                        changed(v) => {
+                            root.parameter-changed(p.index, v);
+                        }
+                    }
+                    Text {
+                        y: parent.height - (grid.compact ? 24px : 32px);
+                        width: parent.width;
+                        height: 22px;
+                        text: p.has-off && abs(knob.shown-value - p.off-value) < 0.5 ? "Off"
+                            : ParamFormat.format(knob.shown-value, p.kind, p.unit);
+                        color: knob.dragging ? Theme.accent : Theme.text-primary;
+                        font-size: Theme.font-body;
+                        font-weight: Theme.weight-semibold;
+                        horizontal-alignment: center;
+                    }
+                }
+
+                // On/off switch
+                if p.kind == "toggle": Toggle {
+                    accent: root.color-value;
+                    x: (parent.width - self.width) / 2;
+                    y: grid.top + (parent.height - grid.top - grid.bottom - self.height) / 2;
+                    checked: p.value > (p.min + p.max) / 2;
+                    toggled(on) => {
+                        root.parameter-changed(p.index, on ? p.max : p.min);
+                    }
+                }
+                if p.kind == "toggle": Text {
+                    y: parent.height - (grid.compact ? 24px : 32px);
+                    width: parent.width;
+                    height: 22px;
+                    text: p.value > (p.min + p.max) / 2 ? "On" : "Off";
+                    color: p.value > (p.min + p.max) / 2 ? Theme.text-primary : Theme.text-muted;
+                    font-size: Theme.font-body;
+                    font-weight: Theme.weight-semibold;
+                    horizontal-alignment: center;
+                }
+
+                // Enumeration: current label, tap to open the picker
+                if p.kind == "enum": Rectangle {
+                    x: Theme.space-sm;
+                    y: grid.top + (parent.height - grid.top - grid.bottom - self.height) / 2;
+                    width: parent.width - 2 * Theme.space-sm;
+                    height: 56px;
+                    border-radius: Theme.radius-md;
+                    background: enum-ta.pressed ? Theme.surface-hover : Theme.surface-raised;
+                    border-width: 1px;
+                    border-color: Theme.border-strong;
+
+                    for label[k] in p.options: Text {
+                        visible: k < p.option-values.length && abs(p.option-values[k] - p.value) < 0.0001;
+                        x: Theme.space-sm;
+                        width: parent.width - 28px;
+                        height: parent.height;
+                        text: label;
+                        color: Theme.text-primary;
+                        font-size: Theme.font-body;
+                        font-weight: Theme.weight-semibold;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                        overflow: elide;
+                    }
+                    Icon {
+                        x: parent.width - 22px;
+                        y: (parent.height - self.height) / 2;
+                        name: "chevron-down";
+                        size: 16px;
+                        color: Theme.text-secondary;
+                    }
+                    enum-ta := TouchArea {
+                        clicked => {
+                            root.picker-pos = i;
+                        }
+                    }
+                }
+                if p.kind == "enum": Text {
+                    y: parent.height - (grid.compact ? 24px : 32px);
+                    width: parent.width;
+                    height: 22px;
+                    text: p.options.length + " options";
+                    color: Theme.text-muted;
+                    font-size: Theme.font-small;
+                    horizontal-alignment: center;
+                }
+
+                // Controller driving it
+                if p.midi != "": MidiTag {
+                    x: parent.width - self.width - 4px;
+                    y: 4px;
+                    text: p.midi;
+                }
+
+                // Learning: a touch picks the control instead of moving it
+                if root.midi-learning: TouchArea {
+                    clicked => {
+                        root.midi-learn-touch(p.index);
+                    }
+                }
+            }
+        }
+    }
+
+    // ---------------- Model / preset picker sheets ----------------
+    if root.color-picker-open: Rectangle {
+        background: Theme.scrim;
+        TouchArea {
+            clicked => {
+                root.color-picker-open = false;
+            }
+        }
+        Card {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 5 * 88px + 2 * Theme.space-lg;
+            height: 2 * 84px + 56px + Theme.space-lg;
+            TouchArea { }   // keep taps inside the card
+            Text {
+                x: Theme.space-lg;
+                y: Theme.space-md;
+                height: 32px;
+                text: "Block color";
+                color: Theme.text-primary;
+                font-size: Theme.font-title;
+                font-weight: Theme.weight-semibold;
+                vertical-alignment: center;
+            }
+            for c[k] in root.colors: Rectangle {
+                x: Theme.space-lg + mod(k, 5) * 88px;
+                y: 56px + floor(k / 5) * 84px;
+                width: 88px;
+                height: 84px;
+                Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    y: 6px;
+                    width: 44px;
+                    height: 44px;
+                    border-radius: Theme.radius-md;
+                    background: k == 0 ? root.auto-color : c.color;
+                    border-width: c.name == root.color ? 3px : 1px;
+                    border-color: c.name == root.color ? Theme.accent : Theme.border-strong;
+                }
+                Text {
+                    y: 56px;
+                    width: parent.width;
+                    height: 20px;
+                    text: c.label;
+                    color: c.name == root.color ? Theme.accent : Theme.text-secondary;
+                    font-size: Theme.font-small;
+                    horizontal-alignment: center;
+                }
+                TouchArea {
+                    clicked => {
+                        root.color-chosen(c.name);
+                        root.color-picker-open = false;
+                    }
+                }
+            }
+        }
+    }
+
+    if root.model-picker-open: ChoiceSheet {
+        title: "Choose: " + root.file-label;
+        choices: root.packs;
+        show-none: true;
+        none-current: root.file == "";
+        empty-text: "Nothing found.\nCopy " + root.file-types + " files to\n" + root.models-dir;
+        chosen(file) => {
+            root.model-chosen(file);
+            root.model-picker-open = false;
+        }
+        close => {
+            root.model-picker-open = false;
+        }
+    }
+
+    if root.preset-picker-open: ChoiceSheet {
+        title: root.file-title;
+        choices: root.presets;
+        chosen(file) => {
+            root.model-chosen(file);
+            root.preset-picker-open = false;
+        }
+        close => {
+            root.preset-picker-open = false;
+        }
+    }
+
+    // ---------------- Enum picker sheet ----------------
+    if root.picker-pos >= 0 && root.picker-pos < root.parameters.length: sheet := Rectangle {
+        background: Theme.scrim;
+
+        TouchArea {
+            clicked => {
+                root.picker-pos = -1;
+            }
+        }
+
+        property <ParameterInfo> param: root.parameters[root.picker-pos];
+
+        Card {
+            x: (parent.width - self.width) / 2;
+            y: Theme.space-lg;
+            width: 360px;
+            height: parent.height - 2 * Theme.space-lg;
+            background: Theme.surface-raised;
+
+            TouchArea { }
+
+            VerticalLayout {
+                padding: Theme.space-lg;
+                spacing: Theme.space-md;
+
+                HorizontalLayout {
+                    Text {
+                        horizontal-stretch: 1;
+                        text: sheet.param.name;
+                        color: Theme.text-primary;
+                        font-size: Theme.font-title;
+                        font-weight: Theme.weight-semibold;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Button {
+                        icon: "close";
+                        variant: "ghost";
+                        clicked => {
+                            root.picker-pos = -1;
+                        }
+                    }
+                }
+
+                Flickable {
+                    vertical-stretch: 1;
+                    viewport-height: sheet.param.options.length * 52px;
+                    interactive: self.viewport-height > self.height;
+
+                    for label[k] in sheet.param.options: opt-row := Rectangle {
+                        property <bool> current: k < sheet.param.option-values.length && abs(sheet.param.option-values[k] - sheet.param.value) < 0.0001;
+                        y: k * 52px;
+                        height: 48px;
+                        border-radius: Theme.radius-md;
+                        background: opt-ta.pressed ? Theme.surface-hover : self.current ? Theme.accent-soft : transparent;
+
+                        HorizontalLayout {
+                            padding-left: Theme.space-md;
+                            padding-right: Theme.space-md;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: label;
+                                color: opt-row.current ? Theme.accent : Theme.text-primary;
+                                font-size: Theme.font-body;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            if opt-row.current: VerticalLayout {
+                                alignment: center;
+                                Icon {
+                                    name: "check";
+                                    color: Theme.accent;
+                                }
+                            }
+                        }
+
+                        opt-ta := TouchArea {
+                            clicked => {
+                                if (k < sheet.param.option-values.length) {
+                                    root.parameter-changed(sheet.param.index, sheet.param.option-values[k]);
+                                }
+                                root.picker-pos = -1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

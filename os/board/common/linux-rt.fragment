@@ -1,0 +1,26 @@
+# Real-time kernel (mainline since 6.12): audio threads preempt the rest
+CONFIG_EXPERT=y
+# CONFIG_PREEMPT is not set
+# CONFIG_PREEMPT_VOLUNTARY is not set
+# CONFIG_PREEMPT_NONE is not set
+CONFIG_PREEMPT_RT=y
+# Constant clock: frequency changes cause xruns
+CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y
+# CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND is not set
+# CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL is not set
+CONFIG_HZ_1000=y
+# USB audio and MIDI interfaces
+CONFIG_SND_USB_AUDIO=m
+CONFIG_SND_SEQUENCER=m
+CONFIG_SND_SEQ_MIDI=m
+# Footswitches over USB (keyboard emulators)
+CONFIG_HID_GENERIC=y
+CONFIG_USB_HID=y
+# System updates (RAUC): signed bundles are squashfs images checked by
+# dm-verity, mounted through a loop device
+CONFIG_BLK_DEV_LOOP=y
+CONFIG_MD=y
+CONFIG_BLK_DEV_DM=y
+CONFIG_DM_VERITY=y
+CONFIG_SQUASHFS=y
+CONFIG_SQUASHFS_XZ=y

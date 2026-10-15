@@ -1,0 +1,116 @@
+import { Theme } from "../theme.slint";
+import { Levels } from "../types.slint";
+
+// One LED bar: 24 segments of 2 dB, green up to -12 dB, amber up to -4 dB,
+// red above; unlit segments keep a faint tint of their colour
+component LedBar inherits Rectangle {
+    in property <float> level;     // 0..1
+    private property <int> count: 24;
+    private property <length> step: self.width / self.count;
+    for k in root.count: Rectangle {
+        private property <color> led: k >= 22 ? #e5534b : k >= 18 ? Theme.warning : #7cc45a;
+        x: k * root.step;
+        width: root.step - 1px;
+        background: root.level * root.count > k ? self.led : self.led.with-alpha(0.12);
+    }
+}
+
+// Clip LED, latched for a moment by the backend
+component ClipLed inherits Rectangle {
+    in property <bool> lit;
+    width: 6px;
+    background: root.lit ? #ff3b30 : #ff3b3020;
+}
+
+// Input / output level meters, in a small recessed display
+export component LevelMeter inherits Rectangle {
+    in property <Levels> levels;
+    in property <bool> stereo: false;
+
+    private property <length> label-width: 28px;
+    private property <length> bar-x: self.label-width + 6px;
+    private property <length> bar-width: self.width - self.bar-x - 6px - 6px - 4px;
+
+    height: 44px;
+    border-radius: Theme.radius-sm;
+    background: Theme.display;
+    border-width: 1px;
+    border-color: #000000;
+
+    // Inset shadow
+    Rectangle {
+        x: 1px;
+        y: 1px;
+        width: parent.width - 2px;
+        height: 2px;
+        background: #0000008c;
+    }
+
+    // IN
+    Text {
+        x: 6px;
+        y: 6px;
+        width: root.label-width - 6px;
+        height: 12px;
+        text: "IN";
+        color: Theme.text-muted;
+        font-size: 9px;
+        font-weight: Theme.weight-bold;
+        letter-spacing: 0.8px;
+        vertical-alignment: center;
+    }
+    LedBar {
+        x: root.bar-x;
+        y: 7px;
+        width: root.bar-width;
+        height: 10px;
+        level: root.levels.input;
+    }
+    ClipLed {
+        x: root.width - 6px - self.width;
+        y: 7px;
+        height: 10px;
+        lit: root.levels.clip-in;
+    }
+
+    // OUT: one bar in mono, left and right in stereo
+    Text {
+        x: 6px;
+        y: 25px;
+        width: root.label-width - 6px;
+        height: 12px;
+        text: "OUT";
+        color: Theme.text-muted;
+        font-size: 9px;
+        font-weight: Theme.weight-bold;
+        letter-spacing: 0.8px;
+        vertical-alignment: center;
+    }
+    if !root.stereo: LedBar {
+        x: root.bar-x;
+        y: 26px;
+        width: root.bar-width;
+        height: 10px;
+        level: max(root.levels.left, root.levels.right);
+    }
+    if root.stereo: LedBar {
+        x: root.bar-x;
+        y: 25px;
+        width: root.bar-width;
+        height: 5px;
+        level: root.levels.left;
+    }
+    if root.stereo: LedBar {
+        x: root.bar-x;
+        y: 32px;
+        width: root.bar-width;
+        height: 5px;
+        level: root.levels.right;
+    }
+    ClipLed {
+        x: root.width - 6px - self.width;
+        y: 25px;
+        height: 12px;
+        lit: root.levels.clip-out;
+    }
+}

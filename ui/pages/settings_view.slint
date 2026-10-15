@@ -1,0 +1,775 @@
+import { Theme } from "../theme.slint";
+import { Button, Card, Icon, SectionHeader, Stepper, Toggle } from "../components/controls.slint";
+import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
+import { LogoMark, LogoText } from "../components/logo.slint";
+import { WifiNetwork } from "../types.slint";
+
+// Signal strength as four bars
+component SignalBars inherits Rectangle {
+    in property <int> signal;
+    in property <color> bar-color: Theme.text-primary;
+    width: 22px;
+    height: 18px;
+    for i in 4: Rectangle {
+        x: i * 6px;
+        y: parent.height - self.height;
+        width: 4px;
+        height: 6px + i * 4px;
+        border-radius: 1px;
+        background: root.signal >= 15 + i * 22 ? root.bar-color : Theme.led-off;
+    }
+}
+
+// Settings page: Wi-Fi, and TONE3000 Connect, which links a tone3000.com
+// account with the OAuth device flow (code + QR on screen, approval on a phone).
+export component SettingsView inherits Rectangle {
+    // Wi-Fi
+    in property <string> wifi-status: "unsupported"; // "unsupported" | "no-device" | "off" | "on"
+    in property <[WifiNetwork]> wifi-networks: [];
+    in property <bool> wifi-scanning: false;
+    in property <string> wifi-busy-ssid: "";        // being joined
+    in property <string> wifi-message: "";          // last error
+
+    callback wifi-refresh(bool);                     // rescan
+    callback wifi-set-enabled(bool);
+    callback wifi-connect(string, string);           // ssid, password ("" = saved / open)
+    callback wifi-disconnect();
+    callback wifi-forget(string);
+
+    // Footswitches
+    in property <int> footswitch-count: 4;
+    in property <bool> tap-switch: true;
+    callback tap-switch-changed(bool);
+
+    // MIDI
+    in property <bool> midi-available: false;
+    in property <string> midi-devices: "";           // devices listened to, or why not
+    in property <int> midi-channel: 0;               // 0 = omni
+    in property <bool> midi-clock: true;
+    in property <bool> midi-activity: false;
+    callback midi-channel-changed(int);
+    callback midi-clock-changed(bool);
+
+    // TONE3000 Connect
+    in property <bool> t3k-available: true;          // built with the tone3000 feature
+    in property <string> t3k-status: "signed-out";   // "signed-out" | "starting" | "waiting" | "connected"
+    in property <string> t3k-client-id: "";
+    in property <string> t3k-username: "";
+    in property <string> t3k-user-code: "";
+    in property <string> t3k-url: "";                // verification URL to type
+    in property <image> t3k-qr;
+    in property <string> t3k-error: "";
+
+    callback t3k-connect(string);                    // publishable key
+    callback t3k-cancel();
+    callback t3k-disconnect();
+
+
+    private property <bool> editing-key: false;
+    private property <string> key-draft: "";
+    private property <bool> confirm-disconnect: false;
+    private property <string> wifi-open-ssid: "";    // row showing its actions
+    private property <string> wifi-password-ssid: "";
+    private property <string> wifi-password: "";
+
+    init => {
+        root.wifi-refresh(true);
+    }
+
+    width: 100%;
+    height: 100%;
+
+    Flickable {
+        viewport-height: content.preferred-height;
+
+        content := VerticalLayout {
+            alignment: start;
+            padding: Theme.space-lg;
+            spacing: Theme.space-md;
+
+            SectionHeader {
+                text: "SETTINGS";
+            }
+
+            // ---------------------------------------------- Footswitches
+            Card {
+                HorizontalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+                    VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            name: "footswitch";
+                            color: Theme.accent;
+                        }
+                    }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            text: "Tap tempo on FS " + root.footswitch-count;
+                            color: Theme.text-primary;
+                            font-size: Theme.font-title;
+                            font-weight: Theme.weight-semibold;
+                        }
+                        Text {
+                            text: "The last footswitch taps the tempo; hold it to open the tuner, press any switch to close it.";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Toggle {
+                            checked: root.tap-switch;
+                            toggled(on) => {
+                                root.tap-switch-changed(on);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ----------------------------------------------------- MIDI
+            Card {
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    HorizontalLayout {
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                name: "midi";
+                                color: Theme.accent;
+                            }
+                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: "MIDI";
+                                color: Theme.text-primary;
+                                font-size: Theme.font-title;
+                                font-weight: Theme.weight-semibold;
+                            }
+                            Text {
+                                text: !root.midi-available ? (root.midi-devices != "" ? root.midi-devices : "Not available in this build")
+                                    : root.midi-devices != "" ? root.midi-devices : "No MIDI device";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-small;
+                                wrap: word-wrap;
+                            }
+                        }
+                        // Activity LED
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 10px;
+                                height: 10px;
+                                border-radius: 5px;
+                                background: root.midi-activity ? Theme.accent : Theme.display;
+                                border-width: 1px;
+                                border-color: root.midi-activity ? Theme.accent : Theme.border-strong;
+                            }
+                        }
+                    }
+
+                    if root.midi-available: HorizontalLayout {
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            Text {
+                                text: "CHANNEL";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-caption;
+                                font-weight: Theme.weight-bold;
+                                letter-spacing: 0.8px;
+                            }
+                        }
+                        Stepper {
+                            width: 180px;
+                            text: root.midi-channel == 0 ? "Omni" : "Ch " + root.midi-channel;
+                            can-decrement: root.midi-channel > 0;
+                            can-increment: root.midi-channel < 16;
+                            decrement => {
+                                root.midi-channel-changed(root.midi-channel - 1);
+                            }
+                            increment => {
+                                root.midi-channel-changed(root.midi-channel + 1);
+                            }
+                        }
+                    }
+
+                    if root.midi-available: HorizontalLayout {
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            Text {
+                                text: "FOLLOW MIDI CLOCK";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-caption;
+                                font-weight: Theme.weight-bold;
+                                letter-spacing: 0.8px;
+                            }
+                        }
+                        Toggle {
+                            checked: root.midi-clock;
+                            toggled(on) => {
+                                root.midi-clock-changed(on);
+                            }
+                        }
+                    }
+
+                    if root.midi-available: Text {
+                        text: "Helix-style map: PC selects presets (CC0 bank of 128), CC69 scenes, CC64 tap, CC68 tuner, CC49–56 footswitches. Other CCs are learned in the block editor.";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            // ---------------------------------------------------- Wi-Fi
+            Card {
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    HorizontalLayout {
+                        spacing: Theme.space-sm;
+                        VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                name: "wifi";
+                                color: Theme.accent;
+                            }
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: "Wi-Fi";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-title;
+                            font-weight: Theme.weight-semibold;
+                            vertical-alignment: center;
+                        }
+                        if root.wifi-status == "on": Button {
+                            icon: "refresh";
+                            horizontal-stretch: 0;
+                            text: root.wifi-scanning ? "Scanning…" : "Scan";
+                            variant: "ghost";
+                            enabled: !root.wifi-scanning;
+                            clicked => {
+                                root.wifi-refresh(true);
+                            }
+                        }
+                        if root.wifi-status == "on" || root.wifi-status == "off": VerticalLayout {
+                            alignment: center;
+                            Toggle {
+                                checked: root.wifi-status == "on";
+                                toggled(on) => {
+                                    root.wifi-set-enabled(on);
+                                }
+                            }
+                        }
+                    }
+
+                    if root.wifi-status == "unsupported": Text {
+                        text: "Wi-Fi is managed by the system on this computer.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                    if root.wifi-status == "no-device": Text {
+                        text: "No Wi-Fi adapter found.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                    }
+                    if root.wifi-status == "off": Text {
+                        text: "Wi-Fi is off. Turn it on to get models and plugins.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                    }
+                    if root.wifi-status == "on" && root.wifi-networks.length == 0: Text {
+                        text: root.wifi-scanning ? "Looking for networks…" : "No network found.";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-small;
+                    }
+
+                    if root.wifi-status == "on": VerticalLayout {
+                        spacing: 4px;
+                        for net in root.wifi-networks: Rectangle {
+                            private property <bool> busy: root.wifi-busy-ssid == net.ssid;
+                            private property <bool> open: root.wifi-open-ssid == net.ssid;
+                            height: Theme.touch-target + 8px;
+                            border-radius: Theme.radius-md;
+                            background: row-ta.pressed ? Theme.surface-hover : net.connected ? Theme.accent-soft : Theme.surface-raised;
+                            border-width: 1px;
+                            border-color: net.connected ? Theme.accent : Theme.border;
+
+                            row-ta := TouchArea {
+                                enabled: root.wifi-busy-ssid == "";
+                                clicked => {
+                                    if (net.connected || net.saved) {
+                                        root.wifi-open-ssid = open ? "" : net.ssid;
+                                    } else if (net.secured) {
+                                        root.wifi-password = "";
+                                        root.wifi-password-ssid = net.ssid;
+                                    } else {
+                                        root.wifi-open-ssid = "";
+                                        root.wifi-connect(net.ssid, "");
+                                    }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                padding-left: Theme.space-md;
+                                padding-right: Theme.space-sm;
+                                spacing: Theme.space-md;
+                                VerticalLayout {
+                                    alignment: center;
+                                    SignalBars {
+                                        signal: net.signal;
+                                        bar-color: net.connected ? Theme.accent : Theme.text-primary;
+                                    }
+                                }
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: net.ssid;
+                                    color: Theme.text-primary;
+                                    font-size: Theme.font-body;
+                                    font-weight: net.connected ? Theme.weight-semibold : Theme.weight-medium;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                if net.secured: VerticalLayout {
+                                    alignment: center;
+                                    Icon {
+                                        name: "lock";
+                                        size: 16px;
+                                        color: Theme.text-muted;
+                                    }
+                                }
+                                if !open: Text {
+                                    text: busy ? "Connecting…" : net.connected ? "Connected" : net.saved ? "Saved" : "";
+                                    color: net.connected || busy ? Theme.accent : Theme.text-muted;
+                                    font-size: Theme.font-small;
+                                    vertical-alignment: center;
+                                }
+                                if open && !net.connected: VerticalLayout {
+                                    alignment: center;
+                                    Button {
+                                        text: "Connect";
+                                        variant: "primary";
+                                        clicked => {
+                                            root.wifi-open-ssid = "";
+                                            root.wifi-connect(net.ssid, "");
+                                        }
+                                    }
+                                }
+                                if open && net.connected: VerticalLayout {
+                                    alignment: center;
+                                    Button {
+                                        text: "Disconnect";
+                                        clicked => {
+                                            root.wifi-open-ssid = "";
+                                            root.wifi-disconnect();
+                                        }
+                                    }
+                                }
+                                if open: VerticalLayout {
+                                    alignment: center;
+                                    Button {
+                                        text: "Forget";
+                                        variant: "danger";
+                                        clicked => {
+                                            root.wifi-open-ssid = "";
+                                            root.wifi-forget(net.ssid);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.wifi-message != "": Text {
+                        text: root.wifi-message;
+                        color: Theme.danger;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            Card {
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    // Title row
+                    HorizontalLayout {
+                        spacing: Theme.space-sm;
+                        VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                name: "plug";
+                                color: Theme.accent;
+                            }
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: "TONE3000 Connect";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-title;
+                            font-weight: Theme.weight-semibold;
+                            vertical-alignment: center;
+                        }
+                        if root.t3k-status == "connected": Rectangle {
+                            width: badge-text.preferred-width + 2 * Theme.space-md;
+                            height: 26px;
+                            border-radius: Theme.radius-sm;
+                            background: Theme.success-soft;
+                            badge-text := Text {
+                                text: "Connected";
+                                color: Theme.success;
+                                font-size: Theme.font-caption;
+                                font-weight: Theme.weight-bold;
+                            }
+                        }
+                    }
+
+                    if !root.t3k-available: Text {
+                        text: "Not available in this build (compiled without the \"tone3000\" feature).";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+
+                    // --- Signed out: publishable key + Connect
+                    if root.t3k-available && (root.t3k-status == "signed-out" || root.t3k-status == "starting"): VerticalLayout {
+                        spacing: Theme.space-md;
+                        Text {
+                            text: "Link your TONE3000 account to download your favorite amps, pedals, cabs and spaces right on the pedalboard.";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-md;
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                height: Theme.touch-target;
+                                border-radius: Theme.radius-md;
+                                background: Theme.background;
+                                border-width: 1px;
+                                border-color: Theme.border-strong;
+                                HorizontalLayout {
+                                    padding-left: Theme.space-md;
+                                    padding-right: Theme.space-md;
+                                    spacing: Theme.space-sm;
+                                    Text {
+                                        text: "Publishable key";
+                                        color: Theme.text-muted;
+                                        font-size: Theme.font-small;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: root.t3k-client-id == "" ? "not set" : root.t3k-client-id;
+                                        color: root.t3k-client-id == "" ? Theme.text-muted : Theme.text-primary;
+                                        font-size: Theme.font-small;
+                                        vertical-alignment: center;
+                                        horizontal-alignment: right;
+                                        overflow: elide;
+                                    }
+                                }
+                            }
+                            Button {
+                                icon: "edit";
+                                horizontal-stretch: 0;
+                                text: "Edit";
+                                clicked => {
+                                    root.key-draft = root.t3k-client-id;
+                                    root.editing-key = true;
+                                }
+                            }
+                            Button {
+                                text: root.t3k-status == "starting" ? "Connecting…" : "Connect";
+                                horizontal-stretch: 0;
+                                variant: "primary";
+                                enabled: root.t3k-client-id != "" && root.t3k-status == "signed-out";
+                                clicked => {
+                                    root.t3k-connect(root.t3k-client-id);
+                                }
+                            }
+                        }
+                        Text {
+                            text: "Create an application in your TONE3000 developer settings and use its publishable key (t3k_pub_…). Never enter the secret key on a device.";
+                            color: Theme.text-muted;
+                            font-size: Theme.font-caption;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    // --- Waiting for approval: QR + code
+                    if root.t3k-available && root.t3k-status == "waiting": HorizontalLayout {
+                        spacing: Theme.space-xl;
+                        Rectangle {
+                            width: 152px;
+                            height: 152px;
+                            border-radius: Theme.radius-md;
+                            background: white;
+                            Image {
+                                width: 140px;
+                                height: 140px;
+                                source: root.t3k-qr;
+                                image-rendering: pixelated;
+                            }
+                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: Theme.space-xs;
+                            Text {
+                                text: "Scan the QR code with your phone, or open";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-small;
+                            }
+                            Text {
+                                text: root.t3k-url;
+                                color: Theme.accent;
+                                font-size: Theme.font-body;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: "and enter the code";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-small;
+                            }
+                            Text {
+                                text: root.t3k-user-code;
+                                color: Theme.text-primary;
+                                font-size: Theme.font-display;
+                                font-weight: Theme.weight-bold;
+                                letter-spacing: 3px;
+                            }
+                            HorizontalLayout {
+                                spacing: Theme.space-md;
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: "Waiting for approval…";
+                                    color: Theme.text-muted;
+                                    font-size: Theme.font-small;
+                                    vertical-alignment: center;
+                                }
+                                Button {
+                                    text: "Cancel";
+                                    variant: "ghost";
+                                    clicked => {
+                                        root.t3k-cancel();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // --- Connected
+                    if root.t3k-available && root.t3k-status == "connected": HorizontalLayout {
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: "Signed in as @" + root.t3k-username;
+                                color: Theme.text-primary;
+                                font-size: Theme.font-body;
+                                font-weight: Theme.weight-semibold;
+                            }
+                            Text {
+                                text: "Your TONE3000 tones are available on this pedalboard.";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-small;
+                            }
+                        }
+                        if !root.confirm-disconnect: Button {
+                            text: "Disconnect";
+                            variant: "danger";
+                            clicked => {
+                                root.confirm-disconnect = true;
+                            }
+                        }
+                        if root.confirm-disconnect: Button {
+                            text: "Cancel";
+                            clicked => {
+                                root.confirm-disconnect = false;
+                            }
+                        }
+                        if root.confirm-disconnect: Button {
+                            text: "Disconnect";
+                            variant: "solid-danger";
+                            clicked => {
+                                root.confirm-disconnect = false;
+                                root.t3k-disconnect();
+                            }
+                        }
+                    }
+
+                    if root.t3k-error != "": Text {
+                        text: root.t3k-error;
+                        color: Theme.danger;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+
+                    // Attribution required by the TONE3000 API terms
+                    Rectangle {
+                        height: 1px;
+                        background: Theme.border;
+                    }
+                    HorizontalLayout {
+                        alignment: start;
+                        spacing: Theme.space-sm;
+                        Text {
+                            text: "Powered by TONE3000";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-caption;
+                            font-weight: Theme.weight-bold;
+                        }
+                        Text {
+                            text: "tone3000.com";
+                            color: Theme.accent;
+                            font-size: Theme.font-caption;
+                        }
+                    }
+                }
+            }
+
+            // ---------------------------------------------- About
+            Card {
+                HorizontalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-lg;
+                    LogoMark {
+                        size: 64px;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: Theme.space-xs;
+                        HorizontalLayout {
+                            alignment: start;
+                            LogoText {
+                                font-size: 28px;
+                            }
+                        }
+                        Text {
+                            text: "Open source guitar rig: LV2 effects, neural amps and impulse responses on a Raspberry Pi. Free software under the GPL 3.0 or later.";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Key editor
+    if root.editing-key: Rectangle {
+        background: Theme.scrim;
+        TouchArea { }
+
+        VerticalLayout {
+            Rectangle {
+                vertical-stretch: 1;
+                background: Theme.panel;
+                VerticalLayout {
+                    alignment: center;
+                    padding-left: Theme.space-lg;
+                    spacing: 2px;
+                    Text {
+                        text: "TONE3000 publishable key";
+                        color: Theme.text-primary;
+                        font-size: Theme.font-headline;
+                        font-weight: Theme.weight-bold;
+                    }
+                    Text {
+                        text: "Starts with t3k_pub_. A USB keyboard works too (paste with Ctrl+V).";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                    }
+                }
+            }
+            VirtualKeyboard {
+                current-text: root.key-draft;
+                placeholder: "t3k_pub_…";
+                code: true;
+                submit-label: "Connect";
+                text-changed(t) => {
+                    root.key-draft = t;
+                }
+                submit => {
+                    root.editing-key = false;
+                    root.t3k-connect(root.key-draft);
+                }
+                cancel => {
+                    root.editing-key = false;
+                }
+            }
+        }
+    }
+
+    // Wi-Fi password
+    if root.wifi-password-ssid != "": Rectangle {
+        background: Theme.scrim;
+        TouchArea { }
+
+        VerticalLayout {
+            Rectangle {
+                vertical-stretch: 1;
+                background: Theme.panel;
+                VerticalLayout {
+                    alignment: center;
+                    padding-left: Theme.space-lg;
+                    spacing: 2px;
+                    Text {
+                        text: "Password for " + root.wifi-password-ssid;
+                        color: Theme.text-primary;
+                        font-size: Theme.font-headline;
+                        font-weight: Theme.weight-bold;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: "Tap #+= for symbols. A USB keyboard works too.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                    }
+                }
+            }
+            VirtualKeyboard {
+                current-text: root.wifi-password;
+                placeholder: "Password";
+                submit-label: "Join";
+                secret: true;
+                text-changed(t) => {
+                    root.wifi-password = t;
+                }
+                submit => {
+                    root.wifi-connect(root.wifi-password-ssid, root.wifi-password);
+                    root.wifi-password = "";
+                    root.wifi-password-ssid = "";
+                }
+                cancel => {
+                    root.wifi-password = "";
+                    root.wifi-password-ssid = "";
+                }
+            }
+        }
+    }
+}

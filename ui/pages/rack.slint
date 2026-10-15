@@ -1,0 +1,902 @@
+import { Theme } from "../theme.slint";
+import { PositionedNode, Connector, DropSlotView, ParameterInfo, Levels } from "../types.slint";
+import { LevelMeter } from "../components/level_meter.slint";
+import { BlockShape } from "../components/block_shape.slint";
+import { Button, Icon, Knob, Segmented, Slider, Toggle, VDivider } from "../components/controls.slint";
+import { ParamFormat } from "plugin_editor.slint";
+
+// Signal-chain view: scrollable canvas with nodes laid out by the backend,
+// and the quick controls of the selected block at the bottom.
+export component PluginRack {
+    in property <[PositionedNode]> positioned-nodes: [];
+    in property <[Connector]> connectors: [];
+    in property <float> chain-width: 0.0;
+    // Vertical extent of the block lines (layout units, top <= 0 <= bottom)
+    in property <float> chain-top: 0.0;
+    in property <float> chain-bottom: 0.0;
+    in property <int> selected-instance-id: -1;
+    in-out property <int> selected-index: -1;
+    in-out property <bool> stereo-mode: false;
+
+    // Tap on a node selects it, double tap opens it (index into positioned-nodes)
+    callback node-tapped(int);
+    callback node-double-tapped(int);
+    // Parameters of the selected block (filled by the backend on selection)
+    in property <[ParameterInfo]> parameters: [];
+    in property <Levels> levels;
+    in property <bool> uses-file: false;
+    in property <string> file-title: "";
+    callback parameter-changed(int, float);           // param index, value
+    // Long-press on a plugin node (instance-id) -> toggle bypass
+    callback node-long-pressed(int);
+    // Drag and drop: the backend fills drop-slots when a drag starts, and
+    // picks the slot nearest to the drop point (layout units)
+    in property <[DropSlotView]> drop-slots: [];
+    callback drag-started(int);                       // instance-id
+    callback node-dropped(int, float, float);         // instance-id, x, y
+    callback edit-clicked(int);                       // instance-id
+    callback toggle-bypass-clicked(int);              // instance-id
+    callback remove-node-clicked(int);                // instance-id
+    callback add-plugin-clicked();
+    callback add-split-clicked();
+    callback add-plugin-to-split-top-clicked(int);    // split instance-id
+    callback add-plugin-to-split-bottom-clicked(int); // split instance-id
+    callback toggle-ab-clicked(int);                  // split instance-id
+    callback mix-ratio-changed(int, float);           // split instance-id, ratio
+    callback split-type-clicked(int);                 // split instance-id
+    callback pan-changed(int, float, float);          // split instance-id, pan A, pan B
+    callback stereo-mode-toggled(bool);
+
+    // Layout constants (must match src/ui/chain_layout.rs)
+    private property <float> cell-width: 96.0;
+    private property <float> origin-x: 136.0;   // canvas x of layout x = 0
+    private property <length> split-d: 48px;
+    private property <length> panel-height: 72px;
+    private property <length> strip-height: 128px;
+    // Patch cables between the blocks
+    private property <color> cable: #4d535e;
+    // Quick controls: knobs per page, current page
+    private property <int> per-page: 5;
+    private property <int> page: 0;
+    private property <int> pages: max(1, ceil(root.parameters.length / root.per-page));
+
+    changed selected-instance-id => {
+        root.page = 0;
+    }
+
+    private property <bool> has-selection: root.selected-index >= 0
+        && root.selected-index < root.positioned-nodes.length
+        && root.positioned-nodes[root.selected-index].instance-id == root.selected-instance-id;
+    // Block being dragged (index), and how far it moved
+    private property <int> drag-index: -1;
+    private property <length> drag-dx;
+    private property <length> drag-dy;
+    private property <bool> drag-moved: false;
+    // A block is held: the canvas must not scroll under the finger
+    private property <bool> holding: false;
+    private property <PositionedNode> dragged: root.positioned-nodes[max(0, min(root.positioned-nodes.length - 1, root.drag-index))];
+    // Drop point in layout units
+    private property <float> drop-x: root.dragged.x + root.cell-width / 2 + root.drag-dx / 1px;
+    private property <float> drop-y: root.dragged.y + root.drag-dy / 1px;
+
+    private property <PositionedNode> sel: root.positioned-nodes[max(0, min(root.positioned-nodes.length - 1, root.selected-index))];
+    // Pan sheet of the selected Mix split (stereo mode only)
+    private property <bool> pan-open: false;
+    private property <bool> can-pan: root.has-selection && root.sel.is-split
+        && root.sel.split-type == "mix" && root.stereo-mode;
+
+    pure function pan-label(p: float) -> string {
+        p < -0.005 ? "L " + round(-p * 100) : p > 0.005 ? "R " + round(p * 100) : "C"
+    }
+
+    width: 100%;
+    height: 100%;
+
+    // The bottom panels overlay the canvas, which keeps room for them: the
+    // blocks do not move when one is selected (a double tap stays on it)
+    Rectangle {
+        // ---------------- Canvas ----------------
+        canvas-area := Rectangle {
+            background: Theme.background;
+            clip: true;
+
+            // Room around the outermost lines (blocks, L/R terminals at ±64)
+            property <float> margin-y: 64.0;
+            // Band between the top buttons and the bottom panel
+            property <length> top-reserve: 44px + 2 * Theme.space-md;
+            property <float> origin-y: max((self.top-reserve + (self.height - self.top-reserve - root.strip-height) / 2) / 1px,
+                max(-root.chain-top, 64) + self.margin-y);
+            property <length> content-height: max(self.height,
+                (self.origin-y + max(root.chain-bottom, 64) + self.margin-y) * 1px + root.strip-height);
+            property <length> content-width: max(self.width,
+                (max(root.chain-width, 0) + root.origin-x + 96) * 1px);
+
+            Flickable {
+                viewport-width: canvas-area.content-width;
+                viewport-height: canvas-area.content-height;
+                interactive: !root.holding && (canvas-area.content-width > canvas-area.width
+                    || canvas-area.content-height > canvas-area.height);
+
+                canvas := Rectangle {
+                    width: canvas-area.content-width;
+                    height: canvas-area.content-height;
+
+                    // Tap on empty space clears the selection
+                    TouchArea {
+                        clicked => {
+                            root.selected-index = -1;
+                        }
+                    }
+
+                    // Connectors: a single line carries a mono signal, a
+                    // double line (wide line hollowed out) a stereo one
+                    for c in root.connectors: Path {
+                        visible: root.stereo-mode ? !c.is-mono && !(c.wide && c.is-stereo) : !c.is-stereo;
+                        width: canvas.width;
+                        height: canvas.height;
+                        viewbox-x: 0;
+                        viewbox-y: 0;
+                        viewbox-width: canvas.width / 1px;
+                        viewbox-height: canvas.height / 1px;
+                        stroke: root.cable;
+                        stroke-width: c.wide && root.stereo-mode ? 10px : 2px;
+                        // Square ends close the corners of branch lines
+                        stroke-line-cap: c.wide && root.stereo-mode ? square : butt;
+                        fill: transparent;
+                        commands: "M " + (c.x1 + root.origin-x) + " " + (c.y1 + canvas-area.origin-y)
+                            + " L " + (c.x2 + root.origin-x) + " " + (c.y2 + canvas-area.origin-y);
+                    }
+                    for c in root.connectors: Path {
+                        visible: root.stereo-mode && c.wide && !c.is-mono && !c.is-stereo;
+                        width: canvas.width;
+                        height: canvas.height;
+                        viewbox-x: 0;
+                        viewbox-y: 0;
+                        viewbox-width: canvas.width / 1px;
+                        viewbox-height: canvas.height / 1px;
+                        stroke: Theme.background;
+                        stroke-width: 6px;
+                        stroke-line-cap: square;
+                        fill: transparent;
+                        commands: "M " + (c.x1 + root.origin-x) + " " + (c.y1 + canvas-area.origin-y)
+                            + " L " + (c.x2 + root.origin-x) + " " + (c.y2 + canvas-area.origin-y);
+                    }
+
+                    // Stereo output line (horizontal): two parallel lines, open
+                    // at both ends
+                    for c in root.connectors: Rectangle {
+                        visible: root.stereo-mode && c.wide && c.is-stereo;
+                        x: (min(c.x1, c.x2) + root.origin-x) * 1px;
+                        y: (c.y1 + canvas-area.origin-y) * 1px - 5px;
+                        width: abs(c.x2 - c.x1) * 1px;
+                        height: 10px;
+                        for dy in [0px, 8px]: Rectangle {
+                            y: dy;
+                            height: 2px;
+                            background: root.cable;
+                        }
+                    }
+
+                    // IN terminal
+                    Rectangle {
+                        x: (root.origin-x - root.cell-width) * 1px - self.width / 2;
+                        y: canvas-area.origin-y * 1px - self.height / 2;
+                        width: 44px;
+                        height: 28px;
+                        border-radius: Theme.radius-sm;
+                        background: Theme.display;
+                        border-width: 1px;
+                        border-color: root.cable;
+                        Text {
+                            text: "IN";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-caption;
+                            font-weight: Theme.weight-bold;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    // OUT terminal(s)
+                    // Short lead from the chain end to the OUT terminal(s)
+                    for label[i] in root.stereo-mode ? ["L", "R"] : ["OUT"]: Rectangle {
+                        x: (max(root.chain-width, 0) + root.origin-x) * 1px;
+                        y: (canvas-area.origin-y + (root.stereo-mode ? (i == 0 ? -64 : 64) : 0)) * 1px - 1px;
+                        width: 12px;
+                        height: 2px;
+                        background: root.cable;
+                    }
+
+                    for label[i] in root.stereo-mode ? ["L", "R"] : ["OUT"]: Rectangle {
+                        x: (max(root.chain-width, 0) + root.origin-x) * 1px + 10px;
+                        y: (canvas-area.origin-y + (root.stereo-mode ? (i == 0 ? -64 : 64) : 0)) * 1px - self.height / 2;
+                        width: 44px;
+                        height: 28px;
+                        border-radius: Theme.radius-sm;
+                        background: Theme.display;
+                        border-width: 1px;
+                        border-color: root.cable;
+                        Text {
+                            text: label;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-caption;
+                            font-weight: Theme.weight-bold;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    // Nodes
+                    for node[idx] in root.positioned-nodes: node-el := Rectangle {
+                        property <bool> selected: root.has-selection && idx == root.selected-index;
+                        property <bool> lifted: false;
+                        property <length> cx: (node.x + root.cell-width / 2 + root.origin-x) * 1px;
+                        property <length> cy: (node.y + canvas-area.origin-y) * 1px;
+
+                        x: self.cx - self.width / 2;
+                        y: self.cy - self.height / 2;
+                        width: node.is-split ? root.split-d : shape.shape-width;
+                        height: node.is-split ? root.split-d : shape.shape-height;
+                        opacity: idx == root.drag-index && root.drag-moved ? 0.3 : 1.0;
+
+                        shape := BlockShape {
+                            visible: !node.is-split;
+                            kind: node.kind;
+                            name: node.name;
+                            tint: node.tint;
+                            tinted: node.tinted;
+                            bypassed: node.bypassed;
+                            selected: node-el.selected;
+                            pressed: node-ta.pressed && idx != root.drag-index;
+                        }
+
+                        // Split node: round fork with its type
+                        if node.is-split: Rectangle {
+                            border-radius: Theme.radius-lg;
+                            background: node-ta.pressed || node-el.selected ? Theme.surface-hover : Theme.surface-raised;
+                            border-width: node-el.selected ? 2px : 1px;
+                            border-color: node-el.selected ? Theme.accent : Theme.accent.with-alpha(0.5);
+                            Text {
+                                text: node.split-type == "ab" ? (node.ab-select-a ? "A" : "B") :
+                                      node.split-type == "mix" ? "MIX" :
+                                      node.split-type == "lr" ? "L/R" : "SPLIT";
+                                color: Theme.accent;
+                                font-size: Theme.font-caption + 1px;
+                                font-weight: Theme.weight-bold;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        node-ta := TouchArea {
+                            pointer-event(event) => {
+                                if (event.kind == PointerEventKind.down) {
+                                    node-el.lifted = false;
+                                    root.holding = true;
+                                } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                                    root.holding = false;
+                                    if (root.drag-index == idx) {
+                                        if (event.kind == PointerEventKind.up) {
+                                            if (root.drag-moved) {
+                                                root.node-dropped(node.instance-id, root.drop-x, root.drop-y);
+                                            } else if (!node.is-split) {
+                                                // Held and released in place: bypass
+                                                root.node-long-pressed(node.instance-id);
+                                            }
+                                        }
+                                        root.drag-index = -1;
+                                    }
+                                }
+                            }
+                            moved => {
+                                if (root.drag-index == idx) {
+                                    root.drag-dx = self.mouse-x - self.pressed-x;
+                                    root.drag-dy = self.mouse-y - self.pressed-y;
+                                    if (abs(root.drag-dx) > 10px || abs(root.drag-dy) > 10px) {
+                                        root.drag-moved = true;
+                                    }
+                                }
+                            }
+                            clicked => {
+                                if (!node-el.lifted) {
+                                    root.node-tapped(idx);
+                                }
+                            }
+                            double-clicked => {
+                                if (!node-el.lifted) {
+                                    root.node-double-tapped(idx);
+                                }
+                            }
+                        }
+
+                        // Hold: lift the block, to move it (drag) or bypass it (release)
+                        Timer {
+                            interval: 350ms;
+                            running: node-ta.pressed && !node-el.lifted;
+                            triggered => {
+                                node-el.lifted = true;
+                                root.drag-dx = 0;
+                                root.drag-dy = 0;
+                                root.drag-moved = false;
+                                root.drag-index = idx;
+                                root.drag-started(node.instance-id);
+                            }
+                        }
+                    }
+
+                    // Drop slots while dragging; the one under the block lights up
+                    if root.drag-index >= 0 && root.drag-moved: Rectangle {
+                        for slot in root.drop-slots: Rectangle {
+                            property <bool> hot: abs(slot.x - root.drop-x) < root.cell-width / 2
+                                && abs(slot.y - root.drop-y) < 32;
+                            x: (slot.x + root.origin-x) * 1px - self.width / 2;
+                            y: (slot.y + canvas-area.origin-y) * 1px - self.height / 2;
+                            width: self.hot ? 6px : 10px;
+                            height: self.hot ? 48px : 10px;
+                            border-radius: self.hot ? 3px : 5px;
+                            background: self.hot ? Theme.accent : Theme.surface;
+                            border-width: self.hot ? 0 : 2px;
+                            border-color: Theme.accent.with-alpha(0.6);
+                        }
+                    }
+
+                    // Dragged block, following the finger
+                    // Dragged block, above the finger so the drop slot stays visible
+                    if root.drag-index >= 0 && !root.dragged.is-split: BlockShape {
+                        x: (root.dragged.x + root.cell-width / 2 + root.origin-x) * 1px + root.drag-dx - self.width / 2;
+                        y: (root.dragged.y + canvas-area.origin-y) * 1px + root.drag-dy - self.height / 2 - (root.drag-moved ? 44px : 0);
+                        opacity: 0.9;
+                        kind: root.dragged.kind;
+                        name: root.dragged.name;
+                        tint: root.dragged.tint;
+                        tinted: root.dragged.tinted;
+                        bypassed: root.dragged.bypassed;
+                        selected: true;
+                    }
+                    if root.drag-index >= 0 && root.dragged.is-split: Rectangle {
+                        x: (root.dragged.x + root.cell-width / 2 + root.origin-x) * 1px + root.drag-dx - self.width / 2;
+                        y: (root.dragged.y + canvas-area.origin-y) * 1px + root.drag-dy - self.height / 2 - (root.drag-moved ? 44px : 0);
+                        width: root.split-d;
+                        height: root.split-d;
+                        border-radius: Theme.radius-lg;
+                        background: Theme.surface-hover;
+                        border-width: 2px;
+                        border-color: Theme.accent;
+                    }
+
+                    // Empty chain hint
+                    if root.positioned-nodes.length == 0: VerticalLayout {
+                        x: (root.origin-x + 76) * 1px;
+                        y: canvas-area.origin-y * 1px - 24px;
+                        height: 48px;
+                        alignment: center;
+                        width: 320px;
+                        spacing: 2px;
+                        Text {
+                            text: "Your chain is empty";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-title;
+                            font-weight: Theme.weight-semibold;
+                        }
+                        Text {
+                            text: "Tap + to insert your first effect.";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                        }
+                    }
+                }
+            }
+
+            // Overlay: level meters, mono/stereo, split, add
+            HorizontalLayout {
+                y: 0;
+                height: 44px + 2 * Theme.space-md;
+                padding: Theme.space-md;
+                spacing: Theme.space-sm;
+
+                LevelMeter {
+                    width: 200px;
+                    levels: root.levels;
+                    stereo: root.stereo-mode;
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+
+                Segmented {
+                    width: 152px;
+                    options: ["Mono", "Stereo"];
+                    current-index: root.stereo-mode ? 1 : 0;
+                    activated(i) => {
+                        root.stereo-mode = i == 1;
+                        root.stereo-mode-toggled(root.stereo-mode);
+                    }
+                }
+                Button {
+                    width: Theme.touch-target;
+                    icon: "split";
+                    clicked => {
+                        root.add-split-clicked();
+                    }
+                }
+                Button {
+                    width: Theme.touch-target;
+                    icon: "plus";
+                    variant: "primary";
+                    clicked => {
+                        root.add-plugin-clicked();
+                    }
+                }
+            }
+        }
+
+        // ---------------- Quick controls of the selected block ----------------
+        if root.has-selection && !root.sel.is-split: Rectangle {
+            y: root.height - self.height;
+            height: root.strip-height;
+            background: Theme.panel;
+
+            Rectangle {
+                y: 0;
+                height: 1px;
+                background: #000000;
+            }
+            Rectangle {
+                y: 1px;
+                height: 1px;
+                background: Theme.edge-light;
+            }
+            // The block's colour along the top edge
+            Rectangle {
+                x: 0;
+                y: 0;
+                width: 160px;
+                height: 3px;
+                background: root.sel.bypassed ? Theme.led-off : root.sel.tint;
+            }
+
+            HorizontalLayout {
+                padding: Theme.space-md;
+                padding-left: Theme.space-lg;
+                spacing: Theme.space-md;
+
+                // Block: name, state, actions
+                VerticalLayout {
+                    width: 148px;
+                    alignment: center;
+                    spacing: Theme.space-xs;
+                    Text {
+                        text: root.sel.name;
+                        color: Theme.text-primary;
+                        font-size: Theme.font-title;
+                        font-weight: Theme.weight-semibold;
+                        overflow: elide;
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                background: root.sel.bypassed ? Theme.led-off : Theme.led-green;
+                                border-width: 1px;
+                                border-color: #00000080;
+                            }
+                        }
+                        Text {
+                            text: root.sel.bypassed ? "BYPASSED" : "ON";
+                            color: root.sel.bypassed ? Theme.text-muted : Theme.text-primary;
+                            font-size: Theme.font-caption;
+                            font-weight: Theme.weight-bold;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-xs;
+                        alignment: start;
+                        Button {
+                            width: Theme.touch-target;
+                            icon: "power";
+                            active: !root.sel.bypassed;
+                            clicked => {
+                                root.toggle-bypass-clicked(root.sel.instance-id);
+                            }
+                        }
+                        Button {
+                            width: Theme.touch-target;
+                            icon: "edit";
+                            clicked => {
+                                root.edit-clicked(root.sel.instance-id);
+                            }
+                        }
+                        Button {
+                            width: Theme.touch-target;
+                            icon: "trash";
+                            variant: "danger";
+                            clicked => {
+                                root.remove-node-clicked(root.sel.instance-id);
+                                root.selected-index = -1;
+                            }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    padding-top: Theme.space-xs;
+                    padding-bottom: Theme.space-xs;
+                    VDivider { }
+                }
+
+                // One page of knobs
+                knobs := Rectangle {
+                    horizontal-stretch: 1;
+                    opacity: root.sel.bypassed ? 0.6 : 1.0;
+                    property <length> cell-width: self.width / root.per-page;
+
+                    if root.parameters.length == 0: Text {
+                        text: root.uses-file
+                            ? (root.file-title != "" ? root.file-title : "No model loaded") + " · double tap to edit"
+                            : "No controls · double tap to edit";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+
+                    for p[i] in root.parameters: Rectangle {
+                        visible: floor(i / root.per-page) == root.page;
+                        x: mod(i, root.per-page) * knobs.cell-width;
+                        width: knobs.cell-width;
+
+                        Text {
+                            y: 0;
+                            height: 16px;
+                            width: parent.width;
+                            text: p.name.to-uppercase();
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-caption;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: 0.8px;
+                            horizontal-alignment: center;
+                            overflow: elide;
+                        }
+
+                        if p.kind == "float" || p.kind == "int" || p.kind == "": Rectangle {
+                            knob := Knob {
+                                x: (parent.width - self.width) / 2;
+                                y: 17px;
+                                size: 64px;
+                                value: p.value;
+                                minimum: p.min;
+                                maximum: p.max;
+                                integer: p.kind == "int";
+                                accent: root.sel.tint;
+                                changed(v) => {
+                                    root.parameter-changed(p.index, v);
+                                }
+                            }
+                            Text {
+                                y: parent.height - self.height;
+                                width: parent.width;
+                                height: 20px;
+                                text: p.has-off && abs(knob.shown-value - p.off-value) < 0.5 ? "Off"
+                                    : ParamFormat.format(knob.shown-value, p.kind, p.unit);
+                                color: knob.dragging ? Theme.accent : Theme.text-primary;
+                                font-size: Theme.font-small;
+                                font-weight: Theme.weight-semibold;
+                                horizontal-alignment: center;
+                            }
+                        }
+
+                        if p.kind == "toggle": Toggle {
+                            x: (parent.width - self.width) / 2;
+                            y: 27px;
+                            accent: root.sel.tint;
+                            checked: p.value > (p.min + p.max) / 2;
+                            toggled(on) => {
+                                root.parameter-changed(p.index, on ? p.max : p.min);
+                            }
+                        }
+
+                        // Enumeration: tap for the next option
+                        if p.kind == "enum": Rectangle {
+                            x: Theme.space-xs;
+                            y: 27px;
+                            width: parent.width - 2 * Theme.space-xs;
+                            height: Theme.touch-target;
+                            border-radius: Theme.radius-md;
+                            background: Theme.surface-raised;
+                            border-width: 1px;
+                            border-color: Theme.border-strong;
+                            // Only the current option is shown and takes the tap
+                            for v[k] in p.option-values: Rectangle {
+                                visible: abs(v - p.value) < 0.0001;
+                                border-radius: Theme.radius-md;
+                                background: option-ta.pressed ? Theme.surface-hover : transparent;
+                                Text {
+                                    x: Theme.space-xs;
+                                    width: parent.width - 2 * Theme.space-xs;
+                                    text: k < p.options.length ? p.options[k] : "";
+                                    color: Theme.text-primary;
+                                    font-size: Theme.font-small;
+                                    font-weight: Theme.weight-semibold;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                option-ta := TouchArea {
+                                    clicked => {
+                                        root.parameter-changed(p.index,
+                                            p.option-values[mod(k + 1, p.option-values.length)]);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Pages
+                if root.pages > 1: VerticalLayout {
+                    spacing: Theme.space-xs;
+                    alignment: center;
+                    HorizontalLayout {
+                        spacing: 4px;
+                        Button {
+                            width: 40px;
+                            icon: "chevron-left";
+                            enabled: root.page > 0;
+                            clicked => {
+                                root.page -= 1;
+                            }
+                        }
+                        Button {
+                            width: 40px;
+                            icon: "chevron-right";
+                            enabled: root.page < root.pages - 1;
+                            clicked => {
+                                root.page += 1;
+                            }
+                        }
+                    }
+                    Text {
+                        text: (root.page + 1) + "/" + root.pages;
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-caption;
+                        font-weight: Theme.weight-bold;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // ---------------- Split controls ----------------
+        if root.has-selection && root.sel.is-split: Rectangle {
+            y: root.height - self.height;
+            height: root.panel-height;
+            background: Theme.panel;
+
+            Rectangle {
+                y: 0;
+                height: 1px;
+                background: #000000;
+            }
+            Rectangle {
+                y: 1px;
+                height: 1px;
+                background: Theme.edge-light;
+            }
+
+            HorizontalLayout {
+                padding-left: Theme.space-lg;
+                padding-right: Theme.space-md;
+                padding-top: Theme.space-md + 1px;
+                padding-bottom: Theme.space-md;
+                spacing: Theme.space-sm;
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    min-width: 110px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            text: root.sel.name;
+                            color: Theme.text-primary;
+                            font-size: Theme.font-body;
+                            font-weight: Theme.weight-semibold;
+                            overflow: elide;
+                        }
+                        HorizontalLayout {
+                            spacing: 2px;
+                            alignment: start;
+                            // The split type can be changed from here
+                            Text {
+                                text: root.sel.split-type == "ab" ? "A/B switch" : root.sel.split-type == "mix" ? "Parallel mix" :
+                                    root.sel.split-type == "lr" ? (root.stereo-mode ? "Left / right" : "Left / right · mono mode: summed") : "Split";
+                                color: Theme.accent;
+                                font-size: Theme.font-caption;
+                                font-weight: Theme.weight-semibold;
+                                overflow: elide;
+                            }
+                            Icon {
+                                name: "chevron-down";
+                                size: 14px;
+                                color: Theme.accent;
+                            }
+                        }
+                    }
+                    TouchArea {
+                        clicked => {
+                            root.split-type-clicked(root.sel.instance-id);
+                        }
+                    }
+                }
+
+                // Split actions
+                if root.sel.split-type == "ab": Segmented {
+                    width: 104px;
+                    options: ["A", "B"];
+                    current-index: root.sel.ab-select-a ? 0 : 1;
+                    activated(i) => {
+                        if ((i == 0) != root.sel.ab-select-a) {
+                            root.toggle-ab-clicked(root.sel.instance-id);
+                        }
+                    }
+                }
+                if root.sel.split-type == "mix": HorizontalLayout {
+                    spacing: Theme.space-xs;
+                    // mix-ratio: 1.0 = all A (top), 0.0 = all B (bottom); A is on the left
+                    Text {
+                        width: 52px;
+                        text: "A " + round((1 - mix-slider.shown-value) * 100) + "%";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-caption;
+                        font-weight: Theme.weight-bold;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
+                    mix-slider := Slider {
+                        width: 120px;
+                        value: 1 - root.sel.mix-ratio;
+                        changed(v) => {
+                            root.mix-ratio-changed(root.sel.instance-id, 1 - v);
+                        }
+                    }
+                    Text {
+                        width: 52px;
+                        text: "B " + round(mix-slider.shown-value * 100) + "%";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-caption;
+                        font-weight: Theme.weight-bold;
+                        vertical-alignment: center;
+                    }
+                }
+                if root.can-pan: Button {
+                    icon: "stereo";
+                    text: "Pan";
+                    active: root.pan-open || root.sel.pan-a != 0 || root.sel.pan-b != 0;
+                    clicked => {
+                        root.pan-open = !root.pan-open;
+                    }
+                }
+                Button {
+                    width: root.sel.split-type == "lr" ? 112px : 88px;
+                    icon: "plus";
+                    text: root.sel.split-type == "lr" ? "Left" : "A";
+                    clicked => {
+                        root.add-plugin-to-split-top-clicked(root.sel.instance-id);
+                    }
+                }
+                Button {
+                    width: root.sel.split-type == "lr" ? 112px : 88px;
+                    icon: "plus";
+                    text: root.sel.split-type == "lr" ? "Right" : "B";
+                    clicked => {
+                        root.add-plugin-to-split-bottom-clicked(root.sel.instance-id);
+                    }
+                }
+
+                Button {
+                    width: Theme.touch-target;
+                    icon: "trash";
+                    variant: "danger";
+                    clicked => {
+                        root.remove-node-clicked(root.sel.instance-id);
+                        root.selected-index = -1;
+                    }
+                }
+
+            }
+        }
+    }
+
+    // ---------------- Pan sheet ----------------
+    // Places each branch of the selected Mix split between left and right
+    if root.pan-open && root.can-pan: Rectangle {
+        x: root.width - self.width - Theme.space-md;
+        y: root.height - root.panel-height - self.height - Theme.space-sm;
+        width: 380px;
+        height: 150px;
+        border-radius: Theme.radius-md;
+        background: Theme.surface;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+
+        // Swallow taps so they do not reach the canvas
+        TouchArea { }
+
+        VerticalLayout {
+            padding: Theme.space-md;
+            spacing: Theme.space-xs;
+
+            HorizontalLayout {
+                Text {
+                    horizontal-stretch: 1;
+                    text: "PAN · branch position";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-caption;
+                    font-weight: Theme.weight-bold;
+                    vertical-alignment: center;
+                }
+                Button {
+                    width: Theme.touch-target;
+                    icon: "close";
+                    clicked => {
+                        root.pan-open = false;
+                    }
+                }
+            }
+
+            for branch[i] in ["A", "B"]: HorizontalLayout {
+                spacing: Theme.space-sm;
+                property <float> pan: i == 0 ? root.sel.pan-a : root.sel.pan-b;
+                Text {
+                    width: 20px;
+                    text: branch;
+                    color: Theme.accent;
+                    font-size: Theme.font-body;
+                    font-weight: Theme.weight-bold;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: "L";
+                    color: Theme.text-muted;
+                    font-size: Theme.font-caption;
+                    vertical-alignment: center;
+                }
+                pan-slider := Slider {
+                    horizontal-stretch: 1;
+                    minimum: -1;
+                    maximum: 1;
+                    centered: true;
+                    value: pan;
+                    // Snaps to the centre
+                    changed(v) => {
+                        if (i == 0) {
+                            root.pan-changed(root.sel.instance-id, abs(v) < 0.05 ? 0 : v, root.sel.pan-b);
+                        } else {
+                            root.pan-changed(root.sel.instance-id, root.sel.pan-a, abs(v) < 0.05 ? 0 : v);
+                        }
+                    }
+                }
+                Text {
+                    text: "R";
+                    color: Theme.text-muted;
+                    font-size: Theme.font-caption;
+                    vertical-alignment: center;
+                }
+                Text {
+                    width: 44px;
+                    text: root.pan-label(pan-slider.dragging ? (abs(pan-slider.shown-value) < 0.05 ? 0 : pan-slider.shown-value) : pan);
+                    color: Theme.text-primary;
+                    font-size: Theme.font-caption;
+                    font-weight: Theme.weight-bold;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}

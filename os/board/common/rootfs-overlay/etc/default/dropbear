@@ -1,0 +1,3 @@
+# SSH with keys only (authorized_keys on the boot partition, see
+# pedalboard.txt); host keys are kept on the data partition
+DROPBEAR_ARGS="-s"

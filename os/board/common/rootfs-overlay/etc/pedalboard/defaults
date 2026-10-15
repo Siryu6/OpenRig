@@ -1,0 +1,7 @@
+# Defaults of the settings in pedalboard.txt (boot partition)
+audio_device='auto'
+sample_rate='48000'
+period='128'
+periods='2'
+display_rotation='0'
+wifi_country=''

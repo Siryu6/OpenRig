@@ -1,0 +1,2 @@
+source "$BR2_EXTERNAL_PEDALBOARD_PATH/package/pedalboard/Config.in"
+source "$BR2_EXTERNAL_PEDALBOARD_PATH/package/rpi-tryboot/Config.in"

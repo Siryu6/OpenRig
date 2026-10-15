@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- OpenRig boot logo. Render with:
+     rsvg-convert splash.svg -o ../rootfs-overlay/usr/share/pedalboard/splash.png -->
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="300" viewBox="0 0 560 300">
+  <!-- Pedal, open at the top -->
+  <g fill="none" stroke="#f0a43c" stroke-width="7" stroke-linecap="round">
+    <path d="M 262 22 H 238 A 16 16 0 0 0 222 38 V 150 A 16 16 0 0 0 238 166
+             H 322 A 16 16 0 0 0 338 150 V 38 A 16 16 0 0 0 322 22 H 298"/>
+    <!-- Knobs with their pointer -->
+    <circle cx="246" cy="62" r="11"/>
+    <path d="M 246 62 L 239 55"/>
+    <circle cx="280" cy="62" r="11"/>
+    <path d="M 280 62 V 52"/>
+    <circle cx="314" cy="62" r="11"/>
+    <path d="M 314 62 L 321 55"/>
+  </g>
+  <!-- Footswitch -->
+  <circle cx="280" cy="128" r="20" fill="none" stroke="#f0a43c" stroke-width="7"/>
+  <circle cx="280" cy="128" r="8" fill="#f0a43c"/>
+  <text x="280" y="252" text-anchor="middle" font-family="Noto Sans" font-size="58"
+        letter-spacing="3" fill="#f0a43c"><tspan font-weight="300">open</tspan><tspan font-weight="700">rig</tspan></text>
+</svg>

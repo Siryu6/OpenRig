@@ -1,0 +1,4 @@
+[submodule "third_party/NeuralAudio"]
+	path = third_party/NeuralAudio
+	url = https://github.com/mikeoliphant/NeuralAudio.git
+	shallow = true

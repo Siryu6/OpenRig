@@ -1,0 +1,992 @@
+import { Theme } from "theme.slint";
+import {
+    PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus,
+    T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile
+} from "types.slint";
+// Pages
+import { PluginRack } from "pages/rack.slint";
+import { PluginEditor } from "pages/plugin_editor.slint";
+import { PluginBrowser } from "pages/plugin_browser.slint";
+import { TunerView } from "pages/tuner_view.slint";
+import { PresetManager } from "pages/preset_manager.slint";
+import { SceneManager } from "pages/scene_manager.slint";
+import { LooperView } from "pages/looper_view.slint";
+import { LiveView } from "pages/live_view.slint";
+import { SettingsView } from "pages/settings_view.slint";
+import { Tone3000View } from "pages/tone3000_view.slint";
+import { Features } from "features.slint";
+import { TextEdit, TextEditing } from "components/virtual_keyboard.slint";
+// Components
+import { TopBar } from "components/top_bar.slint";
+import { ContextMenuOverlay } from "components/context_menu.slint";
+import { Icon } from "components/controls.slint";
+import { ResourcePanel } from "components/resource_panel.slint";
+import { PowerDialog } from "components/power_dialog.slint";
+
+// Re-export the data types used by the Rust side
+export { Features, TextEdit, TextEditing }
+export { PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice }
+
+export component App inherits Window {
+    title: "OpenRig";
+    background: Theme.background;
+    default-font-size: Theme.font-body;
+
+    // 7" touchscreen (800x480); fullscreen on the actual hardware
+    preferred-width: 800px;
+    preferred-height: 480px;
+    min-width: 800px;
+    min-height: 480px;
+
+    // ---------------------------------------------------------------- state
+    // 0 = rack, 1 = editor, 2 = browser, 3 = tuner, 4 = presets, 5 = looper, 6 = setlists,
+    // 7 = settings, 8 = TONE3000 library, 9 = live
+    // (Rust: TUNER_VIEW and LIVE_VIEW in main.rs)
+    in-out property <int> current-view: 0;
+    in-out property <int> selected-plugin: 0;       // index into positioned-nodes
+    private property <string> selected-split-type: root.selected-plugin >= 0 && root.selected-plugin < root.positioned-nodes.length
+        ? root.positioned-nodes[root.selected-plugin].split-type : "";
+    in-out property <int> focused-parameter: 0;
+    in-out property <int> browser-selected-index: 0;
+
+    // Split chain insertion mode: 0 = main, 1 = top branch, 2 = bottom branch
+    in-out property <int> split-insertion-mode: 0;
+    in-out property <int> target-split-index: -1;   // split instance-id
+
+    // Tuner
+    in-out property <float> tuner-frequency: 0;
+    in-out property <string> tuner-note: "A";
+    in-out property <int> tuner-octave: 4;
+    in-out property <float> tuner-cents: 0.0;
+    in-out property <bool> tuner-is-tuned: false;
+    in-out property <bool> tuner-mute-enabled: false;
+    in-out property <float> tuner-reference-pitch: 440.0;
+
+    // Looper
+    in-out property <LooperState> looper-state: LooperState.Stopped;
+    in-out property <float> looper-length: 0.0;
+    in-out property <float> looper-position: 0.0;
+    in-out property <int> looper-layers: 0;
+    in-out property <float> looper-level: 1.0;
+
+    // Plugins / chain
+    in-out property <[PluginItem]> available-plugins: [];
+    in-out property <[PositionedNode]> positioned-nodes: [];
+    in-out property <[Connector]> connectors: [];
+    in-out property <[DropSlotView]> drop-slots: [];
+    // Block colours: the palette, and the colour of the selected block
+    in-out property <[ColorChoice]> block-colors: [];
+    in-out property <string> selected-color: "";
+    in-out property <color> selected-color-value;
+    in-out property <color> selected-auto-color;   // colour of its family
+    in-out property <float> chain-width: 0.0;
+    in-out property <float> chain-top: 0.0;
+    in-out property <float> chain-bottom: 0.0;
+
+    // Selected node (filled by Rust on select-node)
+    in-out property <int> selected-instance-id: -1;
+    in-out property <string> selected-plugin-name: "";
+    in-out property <string> selected-plugin-category: "";
+    in-out property <bool> selected-plugin-bypassed: false;
+    in-out property <[ParameterInfo]> selected-parameters: [];
+    in-out property <bool> selected-uses-file: false;  // block loads a model (NAM)
+    in-out property <string> selected-file: "";
+    in-out property <string> selected-file-label: "Model";   // "Model", "Impulse response"
+    in-out property <string> selected-file-types: "";        // ".nam, .json"
+    in-out property <string> selected-file-title: "";  // tone of the current file
+    in-out property <string> selected-file-subtitle: "";
+    in-out property <[ModelChoice]> selected-presets: [];
+    in-out property <string> selected-preset-name: "";
+    in-out property <[ModelChoice]> available-packs: [];
+    in-out property <string> models-dir: "";
+
+    // Presets / scenes
+    in-out property <[PresetInfo]> presets: [];
+    in-out property <string> current-preset-name: "Default";
+    in-out property <string> current-preset-id: "";  // empty: unsaved
+    in-out property <[SceneInfo]> scenes: [];
+    in-out property <[SceneSlotInfo]> scene-slots: [];
+    in-out property <string> current-scene-name: "No setlist";  // setlist
+
+    // Live: footswitches, scenes of the preset, tempo
+    in-out property <string> live-mode: "stomp";
+    in-out property <[LiveTile]> live-tiles: [];
+    in-out property <string> live-scene-name: "Scene 1";
+    in-out property <int> live-scene-index: 0;
+    in-out property <float> tempo: 120;
+    in-out property <string> tap-switch-label: "";
+    in-out property <[MenuItem]> stomp-choices: [];
+    in-out property <int> footswitch-count: 4;  // physical switches
+    in-out property <bool> tap-switch: true;    // the last one taps the tempo
+    // MIDI
+    in property <bool> midi-available: false;    // built with MIDI and the system allows it
+    in property <string> midi-devices: "";       // devices listened to
+    in property <int> midi-channel: 0;           // 0 = omni, 1–16
+    in property <bool> midi-clock: true;         // follow an incoming clock
+    in property <bool> midi-activity: false;     // LED: a message just came in
+    in property <bool> tempo-clock: false;       // the tempo comes from a MIDI clock
+    in-out property <bool> midi-learning: false; // block editor: learning a controller
+    in property <int> midi-learn-target: -2;     // -2 none, -1 on/off, n parameter n
+    in property <int> midi-learn-cc: -1;         // controller moved first
+    in property <string> midi-learn-message: "";
+    in property <bool> midi-learn-assigned: false; // the touched control has a controller
+    in property <int> midi-learn-heel: 0;        // its range, percent: at CC 0…
+    in property <int> midi-learn-toe: 100;       // …and at CC 127
+    in property <float> selected-cpu: -1;         // share of a core the block uses, -1 unknown
+    in property <string> selected-bypass-midi: ""; // "CC n" driving the block's on/off
+
+    // Context menu
+    in-out property <bool> show-context-menu: false;
+    in-out property <[MenuItem]> context-menu-items: [];
+    in-out property <length> context-menu-x: 0px;
+    in-out property <length> context-menu-y: 0px;
+
+    // Audio
+    in-out property <bool> stereo-mode: false;
+    in-out property <bool> audio-running: false;
+    in-out property <Levels> levels;
+    in-out property <bool> demo-plugins: false;    // no real LV2 plugins found
+    // Resource monitor
+    in-out property <ResourceStatus> resources: {
+        dsp-load: -1, dsp-peak: -1, jack-load: -1, cpu: -1, cpu-max-core: -1,
+        temperature: -1, latency-ms: -1,
+    };
+    in-out property <bool> show-resources: false;
+
+    // Wi-Fi (Settings)
+    in-out property <string> wifi-status: "unsupported"; // "unsupported" | "no-device" | "off" | "on"
+    in-out property <[WifiNetwork]> wifi-networks: [];
+    in-out property <bool> wifi-scanning: false;
+    in-out property <string> wifi-busy-ssid: "";
+    in-out property <string> wifi-message: "";
+
+    // TONE3000 Connect (Settings); Features.tone3000 is set once connected
+    in-out property <bool> t3k-available: false;
+    in-out property <string> t3k-status: "signed-out";
+    in-out property <string> t3k-client-id: "";
+    in-out property <string> t3k-username: "";
+    in-out property <string> t3k-user-code: "";
+    in-out property <string> t3k-url: "";
+    in-out property <image> t3k-qr;
+    in-out property <string> t3k-error: "";
+
+    // TONE3000 library (view 8)
+    in-out property <int> t3k-tab: 0;
+    in-out property <string> t3k-gear: "";
+    in-out property <[T3kTone]> t3k-tones: [];
+    in-out property <bool> t3k-loading: false;
+    in-out property <string> t3k-list-error: "";
+    in-out property <bool> t3k-has-more: false;
+    in-out property <bool> t3k-detail-open: false;
+    in-out property <T3kTone> t3k-detail;
+    in-out property <string> t3k-detail-url: "";
+    in-out property <[T3kModel]> t3k-models: [];
+    in-out property <bool> t3k-models-loading: false;
+    in-out property <int> t3k-target-id: -1;         // block to load models in (-1 = none)
+    in-out property <string> t3k-target-name: "";
+    in-out property <[string]> t3k-gear-ids: [];
+    in-out property <[string]> t3k-gear-names: [];
+    private property <int> t3k-return-view: 0;
+    // Setlists page: 0 = list, 1 = footswitch slots
+    private property <int> setlist-view-mode: 0;
+
+    // Transient toast text set by Rust; empty = hidden
+    in-out property <string> status-message: "";
+
+    // ------------------------------------------------------------ callbacks
+    callback add-plugin-to-chain(string);
+    callback remove-node-by-id(int);                 // instance-id
+    callback drag-started(int);                      // instance-id
+    callback node-dropped(int, float, float);        // instance-id, layout x, y
+    callback set-color(int, string);                 // instance-id, colour name ("" = default)
+    callback select-node(int);                       // instance-id
+    callback set-parameter(int, int, float);         // instance-id, param index, value
+    callback toggle-node-bypass(int);                // instance-id
+    callback refresh-models();
+    callback set-model(int, string);                 // instance-id, file ("" = none)
+
+    callback add-split(string);                      // "ab", "mix" or "lr"
+    callback add-plugin-to-split-top(int, string);   // split instance-id, plugin uri
+    callback add-plugin-to-split-bottom(int, string);// split instance-id, plugin uri
+    callback toggle-split-ab(int);                   // split instance-id
+    callback set-split-mix-ratio(int, float);        // split instance-id, ratio
+    callback set-split-type(int, string);            // split instance-id, "ab", "mix" or "lr"
+    callback set-split-pan(int, float, float);       // split instance-id, pan A, pan B
+
+    callback load-preset(string);
+    callback save-preset(string);   // as a new preset
+    callback update-preset();       // over the current one
+    callback delete-preset(string);
+    callback create-scene(string);
+    callback load-scene(string);
+    callback delete-scene(string);
+    callback scene-slot-assign(int, string);
+    callback scene-slot-clear(int);
+    callback footswitch-pressed(int);
+    // Physical footswitches (GPIO, or keys 1-8 on a computer)
+    callback footswitch-down(int);
+    callback footswitch-up(int);
+    callback live-mode-changed(string);
+    callback live-tile-pressed(int);
+    callback tap-tempo();
+    callback set-tempo(float);
+    callback rename-scene(int, string);
+    callback assign-stomp(int, string);
+    callback tap-switch-changed(bool);
+    callback midi-channel-changed(int);
+    callback midi-clock-changed(bool);
+    callback midi-learn-toggled(bool);
+    callback midi-learn-touch(int);             // target touched while learning
+    callback midi-learn-clear(int);             // forget the controller of a target
+    callback midi-learn-range(int, int);        // heel, toe of the shown target
+
+    // Learning only happens in the block editor
+
+    callback looper-record();
+    callback looper-play();
+    callback looper-stop();
+    callback looper-overdub();
+    callback looper-undo();
+    callback looper-clear();
+    callback looper-level-changed(float);
+
+    callback set-stereo-mode(bool);
+    callback wifi-refresh(bool);                     // rescan
+    callback wifi-set-enabled(bool);
+    callback wifi-connect(string, string);           // ssid, password ("" = saved / open)
+    callback wifi-disconnect();
+    callback wifi-forget(string);
+    callback t3k-connect(string);                    // publishable key
+    callback t3k-cancel();
+    callback t3k-disconnect();
+    callback t3k-open(int);                          // target block (-1 = none)
+    callback t3k-load(int, string, bool);            // tab, gear, next page
+    callback t3k-open-tone(int);                     // index in t3k-tones
+    callback t3k-download(int);                      // index in t3k-models
+    callback t3k-add-model(string, string);          // block URI, relative path
+    callback tuner-mute-toggled(bool);
+    callback tuner-reference-pitch-changed(float);
+    callback power(string);                          // "poweroff" | "reboot"
+    in-out property <bool> power-dialog: false;
+    in-out property <string> power-action: "";       // set once chosen
+
+    // -------------------------------------------------------------- helpers
+
+    // Select a node of the rack (its parameters are loaded for the quick controls)
+    function select-node-at(idx: int) {
+        if (idx < 0 || idx >= root.positioned-nodes.length) {
+            return;
+        }
+        root.selected-plugin = idx;
+        root.selected-instance-id = root.positioned-nodes[idx].instance-id;
+        // Fallback display values; Rust overwrites them in select-node
+        root.selected-plugin-name = root.positioned-nodes[idx].name;
+        root.selected-plugin-category = "";
+        root.selected-plugin-bypassed = root.positioned-nodes[idx].bypassed;
+        root.selected-parameters = [];
+        root.selected-uses-file = false;
+        root.selected-file = "";
+        root.selected-presets = [];
+        root.select-node(root.positioned-nodes[idx].instance-id);
+    }
+
+    // Select a node and, for a plugin, open its editor
+    function open-node(idx: int) {
+        if (idx < 0 || idx >= root.positioned-nodes.length) {
+            return;
+        }
+        if (idx != root.selected-plugin || root.positioned-nodes[idx].instance-id != root.selected-instance-id) {
+            root.select-node-at(idx);
+        }
+        if (!root.positioned-nodes[idx].is-split) {
+            root.focused-parameter = 0;
+            root.current-view = 1;
+        }
+    }
+
+    function open-browser(mode: int, split-id: int) {
+        root.split-insertion-mode = mode;
+        root.target-split-index = split-id;
+        root.browser-selected-index = 0;
+        root.current-view = 2;
+    }
+
+    function add-plugin(uri: string) {
+        if (root.split-insertion-mode == 1) {
+            root.add-plugin-to-split-top(root.target-split-index, uri);
+        } else if (root.split-insertion-mode == 2) {
+            root.add-plugin-to-split-bottom(root.target-split-index, uri);
+        } else {
+            root.add-plugin-to-chain(uri);
+        }
+        root.split-insertion-mode = 0;
+        root.target-split-index = -1;
+        root.current-view = 0;
+    }
+
+    // Open the TONE3000 library; from a block editor (target-id >= 0),
+    // only the block's gear is offered and models can be loaded in it
+    function open-tone3000(target-id: int) {
+        if (root.current-view != 8) {
+            root.t3k-return-view = root.current-view;
+        }
+        root.t3k-detail-open = false;
+        root.current-view = 8;
+        root.t3k-open(target-id);
+    }
+
+    function toggle-bypass(instance-id: int) {
+        root.toggle-node-bypass(instance-id);
+    }
+
+    forward-focus: keys;
+
+    // Text fields (keyboard dialogs) take the focus: give it back to the
+    // encoder / shortcut handler when the view changes
+    changed current-view => {
+        keys.focus();
+        // Learning only makes sense in the block editor
+        if (root.current-view != 1 && root.midi-learning) {
+            root.midi-learn-toggled(false);
+        }
+    }
+
+    // ------------------------------------------------------------------ UI
+    VerticalLayout {
+        TopBar {
+            active-tab: root.current-view <= 2 ? "rack" :
+                root.current-view == 3 ? "tuner" :
+                root.current-view == 4 || root.current-view == 6 ? "presets" :
+                root.current-view == 5 ? "looper" :
+                root.current-view == 9 ? "live" : "";
+            current-view-name: root.current-view == 1 ? root.selected-plugin-name :
+                root.current-view == 7 ? "Settings" :
+                root.current-view == 8 ? "TONE3000" : "Add effect";
+            preset-name: root.current-preset-name;
+            scene-name: root.live-scene-name;
+            tempo: root.tempo;
+            show-back-button: root.current-view == 1 || root.current-view == 2 || root.current-view == 7 || root.current-view == 8;
+            audio-running: root.audio-running;
+            resources: root.resources;
+
+            resources-clicked => {
+                root.show-resources = true;
+            }
+            back-clicked => {
+                root.current-view = root.current-view == 8 ? root.t3k-return-view : 0;
+            }
+            rack-clicked => {
+                root.current-view = 0;
+            }
+            tuner-clicked => {
+                root.current-view = 3;
+            }
+            looper-clicked => {
+                root.current-view = 5;
+            }
+            presets-clicked => {
+                root.current-view = 4;
+            }
+            live-clicked => {
+                root.current-view = 9;
+            }
+            menu-clicked => {
+                if (Features.tone3000 && Features.power) {
+                    root.context-menu-items = [
+                        { id: "tone3000", label: "TONE3000", icon: "plug", enabled: true },
+                        { id: "settings", label: "Settings", icon: "settings", enabled: true },
+                        { id: "power", label: "Power off", icon: "power", enabled: true },
+                    ];
+                } else if (Features.tone3000) {
+                    root.context-menu-items = [
+                        { id: "tone3000", label: "TONE3000", icon: "plug", enabled: true },
+                        { id: "settings", label: "Settings", icon: "settings", enabled: true },
+                    ];
+                } else if (Features.power) {
+                    root.context-menu-items = [
+                        { id: "settings", label: "Settings", icon: "settings", enabled: true },
+                        { id: "power", label: "Power off", icon: "power", enabled: true },
+                    ];
+                } else {
+                    root.context-menu-items = [
+                        { id: "settings", label: "Settings", icon: "settings", enabled: true },
+                    ];
+                }
+                root.context-menu-x = root.width - 248px;
+                root.context-menu-y = Theme.top-bar-height + 4px;
+                root.show-context-menu = true;
+            }
+        }
+
+        // View content
+        Rectangle {
+            vertical-stretch: 1;
+            background: Theme.background;
+
+            if root.current-view == 0: PluginRack {
+                levels: root.levels;
+                positioned-nodes: root.positioned-nodes;
+                connectors: root.connectors;
+                chain-width: root.chain-width;
+                chain-top: root.chain-top;
+                chain-bottom: root.chain-bottom;
+                selected-instance-id: root.selected-instance-id;
+                selected-index <=> root.selected-plugin;
+                stereo-mode <=> root.stereo-mode;
+                drop-slots: root.drop-slots;
+                parameters: root.selected-parameters;
+                uses-file: root.selected-uses-file;
+                file-title: root.selected-file-title;
+
+                drag-started(id) => {
+                    root.drag-started(id);
+                }
+                node-dropped(id, x, y) => {
+                    root.node-dropped(id, x, y);
+                }
+
+                node-tapped(idx) => {
+                    root.select-node-at(idx);
+                }
+                node-double-tapped(idx) => {
+                    root.open-node(idx);
+                }
+                parameter-changed(index, value) => {
+                    root.set-parameter(root.selected-instance-id, index, value);
+                }
+                node-long-pressed(id) => {
+                    root.toggle-bypass(id);
+                }
+                edit-clicked(id) => {
+                    root.open-node(root.selected-plugin);
+                }
+                toggle-bypass-clicked(id) => {
+                    root.toggle-bypass(id);
+                }
+                remove-node-clicked(id) => {
+                    root.remove-node-by-id(id);
+                    if (id == root.selected-instance-id) {
+                        root.selected-instance-id = -1;
+                    }
+                }
+                add-plugin-clicked => {
+                    root.open-browser(0, -1);
+                }
+                add-split-clicked => {
+                    root.context-menu-items = [
+                        { id: "split-mix", label: "Parallel mix", icon: "split", enabled: true },
+                        { id: "split-ab", label: "A/B switch", icon: "split", enabled: true },
+                        { id: "split-lr", label: "Left / right", icon: "stereo", enabled: true },
+                    ];
+                    // Drops from the split button (top right of the rack)
+                    root.context-menu-x = root.width - Theme.space-md - 52px - 240px;
+                    root.context-menu-y = Theme.top-bar-height + Theme.space-md + Theme.touch-target + 4px;
+                    root.show-context-menu = true;
+                }
+                add-plugin-to-split-top-clicked(id) => {
+                    root.open-browser(1, id);
+                }
+                add-plugin-to-split-bottom-clicked(id) => {
+                    root.open-browser(2, id);
+                }
+                toggle-ab-clicked(id) => {
+                    root.toggle-split-ab(id);
+                }
+                mix-ratio-changed(id, ratio) => {
+                    root.set-split-mix-ratio(id, ratio);
+                }
+                pan-changed(id, a, b) => {
+                    root.set-split-pan(id, a, b);
+                }
+                split-type-clicked(id) => {
+                    root.target-split-index = id;
+                    root.context-menu-items = [
+                        { id: "type-mix", label: "Parallel mix", icon: "split", enabled: root.selected-split-type != "mix" },
+                        { id: "type-ab", label: "A/B switch", icon: "split", enabled: root.selected-split-type != "ab" },
+                        { id: "type-lr", label: "Left / right", icon: "stereo", enabled: root.selected-split-type != "lr" },
+                    ];
+                    root.context-menu-x = 16px;
+                    root.context-menu-y = root.height - 72px - 3 * 48px - 24px;
+                    root.show-context-menu = true;
+                }
+                stereo-mode-toggled(stereo) => {
+                    root.stereo-mode = stereo;
+                    root.set-stereo-mode(stereo);
+                }
+            }
+
+            if root.current-view == 1: PluginEditor {
+                instance-id: root.selected-instance-id;
+                plugin-name: root.selected-plugin-name;
+                category: root.selected-plugin-category;
+                bypassed: root.selected-plugin-bypassed;
+                parameters: root.selected-parameters;
+                focused-param: root.focused-parameter;
+                uses-file: root.selected-uses-file;
+                file: root.selected-file;
+                file-label: root.selected-file-label;
+                file-types: root.selected-file-types;
+                file-title: root.selected-file-title;
+                file-subtitle: root.selected-file-subtitle;
+                presets: root.selected-presets;
+                preset-name: root.selected-preset-name;
+                packs: root.available-packs;
+                models-dir: root.models-dir;
+                colors: root.block-colors;
+                color: root.selected-color;
+                color-value: root.selected-color-value;
+                auto-color: root.selected-auto-color;
+                midi-available: root.midi-available;
+                midi-learning: root.midi-learning;
+                midi-learn-target: root.midi-learn-target;
+                midi-learn-cc: root.midi-learn-cc;
+                midi-learn-message: root.midi-learn-message;
+                midi-learn-assigned: root.midi-learn-assigned;
+                midi-learn-heel: root.midi-learn-heel;
+                midi-learn-toe: root.midi-learn-toe;
+                midi-learn-range(heel, toe) => {
+                    root.midi-learn-range(heel, toe);
+                }
+                bypass-midi: root.selected-bypass-midi;
+                cpu: root.selected-cpu;
+                midi-learn-toggled(on) => {
+                    root.midi-learn-toggled(on);
+                }
+                midi-learn-touch(target) => {
+                    root.midi-learn-touch(target);
+                }
+                midi-learn-clear(target) => {
+                    root.midi-learn-clear(target);
+                }
+
+                parameter-changed(index, value) => {
+                    root.set-parameter(root.selected-instance-id, index, value);
+                }
+                bypass-toggled => {
+                    root.toggle-bypass(root.selected-instance-id);
+                }
+                color-chosen(name) => {
+                    root.set-color(root.selected-instance-id, name);
+                }
+                models-requested => {
+                    root.refresh-models();
+                }
+                model-chosen(file) => {
+                    root.set-model(root.selected-instance-id, file);
+                }
+                browse-tone3000 => {
+                    root.open-tone3000(root.selected-instance-id);
+                }
+            }
+
+            if root.current-view == 2: PluginBrowser {
+                plugins: root.available-plugins;
+                selected-index: root.browser-selected-index;
+                demo-plugins: root.demo-plugins;
+                target-label: root.split-insertion-mode == 1 ? "Top branch of the split" :
+                    root.split-insertion-mode == 2 ? "Bottom branch of the split" : "End of the main chain";
+
+                plugin-selected(idx, uri) => {
+                    root.add-plugin(uri);
+                }
+            }
+
+            if root.current-view == 3: TunerView {
+                frequency: root.tuner-frequency;
+                note-name: root.tuner-note;
+                octave: root.tuner-octave;
+                cents: root.tuner-cents;
+                is-tuned: root.tuner-is-tuned;
+                mute-enabled <=> root.tuner-mute-enabled;
+                reference-pitch <=> root.tuner-reference-pitch;
+
+                mute-toggled(enabled) => {
+                    root.tuner-mute-toggled(enabled);
+                }
+                reference-pitch-changed(freq) => {
+                    root.tuner-reference-pitch-changed(freq);
+                }
+            }
+
+            if root.current-view == 4: PresetManager {
+                presets: root.presets;
+                current-preset-name: root.current-preset-name;
+                current-preset-id: root.current-preset-id;
+
+                show-setlists(mode) => {
+                    root.setlist-view-mode = mode;
+                    root.current-view = 6;
+                }
+                preset-selected(id) => {
+                    root.load-preset(id);
+                    root.current-view = 0;
+                }
+                save-preset(name) => {
+                    root.save-preset(name);
+                }
+                update-preset => {
+                    root.update-preset();
+                }
+                delete-preset(id) => {
+                    root.delete-preset(id);
+                }
+                close => {
+                    root.current-view = 0;
+                }
+            }
+
+            if root.current-view == 5: LooperView {
+                state: root.looper-state;
+                loop-length: root.looper-length;
+                current-position: root.looper-position;
+                layer-count: root.looper-layers;
+                level: root.looper-level;
+
+                record-clicked => {
+                    root.looper-record();
+                }
+                play-clicked => {
+                    root.looper-play();
+                }
+                stop-clicked => {
+                    root.looper-stop();
+                }
+                overdub-clicked => {
+                    root.looper-overdub();
+                }
+                undo-clicked => {
+                    root.looper-undo();
+                }
+                clear-clicked => {
+                    root.looper-clear();
+                }
+                level-changed(lvl) => {
+                    root.looper-level = lvl;
+                    root.looper-level-changed(lvl);
+                }
+            }
+
+            if root.current-view == 6: SceneManager {
+                view-mode <=> root.setlist-view-mode;
+                show-presets => {
+                    root.current-view = 4;
+                }
+                scenes: root.scenes;
+                scene-slots: root.scene-slots;
+                presets: root.presets;
+                current-scene-name: root.current-scene-name;
+
+                scene-selected(id) => {
+                    root.load-scene(id);
+                }
+                create-scene(name) => {
+                    root.create-scene(name);
+                }
+                delete-scene(id) => {
+                    root.delete-scene(id);
+                }
+                slot-assign(slot, preset-id) => {
+                    root.scene-slot-assign(slot, preset-id);
+                }
+                slot-clear(slot) => {
+                    root.scene-slot-clear(slot);
+                }
+                footswitch-pressed(slot) => {
+                    root.footswitch-pressed(slot);
+                }
+                close => {
+                    root.current-view = 0;
+                }
+            }
+
+            if root.current-view == 8: Tone3000View {
+                tab: root.t3k-tab;
+                gear: root.t3k-gear;
+                tones: root.t3k-tones;
+                loading: root.t3k-loading;
+                error: root.t3k-list-error;
+                has-more: root.t3k-has-more;
+                detail-open <=> root.t3k-detail-open;
+                detail: root.t3k-detail;
+                detail-url: root.t3k-detail-url;
+                models: root.t3k-models;
+                models-loading: root.t3k-models-loading;
+                target-name: root.t3k-target-name;
+                gear-ids: root.t3k-gear-ids;
+                gear-names: root.t3k-gear-names;
+
+                load(tab, gear) => {
+                    root.t3k-load(tab, gear, false);
+                }
+                load-more => {
+                    root.t3k-load(root.t3k-tab, root.t3k-gear, true);
+                }
+                open-tone(i) => {
+                    root.t3k-open-tone(i);
+                }
+                download(i) => {
+                    root.t3k-download(i);
+                }
+                use-model(path) => {
+                    root.set-model(root.t3k-target-id, path);
+                    root.t3k-detail-open = false;
+                    root.current-view = 1;
+                }
+                add-model(uri, path) => {
+                    // The backend selects the new block
+                    root.t3k-add-model(uri, path);
+                    root.t3k-detail-open = false;
+                    root.current-view = 1;
+                }
+            }
+
+            if root.current-view == 9: LiveView {
+                mode: root.live-mode;
+                tiles: root.live-tiles;
+                preset-name: root.current-preset-name;
+                scene-name: root.live-scene-name;
+                scene-index: root.live-scene-index;
+                setlist-name: root.current-scene-name == "No setlist" ? "" : root.current-scene-name;
+                tempo: root.tempo;
+                tempo-clock: root.tempo-clock;
+                tap-switch-label: root.tap-switch-label;
+                stomp-choices: root.stomp-choices;
+
+                mode-changed(mode) => {
+                    root.live-mode-changed(mode);
+                }
+                tile-pressed(i) => {
+                    root.live-tile-pressed(i);
+                }
+                tap => {
+                    root.tap-tempo();
+                }
+                tempo-changed(bpm) => {
+                    root.set-tempo(bpm);
+                }
+                rename-scene(slot, name) => {
+                    root.rename-scene(slot, name);
+                }
+                assign-stomp(slot, id) => {
+                    root.assign-stomp(slot, id);
+                }
+                open-setlists => {
+                    root.setlist-view-mode = 1;
+                    root.current-view = 6;
+                }
+            }
+
+            if root.current-view == 7: SettingsView {
+                footswitch-count: root.footswitch-count;
+                tap-switch: root.tap-switch;
+                tap-switch-changed(on) => {
+                    root.tap-switch-changed(on);
+                }
+                midi-available: root.midi-available;
+                midi-devices: root.midi-devices;
+                midi-channel: root.midi-channel;
+                midi-clock: root.midi-clock;
+                midi-activity: root.midi-activity;
+                midi-channel-changed(channel) => {
+                    root.midi-channel-changed(channel);
+                }
+                midi-clock-changed(on) => {
+                    root.midi-clock-changed(on);
+                }
+                wifi-status: root.wifi-status;
+                wifi-networks: root.wifi-networks;
+                wifi-scanning: root.wifi-scanning;
+                wifi-busy-ssid: root.wifi-busy-ssid;
+                wifi-message: root.wifi-message;
+                wifi-refresh(rescan) => {
+                    root.wifi-refresh(rescan);
+                }
+                wifi-set-enabled(on) => {
+                    root.wifi-set-enabled(on);
+                }
+                wifi-connect(ssid, password) => {
+                    root.wifi-connect(ssid, password);
+                }
+                wifi-disconnect => {
+                    root.wifi-disconnect();
+                }
+                wifi-forget(ssid) => {
+                    root.wifi-forget(ssid);
+                }
+                t3k-available: root.t3k-available;
+                t3k-status: root.t3k-status;
+                t3k-client-id: root.t3k-client-id;
+                t3k-username: root.t3k-username;
+                t3k-user-code: root.t3k-user-code;
+                t3k-url: root.t3k-url;
+                t3k-qr: root.t3k-qr;
+                t3k-error: root.t3k-error;
+
+                t3k-connect(key) => {
+                    root.t3k-connect(key);
+                }
+                t3k-cancel => {
+                    root.t3k-cancel();
+                }
+                t3k-disconnect => {
+                    root.t3k-disconnect();
+                }
+            }
+        }
+    }
+
+    // Toast (status message from the backend, which hides it after a while)
+    if root.status-message != "": Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: parent.height - self.height - 88px;
+        width: min(parent.width - 2 * Theme.space-lg, toast-row.preferred-width);
+        height: 44px;
+        border-radius: Theme.radius-md;
+        background: Theme.surface-raised;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+
+        toast-row := HorizontalLayout {
+            padding-left: Theme.space-lg;
+            padding-right: Theme.space-lg;
+            spacing: Theme.space-sm;
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    name: "info";
+                    size: 18px;
+                    color: Theme.accent;
+                }
+            }
+            Text {
+                text: root.status-message;
+                color: Theme.text-primary;
+                font-size: Theme.font-small;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        TouchArea {
+            clicked => {
+                root.status-message = "";
+            }
+        }
+    }
+
+    ContextMenuOverlay {
+        show-menu: root.show-context-menu;
+        menu-items: root.context-menu-items;
+        menu-x: root.context-menu-x;
+        menu-y: root.context-menu-y;
+
+        menu-item-clicked(id) => {
+            root.show-context-menu = false;
+            if (id == "split-mix") {
+                root.add-split("mix");
+            } else if (id == "split-ab") {
+                root.add-split("ab");
+            } else if (id == "split-lr") {
+                root.add-split("lr");
+            } else if (id == "type-mix" || id == "type-ab" || id == "type-lr") {
+                root.set-split-type(root.target-split-index, id == "type-mix" ? "mix" : id == "type-ab" ? "ab" : "lr");
+                root.target-split-index = -1;
+            } else if (id == "tone3000") {
+                root.open-tone3000(-1);
+            } else if (id == "settings") {
+                root.current-view = 7;
+            } else if (id == "power") {
+                root.power-action = "";
+                root.power-dialog = true;
+            }
+        }
+        close-menu => {
+            root.show-context-menu = false;
+        }
+    }
+
+    PowerDialog {
+        show <=> root.power-dialog;
+        action <=> root.power-action;
+        power(action) => {
+            root.power(action);
+        }
+    }
+
+    ResourcePanel {
+        show: root.show-resources;
+        status: root.resources;
+        audio-running: root.audio-running;
+        close => {
+            root.show-resources = false;
+        }
+    }
+
+    // Keyboard shortcuts simulating the rotary encoder
+    keys := FocusScope {
+        width: 0px;
+        height: 0px;
+
+        key-pressed(event) => {
+            if (event.text == Key.UpArrow && root.current-view == 2) {
+                root.browser-selected-index = max(0, root.browser-selected-index - 1);
+                return accept;
+            }
+            if (event.text == Key.DownArrow && root.current-view == 2) {
+                root.browser-selected-index = min(root.available-plugins.length - 1, root.browser-selected-index + 1);
+                return accept;
+            }
+            if (event.text == Key.LeftArrow || event.text == Key.RightArrow) {
+                if (root.current-view == 1) {
+                    root.focused-parameter = max(0, min(root.selected-parameters.length - 1,
+                        root.focused-parameter + (event.text == Key.LeftArrow ? -1 : 1)));
+                } else if (root.current-view == 0 && root.positioned-nodes.length > 0) {
+                    root.select-node-at(max(0, min(root.positioned-nodes.length - 1,
+                        root.selected-plugin + (event.text == Key.LeftArrow ? -1 : 1))));
+                }
+                return accept;
+            }
+            if (event.text == Key.Return) {
+                if (root.current-view == 0) {
+                    root.open-node(root.selected-plugin);
+                } else if (root.current-view == 1) {
+                    root.current-view = 0;
+                } else if (root.current-view == 2) {
+                    if (root.browser-selected-index >= 0 && root.browser-selected-index < root.available-plugins.length) {
+                        root.add-plugin(root.available-plugins[root.browser-selected-index].uri);
+                    }
+                }
+                return accept;
+            }
+            // Footswitches 1-8 and tap tempo, from a computer keyboard
+            if (event.text >= "1" && event.text <= "8" && event.text.character-count == 1) {
+                root.footswitch-down(event.text.to-float() - 1);
+                return accept;
+            }
+            if (event.text == "t") {
+                root.tap-tempo();
+                return accept;
+            }
+            if (event.text == Key.Escape) {
+                if (root.show-resources) {
+                    root.show-resources = false;
+                } else if (root.show-context-menu) {
+                    root.show-context-menu = false;
+                } else if (root.current-view == 8) {
+                    root.current-view = root.t3k-return-view;
+                } else if (root.current-view == 1 || root.current-view == 2 || root.current-view == 7) {
+                    root.current-view = 0;
+                }
+                return accept;
+            }
+            return reject;
+        }
+        key-released(event) => {
+            if (event.text >= "1" && event.text <= "8" && event.text.character-count == 1) {
+                root.footswitch-up(event.text.to-float() - 1);
+                return accept;
+            }
+            return reject;
+        }
+    }
+}

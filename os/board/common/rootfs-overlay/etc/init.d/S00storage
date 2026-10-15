@@ -1,0 +1,131 @@
+#!/bin/sh
+#
+# Storage of the pedalboard OS. The root filesystem stays read-only, so a
+# power cut cannot damage it; what changes lives on the data partition:
+#   /data/pedalboard  presets, setlists, session, models (PEDALBOARD_DATA_DIR)
+#   /data/var/lib     daemon state (NetworkManager, chrony...)
+#   /data/network     saved Wi-Fi networks
+#   /data/ssh         root's authorized_keys (copied from the boot partition)
+#   /data/dropbear    SSH host keys
+#   /data/update      system update state (see pedalboard-update)
+#   /data/rauc        RAUC state (data-directory in /etc/rauc/system.conf)
+# The second system slot (for updates) and the data partition are created
+# on first boot, from the rest of the disk (/etc/pedalboard/partitions).
+# Settings from pedalboard.txt (boot partition) go to /run/pedalboard/config.
+
+[ "$1" = start ] || exit 0
+
+DEFAULTS=/etc/pedalboard/defaults
+. /etc/pedalboard/partitions
+CONFIG=/run/pedalboard/config
+
+log() {
+	echo "storage: $*"
+}
+
+# Disk holding the root filesystem and the name prefix of its partitions
+# (mmcblk0 -> mmcblk0p, sda -> sda, nvme0n1 -> nvme0n1p)
+root_disk() {
+	majmin=$(awk '$5 == "/" { print $3; exit }' /proc/self/mountinfo)
+	root_sectors=$(cat "/sys/dev/block/$majmin/size")
+	disk=$(basename "$(readlink -f "/sys/dev/block/$majmin/..")")
+	case "$disk" in
+	*[0-9]) prefix="${disk}p" ;;
+	*) prefix="$disk" ;;
+	esac
+}
+
+wait_for() {
+	n=0
+	while [ ! -b "$1" ] && [ $n -lt 50 ]; do
+		sleep 0.1
+		n=$((n + 1))
+	done
+	[ -b "$1" ]
+}
+
+# System slot B, as large as the running one, then data over the rest
+create_partitions() {
+	log "creating the system B and data partitions on /dev/$disk"
+	# The image was smaller than the disk: move the backup GPT to the end
+	sfdisk --quiet --relocate gpt-bak-std "/dev/$disk"
+	first=$ROOT_B_NR
+	if [ -b "/dev/${prefix}$ROOT_B_NR" ]; then
+		first=$DATA_NR
+	else
+		printf 'size=%s, type=L, uuid=%s\n' "$root_sectors" "$ROOT_B_UUID"
+	fi >/run/partitions
+	echo ',,L' >>/run/partitions
+	sfdisk --quiet --append --no-reread "/dev/$disk" </run/partitions &&
+		partx --add --nr "$first:$DATA_NR" "/dev/$disk" &&
+		wait_for "$1" &&
+		mkfs.ext4 -q -L data "$1"
+}
+
+mount_data() {
+	data="/dev/${prefix}$DATA_NR"
+	if [ ! -b "$data" ] && ! create_partitions "$data"; then
+		return 1
+	fi
+	e2fsck -p "$data" >/dev/null 2>&1
+	# e2fsck: 0 clean, 1 fixed, 2 fixed (reboot advised), 4+ not fixed
+	[ $? -lt 4 ] || log "errors left on $data"
+	mount -t ext4 -o noatime "$data" /data
+}
+
+# Keep a directory of the read-only image on the data partition: the
+# image's content seeds it, then it is bind-mounted over the original
+persist() {
+	mkdir -p "/data/$2" && chmod "$3" "/data/$2"
+	# Files a new image brings are added; what is on /data is kept
+	[ -d "$1" ] && cp -an "$1/." "/data/$2/"
+	mkdir -p "$1" 2>/dev/null
+	mount --bind "/data/$2" "$1" || log "cannot keep $1"
+}
+
+# Shell-safe KEY='value' lines from pedalboard.txt: known keys, plain values
+read_config() {
+	mkdir -p /run/pedalboard
+	cat "$DEFAULTS" >"$CONFIG"
+	[ -r /boot/pedalboard.txt ] || return 0
+	tr -d '\r' </boot/pedalboard.txt |
+		sed -n 's/^[[:space:]]*\([a-z_]*\)[[:space:]]*=[[:space:]]*\([A-Za-z0-9_.:,-]*\)[[:space:]]*$/\1 \2/p' |
+		while read -r key value; do
+			case "$key" in
+			audio_device | sample_rate | period | periods | display_rotation | wifi_country)
+				echo "$key='$value'" ;;
+			esac
+		done >>"$CONFIG"
+}
+
+root_disk
+mount -t vfat -o ro,noexec,nosuid,nodev "/dev/${prefix}1" /boot ||
+	log "no boot partition on /dev/$disk"
+read_config
+. "$CONFIG"
+
+if ! mount_data; then
+	log "data partition unavailable: changes will be lost at power off"
+	mount -t tmpfs -o mode=0755 tmpfs /data
+fi
+
+persist /var/lib var/lib 0755
+persist /etc/NetworkManager/system-connections network 0700
+persist /var/run/dropbear dropbear 0700
+persist /root/.ssh ssh 0700
+if [ -r /boot/authorized_keys ]; then
+	cp /boot/authorized_keys /root/.ssh/authorized_keys
+	chmod 0600 /root/.ssh/authorized_keys
+else
+	# Removed from the boot partition: revoke the keys copied before
+	rm -f /root/.ssh/authorized_keys
+fi
+
+mkdir -p /data/pedalboard /data/rauc
+chown pedalboard:pedalboard /data/pedalboard
+
+# Wi-Fi country, applied when the Wi-Fi driver loads
+if [ -n "$wifi_country" ]; then
+	mkdir -p /run/modprobe.d
+	echo "options cfg80211 ieee80211_regdom=$wifi_country" >/run/modprobe.d/wifi-country.conf
+fi

@@ -1,0 +1,54 @@
+#!/bin/sh
+#
+# After RAUC wrote an update (system.conf, post-install handler): point the
+# new boot partition's cmdline.txt at its own system slot, and carry over
+# what was added to the running one (extra.txt, kernel arguments added to
+# cmdline.txt).
+
+set -eu
+
+ROOT_A=5eda1b0a-7007-4000-8000-00000000000a
+ROOT_B=5eda1b0a-7007-4000-8000-00000000000b
+BOOT_A=5eda1b0a-b007-4000-8000-00000000000a
+BOOT_B=5eda1b0a-b007-4000-8000-00000000000b
+
+new_boot=
+slot=
+for i in $RAUC_TARGET_SLOTS; do
+	eval class=\$RAUC_SLOT_CLASS_$i
+	eval device=\$RAUC_SLOT_DEVICE_$i
+	eval bootname=\$RAUC_SLOT_BOOTNAME_$i
+	case "$class" in
+	boot) new_boot=$device ;;
+	rootfs) slot=$bootname ;;
+	esac
+done
+[ -n "$new_boot" ] && [ -n "$slot" ] || exit 0
+
+if [ "$slot" = B ]; then
+	root=$ROOT_B old_boot=/dev/disk/by-partuuid/$BOOT_A
+else
+	root=$ROOT_A old_boot=/dev/disk/by-partuuid/$BOOT_B
+fi
+
+old=$(mktemp -d)
+new=$(mktemp -d)
+trap 'umount "$old" "$new" 2>/dev/null; rmdir "$old" "$new"' EXIT
+mount -t vfat -o ro "$old_boot" "$old"
+mount -t vfat "$new_boot" "$new"
+
+# Arguments of the running cmdline.txt that its image did not have
+extra=
+for arg in $(cat "$old/cmdline.txt"); do
+	case "$arg" in root=* | rauc.slot=*) continue ;; esac
+	case " $(cat "$old/cmdline.base" 2>/dev/null) " in
+	*" $arg "*) ;;
+	*) extra="$extra $arg" ;;
+	esac
+done
+
+base=$(sed "s/root=PARTUUID=[^ ]*/root=PARTUUID=$root/; s/rauc\.slot=[^ ]*/rauc.slot=$slot/" \
+	"$new/cmdline.base")
+printf '%s%s\n' "$base" "$extra" >"$new/cmdline.txt"
+[ ! -f "$old/extra.txt" ] || cp "$old/extra.txt" "$new/extra.txt"
+sync

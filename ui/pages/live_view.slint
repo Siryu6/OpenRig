@@ -1,0 +1,585 @@
+import { Theme } from "../theme.slint";
+import { LiveTile, MenuItem } from "../types.slint";
+import { Button, Card, Display, EmptyState, Icon, Segmented } from "../components/controls.slint";
+import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
+
+export { LiveTile }
+
+// LED with its halo
+component Led inherits Rectangle {
+    in property <bool> lit;
+    in property <color> tone: Theme.accent;
+    width: 16px;
+    height: 16px;
+    if root.lit: Rectangle {
+        border-radius: 8px;
+        background: root.tone.with-alpha(0.3);
+    }
+    Rectangle {
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: root.lit ? root.tone : Theme.led-off;
+    }
+}
+
+// A footswitch: number, scribble strip, and a LED ring along the bottom lit
+// in the colour of what it switches
+component SwitchTile inherits Rectangle {
+    in property <LiveTile> tile;
+    in property <int> number;      // 1-based
+    in property <bool> assigning;  // waiting for a tap to choose its block
+    callback clicked();
+
+    border-radius: Theme.radius-lg;
+    background: ta.pressed ? Theme.key-pressed : Theme.panel;
+    border-width: 1px;
+    border-color: root.assigning ? Theme.accent.with-alpha(0.7) : #00000080;
+
+    if !ta.pressed: Rectangle {
+        x: Theme.radius-lg;
+        y: 1px;
+        width: parent.width - 2 * Theme.radius-lg;
+        height: 1px;
+        background: Theme.edge-light;
+    }
+
+    Text {
+        x: Theme.space-sm + 2px;
+        y: 7px;
+        text: root.tile.switch > 0 ? "FS " + root.tile.switch : root.number;
+        color: root.tile.switch > 0 ? Theme.text-secondary : Theme.text-muted;
+        font-size: Theme.font-caption;
+        font-weight: Theme.weight-bold;
+        letter-spacing: 0.8px;
+    }
+    Led {
+        x: parent.width - self.width - Theme.space-xs - 2px;
+        y: 4px;
+        lit: root.tile.active;
+        tone: root.tile.color;
+    }
+
+    // Scribble strip
+    Rectangle {
+        x: Theme.space-sm;
+        y: 26px;
+        width: parent.width - 2 * Theme.space-sm;
+        height: parent.height - 26px - 22px;
+        border-radius: Theme.radius-sm;
+        background: Theme.display;
+        border-width: 1px;
+        border-color: #000000;
+
+        VerticalLayout {
+            alignment: center;
+            padding-left: Theme.space-sm;
+            padding-right: Theme.space-sm;
+            spacing: 2px;
+            Text {
+                text: root.tile.title;
+                color: root.tile.empty ? Theme.text-muted : root.tile.active ? Theme.text-primary : Theme.text-secondary;
+                font-size: root.tile.empty ? Theme.font-small : Theme.font-title;
+                font-weight: Theme.weight-bold;
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+            if root.tile.subtitle != "": Text {
+                text: root.tile.subtitle.to-uppercase();
+                color: Theme.text-muted;
+                font-size: 10px;
+                font-weight: Theme.weight-bold;
+                letter-spacing: 0.8px;
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+
+    // LED ring
+    if root.tile.active: Rectangle {
+        x: Theme.space-sm;
+        y: parent.height - 15px;
+        width: parent.width - 2 * Theme.space-sm;
+        height: 10px;
+        background: root.tile.color.with-alpha(0.22);
+    }
+    Rectangle {
+        x: Theme.space-sm + 2px;
+        y: parent.height - 12px;
+        width: parent.width - 2 * Theme.space-sm - 4px;
+        height: 4px;
+        background: root.tile.active ? root.tile.color : Theme.led-off;
+    }
+
+    ta := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// Live: what the footswitches do, mirrored on screen. Scenes of the preset,
+// stomp boxes or the presets of a setlist; tempo with a tap key.
+export component LiveView inherits Rectangle {
+    in property <string> mode: "stomp";   // "scenes" | "stomp" | "setlist"
+    in property <[LiveTile]> tiles: [];
+    in property <string> preset-name;
+    in property <string> scene-name;
+    in property <int> scene-index;        // 0-based
+    in property <string> setlist-name;    // "" when no setlist is loaded
+    in property <float> tempo: 120;
+    in property <bool> tempo-clock: false;  // set by an incoming MIDI clock
+    in property <string> tap-switch-label; // "FS 4" when a footswitch taps
+    in property <[MenuItem]> stomp-choices: [];
+
+    callback mode-changed(string);
+    callback tile-pressed(int);
+    callback tap();
+    callback tempo-changed(float);
+    callback rename-scene(int, string);
+    callback assign-stomp(int, string);   // switch, block id ("" = automatic)
+    callback open-setlists();
+
+    private property <bool> assigning;
+    private property <int> assign-slot: -1;
+    private property <bool> renaming;
+    private property <string> new-name;
+    private property <bool> beat;
+
+    width: 100%;
+    height: 100%;
+
+    // Tempo LED: a short flash on every beat
+    Timer {
+        interval: 60s / max(1, root.tempo);
+        triggered => {
+            root.beat = true;
+        }
+    }
+    Timer {
+        interval: 80ms;
+        running: root.beat;
+        triggered => {
+            root.beat = false;
+        }
+    }
+
+    VerticalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-md;
+
+        // ---------------- Displays ----------------
+        HorizontalLayout {
+            height: 92px;
+            spacing: Theme.space-md;
+
+            Display {
+                horizontal-stretch: 1;
+                HorizontalLayout {
+                    padding-left: Theme.space-lg;
+                    padding-right: Theme.space-lg;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            text: root.setlist-name != "" ? "SETLIST · " + root.setlist-name.to-uppercase() : "PRESET";
+                            color: Theme.text-muted;
+                            font-size: Theme.font-caption;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: 0.8px;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: root.preset-name;
+                            color: Theme.text-primary;
+                            font-size: Theme.font-headline;
+                            font-weight: Theme.weight-bold;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: root.scene-name.to-uppercase();
+                            color: Theme.accent;
+                            font-size: Theme.font-caption;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: 0.8px;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+
+            Display {
+                width: 220px;
+                HorizontalLayout {
+                    padding: Theme.space-xs;
+                    VerticalLayout {
+                        alignment: center;
+                        Button {
+                            width: 44px;
+                            icon: "minus";
+                            variant: "ghost";
+                            enabled: root.tempo > 40;
+                            clicked => {
+                                root.tempo-changed(round(root.tempo) - 1);
+                            }
+                        }
+                    }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        spacing: 0px;
+                        HorizontalLayout {
+                            alignment: center;
+                            spacing: 4px;
+                            Led {
+                                lit: root.beat;
+                            }
+                            Text {
+                                text: root.tempo-clock ? "MIDI CLOCK" : "TEMPO";
+                                color: root.tempo-clock ? Theme.accent : Theme.text-muted;
+                                font-size: Theme.font-caption;
+                                font-weight: Theme.weight-bold;
+                                letter-spacing: 0.8px;
+                                vertical-alignment: center;
+                            }
+                        }
+                        Text {
+                            text: round(root.tempo);
+                            color: Theme.text-primary;
+                            font-size: Theme.font-display;
+                            font-weight: Theme.weight-bold;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "BPM";
+                            color: Theme.text-muted;
+                            font-size: 10px;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: 0.8px;
+                            horizontal-alignment: center;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Button {
+                            width: 44px;
+                            icon: "plus";
+                            variant: "ghost";
+                            enabled: root.tempo < 240;
+                            clicked => {
+                                root.tempo-changed(round(root.tempo) + 1);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Tap key: counts on touch down, the way a footswitch does
+            Rectangle {
+                width: 92px;
+                border-radius: Theme.radius-lg;
+                background: tap-ta.pressed ? Theme.key-pressed : Theme.key;
+                border-width: 1px;
+                border-color: #00000080;
+
+                if !tap-ta.pressed: Rectangle {
+                    x: Theme.radius-lg;
+                    y: 1px;
+                    width: parent.width - 2 * Theme.radius-lg;
+                    height: 1px;
+                    background: Theme.edge-light;
+                }
+                Led {
+                    x: parent.width - self.width - 6px;
+                    y: 6px;
+                    lit: root.beat;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+                    HorizontalLayout {
+                        alignment: center;
+                        Icon {
+                            name: "tap";
+                            size: 24px;
+                            color: Theme.accent;
+                        }
+                    }
+                    Text {
+                        text: "TAP";
+                        color: Theme.text-primary;
+                        font-size: Theme.font-small;
+                        font-weight: Theme.weight-bold;
+                        letter-spacing: 1px;
+                        horizontal-alignment: center;
+                    }
+                    if root.tap-switch-label != "": Text {
+                        text: root.tap-switch-label;
+                        color: Theme.text-muted;
+                        font-size: 10px;
+                        font-weight: Theme.weight-bold;
+                        letter-spacing: 0.8px;
+                        horizontal-alignment: center;
+                    }
+                }
+                tap-ta := TouchArea {
+                    pointer-event(event) => {
+                        if (event.kind == PointerEventKind.down) {
+                            root.tap();
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---------------- Mode ----------------
+        HorizontalLayout {
+            height: Theme.touch-target;
+            spacing: Theme.space-md;
+            Segmented {
+                width: 330px;
+                options: ["Scenes", "Stomp", "Setlist"];
+                current-index: root.mode == "scenes" ? 0 : root.mode == "stomp" ? 1 : 2;
+                activated(i) => {
+                    root.assigning = false;
+                    root.mode-changed(i == 0 ? "scenes" : i == 1 ? "stomp" : "setlist");
+                }
+            }
+            Text {
+                horizontal-stretch: 1;
+                text: root.assigning ? "Tap a switch to choose its block" : "";
+                color: Theme.accent;
+                font-size: Theme.font-small;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            if root.mode == "scenes": Button {
+                horizontal-stretch: 0;
+                icon: "edit";
+                text: "Rename";
+                clicked => {
+                    root.new-name = root.scene-name;
+                    root.renaming = true;
+                }
+            }
+            if root.mode == "stomp": Button {
+                horizontal-stretch: 0;
+                icon: root.assigning ? "check" : "footswitch";
+                text: root.assigning ? "Done" : "Assign";
+                active: root.assigning;
+                clicked => {
+                    root.assigning = !root.assigning;
+                }
+            }
+            if root.mode == "setlist": Button {
+                horizontal-stretch: 0;
+                icon: "setlist";
+                text: "Setlists";
+                clicked => {
+                    root.open-setlists();
+                }
+            }
+        }
+
+        // ---------------- Footswitches ----------------
+        if root.tiles.length == 0: Rectangle {
+            vertical-stretch: 1;
+            EmptyState {
+                icon: "setlist";
+                title: "No setlist loaded";
+                message: "Load a setlist to play its presets from the footswitches.";
+            }
+        }
+
+        if root.tiles.length > 0: grid := Rectangle {
+            vertical-stretch: 1;
+            property <length> cell-w: (self.width - 3 * Theme.space-md) / 4;
+            property <length> cell-h: (self.height - Theme.space-md) / 2;
+
+            for tile[i] in root.tiles: SwitchTile {
+                x: mod(i, 4) * (grid.cell-w + Theme.space-md);
+                y: floor(i / 4) * (grid.cell-h + Theme.space-md);
+                width: grid.cell-w;
+                height: grid.cell-h;
+                tile: tile;
+                number: i + 1;
+                assigning: root.assigning;
+                clicked => {
+                    if (root.assigning) {
+                        root.assign-slot = i;
+                    } else {
+                        root.tile-pressed(i);
+                    }
+                }
+            }
+        }
+    }
+
+    // ---------------- Block picker (stomp assignment) ----------------
+    if root.assign-slot >= 0: Rectangle {
+        background: Theme.scrim;
+        TouchArea {
+            clicked => {
+                root.assign-slot = -1;
+            }
+        }
+
+        Card {
+            x: (parent.width - self.width) / 2;
+            y: Theme.space-lg;
+            width: 420px;
+            height: parent.height - 2 * Theme.space-lg;
+            background: Theme.surface-raised;
+            TouchArea { }
+
+            VerticalLayout {
+                padding: Theme.space-lg;
+                spacing: Theme.space-md;
+
+                HorizontalLayout {
+                    Text {
+                        horizontal-stretch: 1;
+                        text: "Switch " + (root.assign-slot + 1);
+                        color: Theme.text-primary;
+                        font-size: Theme.font-title;
+                        font-weight: Theme.weight-semibold;
+                        vertical-alignment: center;
+                    }
+                    Button {
+                        horizontal-stretch: 0;
+                        icon: "close";
+                        variant: "ghost";
+                        clicked => {
+                            root.assign-slot = -1;
+                        }
+                    }
+                }
+
+                Flickable {
+                    vertical-stretch: 1;
+                    min-height: 0px;
+                    viewport-height: (root.stomp-choices.length + 1) * 52px;
+                    interactive: self.viewport-height > self.height;
+
+                    Rectangle {
+                        y: 0;
+                        height: 48px;
+                        border-radius: Theme.radius-md;
+                        background: auto-ta.pressed ? Theme.surface-hover : transparent;
+                        HorizontalLayout {
+                            padding-left: Theme.space-md;
+                            padding-right: Theme.space-md;
+                            spacing: Theme.space-md;
+                            VerticalLayout {
+                                alignment: center;
+                                Icon {
+                                    name: "refresh";
+                                    color: Theme.text-secondary;
+                                }
+                            }
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                Text {
+                                    text: "Automatic";
+                                    color: Theme.text-primary;
+                                    font-size: Theme.font-body;
+                                }
+                                Text {
+                                    text: "The next block in the chain";
+                                    color: Theme.text-muted;
+                                    font-size: Theme.font-caption;
+                                }
+                            }
+                        }
+                        auto-ta := TouchArea {
+                            clicked => {
+                                root.assign-stomp(root.assign-slot, "");
+                                root.assign-slot = -1;
+                            }
+                        }
+                    }
+
+                    for choice[k] in root.stomp-choices: Rectangle {
+                        y: (k + 1) * 52px;
+                        height: 48px;
+                        border-radius: Theme.radius-md;
+                        background: pick-ta.pressed ? Theme.surface-hover : transparent;
+                        HorizontalLayout {
+                            padding-left: Theme.space-md;
+                            padding-right: Theme.space-md;
+                            spacing: Theme.space-md;
+                            VerticalLayout {
+                                alignment: center;
+                                Icon {
+                                    name: choice.icon;
+                                    color: Theme.text-secondary;
+                                }
+                            }
+                            Text {
+                                horizontal-stretch: 1;
+                                text: choice.label;
+                                color: Theme.text-primary;
+                                font-size: Theme.font-body;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                        pick-ta := TouchArea {
+                            clicked => {
+                                root.assign-stomp(root.assign-slot, choice.id);
+                                root.assign-slot = -1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---------------- Scene name ----------------
+    if root.renaming: Rectangle {
+        background: Theme.scrim;
+        TouchArea { }
+
+        VerticalLayout {
+            Rectangle {
+                vertical-stretch: 1;
+                background: Theme.panel;
+                VerticalLayout {
+                    alignment: center;
+                    padding-left: Theme.space-lg;
+                    spacing: 2px;
+                    Text {
+                        text: "Scene " + (root.scene-index + 1);
+                        color: Theme.text-primary;
+                        font-size: Theme.font-headline;
+                        font-weight: Theme.weight-bold;
+                    }
+                    Text {
+                        text: "Name the part of the song it plays: Verse, Chorus, Solo…";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                    }
+                }
+            }
+            VirtualKeyboard {
+                current-text: root.new-name;
+                placeholder: "Scene name";
+                submit-label: "Rename";
+                text-changed(t) => {
+                    root.new-name = t;
+                }
+                submit => {
+                    root.rename-scene(root.scene-index, root.new-name);
+                    root.renaming = false;
+                }
+                cancel => {
+                    root.renaming = false;
+                }
+            }
+        }
+    }
+}

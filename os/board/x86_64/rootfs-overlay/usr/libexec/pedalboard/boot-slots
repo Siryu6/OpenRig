@@ -1,0 +1,45 @@
+#!/bin/sh
+#
+# Boot slots of the x86_64 image (see pedalboard-update). GRUB's
+# environment block, on the EFI partition, holds the default slot
+# ("primary") and a slot to start once ("try"), which GRUB clears as it
+# starts it (board/x86_64/grub.cfg).
+#
+#   boot-slots primary          slot started by default
+#   boot-slots set-primary A|B  start this slot by default
+#   boot-slots arm A|B          the next start uses this slot once
+#   boot-slots reboot-trial     reboot into the armed slot
+
+GRUBENV=/boot/EFI/BOOT/grubenv
+
+# Rewrite the 1024-byte block in place, as GRUB does
+write() {
+	mount -o remount,rw /boot || return 1
+	{
+		printf '# GRUB Environment Block\nprimary=%s\ntry=%s\n' "$1" "$2"
+		head -c 1024 /dev/zero | tr '\0' '#'
+	} | head -c 1024 | dd of="$GRUBENV" conv=notrunc,fsync status=none
+	result=$?
+	sync
+	mount -o remount,ro /boot
+	return $result
+}
+
+get() {
+	sed -n "s/^$1=//p" "$GRUBENV"
+}
+
+primary() {
+	if [ "$(get primary)" = B ]; then echo B; else echo A; fi
+}
+
+case "$1" in
+primary) primary ;;
+set-primary) write "$2" "" ;;
+arm) write "$(primary)" "$2" ;;
+reboot-trial) reboot ;;
+*)
+	echo "usage: $0 primary | set-primary A|B | arm A|B | reboot-trial" >&2
+	exit 2
+	;;
+esac

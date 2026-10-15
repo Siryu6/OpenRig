@@ -1,0 +1,192 @@
+// Data types shared between the UI and the Rust backend.
+// Field names / types are part of the public API (Rust generates structs
+// from them): do not rename or remove fields.
+
+// Positioned layout node from the backend layout engine.
+// Coordinates are in "layout units": main line at y = 0, split branches one
+// or more rows of 64 above (top) / below (bottom) their split, depending on
+// nesting; each cell is 96 wide, node centre = x + 48.
+export struct PositionedNode {
+    instance-id: int,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    name: string,
+    is-split: bool,
+    split-type: string,
+    bypassed: bool,
+    ab-select-a: bool,   // A/B split: true when branch A is active
+    mix-ratio: float,    // Mix split: 1.0 = all top branch (A), 0.0 = all bottom branch (B)
+    pan-a: float,        // Mix split in stereo: branch position, -1 left … 1 right
+    pan-b: float,
+    kind: string,        // drawing: "amp" | "combo" | "cab" | "pedal" | "space" | ""
+    tint: color,         // colour chosen in the editor (when tinted)
+    tinted: bool,
+}
+
+// Where a dragged block can be dropped (layout units)
+export struct DropSlotView {
+    x: float,
+    y: float,
+}
+
+// A colour of the block palette ("" = default look)
+export struct ColorChoice {
+    name: string,
+    label: string,
+    color: color,
+}
+
+// Connector line segment (same coordinate space as PositionedNode)
+export struct Connector {
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    is-stereo: bool,
+    is-mono: bool,      // only shown in mono mode
+    wide: bool,         // carries a stereo signal: drawn as a double line
+}
+
+// One controllable parameter of the selected plugin
+export struct ParameterInfo {
+    index: int,              // LV2 control-param index for set-parameter
+    name: string,
+    min: float,
+    max: float,
+    default: float,
+    value: float,
+    unit: string,            // "dB", "ms", "Hz", "%" or ""
+    kind: string,            // "float" | "int" | "toggle" | "enum"
+    options: [string],       // enum labels (kind == "enum")
+    option-values: [float],  // enum values, same order as options
+    has-off: bool,           // off-value is shown as "Off"
+    off-value: float,
+    midi: string,            // "CC 11" when a MIDI controller drives it
+}
+
+export struct PluginItem {
+    uri: string,
+    name: string,
+    author: string,
+    category: string,
+    kind: string,       // built-in gear ("amp", "cab"…), "" otherwise
+    hint: string,       // built-in blocks: what to load in it
+    color: color,       // colour of its family, as in the rack
+}
+
+export struct PresetInfo {
+    id: string,
+    name: string,
+    description: string,
+    plugin-count: int,
+    modified-date: string,
+}
+
+export struct SceneInfo {
+    id: string,
+    name: string,
+    description: string,
+    preset-count: int,
+}
+
+export struct SceneSlotInfo {
+    slot-number: int,
+    preset-id: string,
+    preset-name: string,
+    is-empty: bool,
+    active: bool,                     // slot last switched to
+}
+
+export struct MenuItem {
+    id: string,
+    label: string,
+    icon: string,
+    enabled: bool,
+}
+
+export enum LooperState {
+    Stopped,
+    Recording,
+    Playing,
+    Overdubbing,
+}
+
+// Resource monitor snapshot (refreshed every second by Rust).
+// Unknown values are -1 (0 for memory-total-mb).
+export struct ResourceStatus {
+    dsp-load: float,        // pedalboard audio callback, average fraction of the period
+    dsp-peak: float,        // worst cycle of the last second
+    jack-load: float,       // whole JACK graph, as reported by the server
+    cpu: float,             // whole machine
+    cpu-max-core: float,    // busiest core
+    temperature: float,     // SoC, °C
+    memory-used-mb: int,
+    memory-total-mb: int,
+    xruns: int,             // audio dropouts since start
+    latency-ms: float,      // one buffer period
+    buffer-info: string,    // "128 frames @ 48 kHz"
+    throttling: string,     // Raspberry Pi firmware state ("" = not available)
+    level: int,             // 0 ok, 1 warning, 2 critical
+    message: string,        // reason for the level
+}
+
+// A TONE3000 tone in the library lists
+export struct T3kTone {
+    title: string,
+    creator: string,     // username, shown as "by @creator"
+    gear: string,        // display label ("Amp + cab")
+    format: string,      // API value: "nam", "ir", "aida-x"…
+    license: string,
+    detail: string,      // "28 models · A2"
+    supported: bool,     // a block can load its format
+    on-board: bool,      // some of its models are downloaded
+    usable: bool,        // can be loaded in the block the library was opened from
+    block-uri: string,   // block made for it, added to the chain by "Add" ("" = none)
+    block-name: string,
+}
+
+// A model of the open TONE3000 tone
+export struct T3kModel {
+    name: string,
+    detail: string,      // "A2 · lite", "IR"
+    state: string,       // "remote" | "downloading" | "local"
+    path: string,        // relative to the models dir once downloaded
+}
+
+// An entry of the model / preset pickers of file blocks (NAM, IR)
+export struct ModelChoice {
+    title: string,
+    subtitle: string,
+    file: string,        // relative to the models dir (a tone's first preset)
+    current: bool,
+}
+
+// A Wi-Fi network in range (Settings)
+export struct WifiNetwork {
+    ssid: string,
+    signal: int,         // 0..100
+    secured: bool,
+    connected: bool,
+    saved: bool,         // joining needs no password
+}
+
+// Level meters (rack): 0..1 over -48..0 dBFS
+export struct Levels {
+    input: float,
+    left: float,
+    right: float,
+    clip-in: bool,
+    clip-out: bool,
+}
+
+// One footswitch of the Live page, as the current mode uses it
+export struct LiveTile {
+    title: string,
+    subtitle: string,
+    active: bool,      // LED lit: current scene, block on, current slot
+    empty: bool,       // nothing on it (never-used scene, no block, free slot)
+    color: color,      // LED colour (the block's for stomps)
+    switch: int,       // physical footswitch number (1-based), 0 if none
+}
