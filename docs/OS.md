@@ -230,6 +230,12 @@ updates; to accept several keys, put their certificates together in
 `/etc/rauc/keyring.pem` at build time. `PEDALBOARD_OS_VERSION` sets the
 version shown (default: `git describe`).
 
+The release images are built by GitHub Actions
+(`.github/workflows/build-release.yml`) with the key and certificate of the
+repository secrets `OS_UPDATE_KEY` and `OS_UPDATE_CERT` (the contents of
+`os/keys/key.pem` and `cert.pem`); without them the build stops rather
+than sign with a new key.
+
 What an update does not change: the partitions, the Raspberry Pi
 EEPROM bootloader, and on x86_64 GRUB and `grub.cfg` (on the EFI
 partition). The Pi's boot partition, `config.txt` included, is part of

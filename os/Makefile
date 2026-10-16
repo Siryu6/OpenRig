@@ -72,6 +72,7 @@ DOCKER_TTY = $(if $(shell test -t 0 && echo y),-it)
 docker-%:
 	$(DOCKER) build -t pedalboard-os-builder $(OS_DIR)
 	$(DOCKER) run --rm $(DOCKER_TTY) $(DOCKER_USER) \
+		$(if $(PEDALBOARD_OS_VERSION),-e PEDALBOARD_OS_VERSION=$(PEDALBOARD_OS_VERSION)) \
 		-v $(abspath $(OS_DIR)/..):$(abspath $(OS_DIR)/..) \
 		-w $(OS_DIR) pedalboard-os-builder make $*
 

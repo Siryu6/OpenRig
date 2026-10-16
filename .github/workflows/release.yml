@@ -1,0 +1,69 @@
+# Semantic releases with release-plz (see release-plz.toml). Pushes to main
+# keep a release PR up to date; merging it tags vX.Y.Z, creates the GitHub
+# release and builds its binaries and OS images.
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  release:
+    name: Release
+    if: github.repository_owner == 'Siryu6'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - id: release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - id: tag
+        env:
+          RELEASES: ${{ steps.release-plz.outputs.releases }}
+        run: echo "tag=$(jq -r '.[0].tag // empty' <<<"${RELEASES:-[]}")" >>"$GITHUB_OUTPUT"
+
+  release-pr:
+    name: Release PR
+    if: github.repository_owner == 'Siryu6'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    name: Build
+    needs: release
+    if: needs.release.outputs.tag != ''
+    permissions:
+      contents: write
+      actions: write
+    uses: ./.github/workflows/build-release.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+    secrets: inherit

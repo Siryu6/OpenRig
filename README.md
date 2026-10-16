@@ -223,6 +223,31 @@ Switches and encoder are wired between the GPIO and ground (internal pull-ups).
 Guitar-oriented LV2 packages: `guitarix-lv2`, `x42-plugins`, `calf-plugins`,
 `dragonfly-reverb-lv2`, `lsp-plugins-lv2`.
 
+## Releases
+
+Each [release](https://github.com/Siryu6/OpenRig/releases) ships:
+
+- `openrig-<version>-linux-x86_64.tar.gz` and `…-linux-aarch64.tar.gz`:
+  the app, built with the default features. It needs JACK and lilv from the
+  system (`apt install jackd2 liblilv-0-0`).
+- `openrig-os-<version>-rpi5.img.xz` and `…-x86_64.img.xz`: the OS images,
+  to write to a card or a disk (Raspberry Pi Imager, `dd`, balenaEtcher).
+- `openrig-os-<version>-<board>.raucb`: the signed update bundles, for
+  `pedalboard-update install` on a running pedalboard.
+
+Versions follow [semantic versioning](https://semver.org) and come from
+[conventional commits](https://www.conventionalcommits.org) (`feat:`,
+`fix:`, `feat!:`…). [release-plz](https://release-plz.dev) keeps a release
+PR up to date with the next version and `CHANGELOG.md`. Nothing is released
+until it is merged: merging it tags the release, and
+`.github/workflows/build-release.yml` attaches the binaries and images to it.
+That workflow also runs for a `vX.Y.Z` tag pushed by hand, and can be run by
+hand to build a release again. The OS images take hours on GitHub's
+runners: when a first build runs out of time, it saves its compiler cache
+and running the failed job again resumes from it. Pull
+requests run `cargo fmt`, `cargo clippy` and `cargo test`
+(`.github/workflows/ci.yml`).
+
 ## Code layout
 
 ```
