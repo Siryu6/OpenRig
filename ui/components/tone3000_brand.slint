@@ -1,0 +1,58 @@
+import { Theme } from "../theme.slint";
+
+// TONE3000 branding, as its API design requirements ask: the full logo at
+// the entry points and list headers, the T3K mark in compact places. The
+// files are the official ones, unmodified (see assets/tone3000).
+
+export global T3kBrand {
+    out property <image> logo: @image-url("../assets/tone3000/tone3000-logo.svg");
+    out property <image> mark: @image-url("../assets/tone3000/t3k-mark.svg");
+}
+
+// Full TONE3000 logo, `height` tall
+export component Tone3000Logo inherits Image {
+    source: T3kBrand.logo;
+    image-fit: contain;
+    height: 18px;
+    width: self.height * 210 / 32;
+}
+
+// Compact T3K mark, `height` tall
+export component T3kMark inherits Image {
+    source: T3kBrand.mark;
+    image-fit: contain;
+    height: 12px;
+    width: self.height * 94 / 32;
+}
+
+// Square picture of a tone or a creator, with a placeholder until it loads
+// (or when there is none: offline, no picture)
+export component T3kPicture inherits Rectangle {
+    in property <image> source;
+    in property <string> placeholder;   // shown without a picture ("" = the T3K mark)
+    in property <bool> round: false;
+    width: 48px;
+    height: self.width;
+    border-radius: root.round ? self.width / 2 : Theme.radius-sm;
+    background: Theme.surface-raised;
+    clip: true;
+
+    if root.source.width == 0 && root.placeholder == "": T3kMark {
+        height: root.width * 0.22;
+        opacity: 0.35;
+    }
+    if root.source.width == 0 && root.placeholder != "": Text {
+        text: root.placeholder;
+        color: Theme.text-muted;
+        font-size: root.width * 0.42;
+        font-weight: Theme.weight-semibold;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if root.source.width > 0: Image {
+        width: parent.width;
+        height: parent.height;
+        source: root.source;
+        image-fit: cover;
+    }
+}

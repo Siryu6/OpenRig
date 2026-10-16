@@ -23,6 +23,10 @@ pub struct ModelPack {
     pub creator: Option<String>,
     /// TONE3000 gear type, if known
     pub gear: Option<String>,
+    /// Picture of the tone, saved with its models (TONE3000 downloads)
+    pub picture: Option<PathBuf>,
+    /// Downloaded from TONE3000: its blocks carry the TONE3000 mark
+    pub tone3000: bool,
     /// Presets: paths relative to the models directory, sorted
     pub files: Vec<String>,
 }
@@ -34,6 +38,7 @@ impl ModelPack {
             title: Option<String>,
             creator: Option<String>,
             gear: Option<String>,
+            source: Option<String>,
         }
         let info: Option<ToneInfo> = (!dir.as_os_str().is_empty())
             .then(|| {
@@ -49,14 +54,26 @@ impl ModelPack {
         } else {
             without_id(&dir.file_name().unwrap_or_default().to_string_lossy()).to_string()
         };
+        let tone3000 = info
+            .as_ref()
+            .and_then(|i| i.source.as_deref())
+            .is_some_and(|s| s.contains("TONE3000"));
         let (title, creator, gear) = match info {
             Some(info) => (info.title.unwrap_or(fallback), info.creator, info.gear),
             None => (fallback, None, None),
         };
+        let picture = (!dir.as_os_str().is_empty())
+            .then(|| {
+                root.join(dir)
+                    .join(crate::plugins::scanner::TONE_PICTURE_FILE)
+            })
+            .filter(|p| p.is_file());
         Self {
             title,
             creator,
             gear,
+            picture,
+            tone3000,
             files,
         }
     }
@@ -1995,7 +2012,9 @@ mod tests {
             std::fs::create_dir_all(models.join(d)).unwrap();
         }
         let info = |title: &str, gear: &str| {
-            format!(r#"{{"title":"{title}","creator":"bob","gear":"{gear}"}}"#)
+            format!(
+                r#"{{"title":"{title}","creator":"bob","gear":"{gear}","source":"Downloaded from TONE3000 (https://www.tone3000.com)"}}"#
+            )
         };
         std::fs::write(
             models.join(boss).join("tone.json"),
@@ -2003,6 +2022,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(models.join(plexi).join("tone.json"), info("Plexi", "amp")).unwrap();
+        std::fs::write(models.join(plexi).join("picture.png"), "png").unwrap();
         std::fs::write(
             models.join(combo).join("tone.json"),
             info("AC30", "amp-cab"),
@@ -2033,6 +2053,23 @@ mod tests {
             .model_pack(NAM_PEDAL_URI, &format!("{boss}/B.nam"))
             .unwrap();
         assert_eq!(pack.creator.as_deref(), Some("bob"));
+        assert_eq!(pack.picture, None);
+        let plexi_pack = state
+            .model_pack(NAM_URI, &format!("{plexi}/Crunch.nam"))
+            .unwrap();
+        assert_eq!(
+            plexi_pack.picture,
+            Some(models.join(plexi).join("picture.png"))
+        );
+        // The picture is not a preset
+        assert_eq!(plexi_pack.files, [format!("{plexi}/Crunch.nam")]);
+        assert!(pack.tone3000);
+        assert!(
+            !state
+                .model_pack(NAM_URI, "MyRig/clean.nam")
+                .unwrap()
+                .tone3000
+        );
         assert_eq!(
             pack.files,
             [format!("{boss}/A.nam"), format!("{boss}/B.nam")]
@@ -2048,6 +2085,8 @@ mod tests {
                 title: String::new(),
                 creator: None,
                 gear: None,
+                picture: None,
+                tone3000: false,
                 files: files.iter().map(|f| f.to_string()).collect(),
             }
             .preset_labels()
@@ -2072,6 +2111,8 @@ mod tests {
                 title: title.into(),
                 creator: None,
                 gear: None,
+                picture: None,
+                tone3000: false,
                 files: vec![],
             }
             .short_title()

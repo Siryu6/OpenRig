@@ -395,6 +395,14 @@ pub fn request_device_code(client_id: &str) -> Result<DeviceCode> {
 #[derive(Deserialize)]
 struct User {
     username: String,
+    #[serde(default)]
+    avatar_url: Option<String>,
+}
+
+/// Avatar of the signed-in account, if it has one
+pub fn avatar(access_token: &str) -> Result<Option<String>, AuthError> {
+    let user: User = get_json(access_token, "/user")?;
+    Ok(user.avatar_url.filter(|u| !u.is_empty()))
 }
 
 /// Progress of a device-flow connection, reported from its thread

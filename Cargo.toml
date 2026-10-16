@@ -37,8 +37,9 @@ gpio = ["dep:rppal"]
 # Built-in neural amp block (NAM / RTNeural models through NeuralAudio,
 # built from third_party/NeuralAudio; needs cmake and a C++20 compiler)
 nam = ["dep:cmake"]
-# "TONE3000 Connect" in Settings: link a tone3000.com account (HTTPS client + QR code)
-tone3000 = ["dep:ureq", "dep:qrcodegen"]
+# "TONE3000 Connect" in Settings: link a tone3000.com account (HTTPS client,
+# QR code, decoders of the tone pictures and avatars)
+tone3000 = ["dep:ureq", "dep:qrcodegen", "dep:zune-jpeg", "dep:png"]
 # MIDI input from USB / DIN interfaces (ALSA on Linux: libasound2-dev / alsa-lib)
 midi = ["dep:midir"]
 # pedalboard-splash (Linux framebuffer)
@@ -86,6 +87,7 @@ ureq = { version = "3.4", features = ["json"], optional = true }
 qrcodegen = { version = "1.8", optional = true }
 midir = { version = "0.11.0", optional = true }  # MIDI input: ALSA, CoreMIDI, WinMM
 png = { version = "0.18", optional = true }
+zune-jpeg = { version = "0.5", optional = true }
 libc = { version = "0.2", optional = true }
 
 [build-dependencies]

@@ -18,6 +18,8 @@ export component Button inherits Rectangle {
     in property <bool> active: false;
     in property <length> font-size: Theme.font-body;
     in property <length> icon-size: Theme.icon-size;
+    in property <image> logo;                       // brand mark before the text (none = empty)
+    in property <length> logo-height: 12px;
     out property <bool> pressed: root.down;
     private property <bool> down: ta.pressed && root.enabled;
 
@@ -82,6 +84,16 @@ export component Button inherits Rectangle {
                 name: root.icon;
                 size: root.icon-size;
                 color: root.fg;
+            }
+        }
+
+        if root.logo.width > 0: VerticalLayout {
+            alignment: center;
+            Image {
+                source: root.logo;
+                height: root.logo-height;
+                width: self.height * root.logo.width / root.logo.height;
+                image-fit: contain;
             }
         }
 

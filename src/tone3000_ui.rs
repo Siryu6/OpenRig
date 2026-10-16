@@ -1,18 +1,21 @@
 //! TONE3000 in the UI: "TONE3000 Connect" in Settings (device-flow sign-in,
-//! the `Features.tone3000` flag) and the library page (lists, models,
-//! downloads on request).
+//! the `Features.tone3000` flag), the library page (lists, models,
+//! downloads on request) and the pictures of tones and creators.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
-use slint::{ComponentHandle, Image, Rgb8Pixel, SharedPixelBuffer, SharedString};
+use slint::{
+    ComponentHandle, Image, Model as _, Rgb8Pixel, Rgba8Pixel, SharedPixelBuffer, SharedString,
+};
 use tracing::warn;
 
 use pedalboard::audio::ChainNode;
 use pedalboard::plugins::scanner::{self, FileBlock, FileKind};
 use pedalboard::state::AppState;
+use pedalboard::tone3000::images;
 use pedalboard::tone3000::library::{self, List, Model, Tone};
 use pedalboard::tone3000::{self, AuthError, ConnectEvent, Connection, DeviceCode, Settings};
 
@@ -36,6 +39,193 @@ struct Library {
     target: Option<&'static FileBlock>,
 }
 
+/// Side the tone pictures are fetched at (drawn at 48 px in the lists,
+/// 88 px in the tone sheet and the block editor)
+const PICTURE_SIDE: u32 = 96;
+/// Side of the avatars (16 to 26 px)
+const AVATAR_SIDE: u32 = 32;
+/// Memory kept for pictures, about 400 tones
+const PICTURE_CACHE_BYTES: usize = 16 << 20;
+/// Pictures fetched at once
+const PICTURE_WORKERS: usize = 3;
+
+/// Pictures of tones and creators: fetched when shown, kept in memory only
+struct Pictures {
+    app: slint::Weak<App>,
+    state: Mutex<PictureState>,
+    wake: Condvar,
+}
+
+#[derive(Default)]
+struct PictureState {
+    cache: HashMap<String, SharedPixelBuffer<Rgba8Pixel>>,
+    /// Cache keys, oldest first
+    order: VecDeque<String>,
+    bytes: usize,
+    /// To fetch: (key, url, side)
+    queue: VecDeque<(String, String, u32)>,
+    busy: HashSet<String>,
+    /// Not available (offline, no such file): not asked again until the
+    /// list is reloaded
+    failed: HashSet<String>,
+    workers: usize,
+}
+
+static PICTURES: OnceLock<Arc<Pictures>> = OnceLock::new();
+
+impl Pictures {
+    fn key(url: &str, side: u32) -> String {
+        format!("{side}:{url}")
+    }
+
+    /// The picture at `url` if it is loaded, else an empty image while it
+    /// is fetched; with the key the UI keeps to fill it in later
+    fn get(self: &Arc<Self>, url: Option<&str>, side: u32) -> (SharedString, Image) {
+        let Some(url) = url.filter(|u| images::is_tone3000(u)) else {
+            return (SharedString::new(), Image::default());
+        };
+        let key = Self::key(url, side);
+        let mut state = self.state.lock().unwrap();
+        if let Some(buffer) = state.cache.get(&key) {
+            return (key.into(), Image::from_rgba8(buffer.clone()));
+        }
+        if !state.failed.contains(&key)
+            && !state.busy.contains(&key)
+            && !state.queue.iter().any(|(k, ..)| *k == key)
+        {
+            state.queue.push_back((key.clone(), url.to_string(), side));
+            if state.workers < PICTURE_WORKERS {
+                state.workers += 1;
+                let pictures = self.clone();
+                std::thread::spawn(move || pictures.work());
+            }
+            self.wake.notify_one();
+        }
+        (key.into(), Image::default())
+    }
+
+    /// Forget what is waiting (a new list replaces the old one) and try the
+    /// failed pictures again
+    fn reset_queue(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.queue.clear();
+        state.failed.clear();
+    }
+
+    fn work(self: Arc<Self>) {
+        loop {
+            let (key, url, side) = {
+                let mut state = self.state.lock().unwrap();
+                loop {
+                    if let Some(job) = state.queue.pop_front() {
+                        state.busy.insert(job.0.clone());
+                        break job;
+                    }
+                    state = self.wake.wait(state).unwrap();
+                }
+            };
+            let picture = images::fetch(&url, side);
+            let mut state = self.state.lock().unwrap();
+            state.busy.remove(&key);
+            let picture = match picture {
+                Ok(picture) => picture,
+                Err(e) => {
+                    tracing::debug!("TONE3000 picture {}: {:#}", url, e);
+                    state.failed.insert(key);
+                    continue;
+                }
+            };
+            let buffer = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
+                &picture.rgba,
+                picture.side,
+                picture.side,
+            );
+            state.bytes += picture.rgba.len();
+            state.cache.insert(key.clone(), buffer.clone());
+            state.order.push_back(key.clone());
+            while state.bytes > PICTURE_CACHE_BYTES {
+                let Some(old) = state.order.pop_front() else {
+                    break;
+                };
+                if let Some(old) = state.cache.remove(&old) {
+                    state.bytes -= old.as_bytes().len();
+                }
+            }
+            drop(state);
+            let _ = self.app.upgrade_in_event_loop(move |app| {
+                fill_picture(&app, &key, Image::from_rgba8(buffer));
+            });
+        }
+    }
+}
+
+/// Put a picture just loaded where the UI waits for it
+fn fill_picture(app: &App, key: &str, image: Image) {
+    let fill = |row: &mut T3kTone| {
+        let mut changed = false;
+        if row.image_key == key {
+            row.image = image.clone();
+            changed = true;
+        }
+        if row.avatar_key == key {
+            row.avatar = image.clone();
+            changed = true;
+        }
+        changed
+    };
+    let tones = app.get_t3k_tones();
+    for i in 0..tones.row_count() {
+        if let Some(mut row) = tones.row_data(i) {
+            if fill(&mut row) {
+                tones.set_row_data(i, row);
+            }
+        }
+    }
+    let mut detail = app.get_t3k_detail();
+    if fill(&mut detail) {
+        app.set_t3k_detail(detail);
+    }
+    if app.get_t3k_avatar_key() == key {
+        app.set_t3k_avatar(image);
+    }
+}
+
+thread_local! {
+    /// Pictures saved with downloaded tones, by path, with their date
+    static LOCAL_PICTURES: std::cell::RefCell<HashMap<PathBuf, (std::time::SystemTime, Image)>> =
+        Default::default();
+}
+
+/// The picture saved with a downloaded tone (no network: shown on stage);
+/// an empty image when it cannot be read
+pub fn local_picture(path: &std::path::Path) -> Image {
+    let modified = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .unwrap_or(std::time::UNIX_EPOCH);
+    LOCAL_PICTURES.with(|cache| {
+        if let Some((date, image)) = cache.borrow().get(path) {
+            if *date == modified {
+                return image.clone();
+            }
+        }
+        let image = match images::load(path) {
+            Ok(picture) => Image::from_rgba8(SharedPixelBuffer::clone_from_slice(
+                &picture.rgba,
+                picture.side,
+                picture.side,
+            )),
+            Err(e) => {
+                warn!("Cannot read {}: {:#}", path.display(), e);
+                Image::default()
+            }
+        };
+        cache
+            .borrow_mut()
+            .insert(path.to_path_buf(), (modified, image.clone()));
+        image
+    })
+}
+
 struct Shared {
     settings: Mutex<Settings>,
     /// Held while getting a token: the refresh token rotates, two refreshes
@@ -51,6 +241,9 @@ struct Shared {
     tone_generation: AtomicU64,
     models_dir: PathBuf,
     state: Arc<AppState>,
+    pictures: Arc<Pictures>,
+    /// Avatar of the signed-in account: `None` until asked
+    account_avatar: Mutex<Option<Option<String>>>,
 }
 
 impl Shared {
@@ -100,6 +293,8 @@ fn apply(app: &App, settings: &Settings) {
         None => {
             app.set_t3k_status("signed-out".into());
             app.set_t3k_username(SharedString::new());
+            app.set_t3k_avatar_key(SharedString::new());
+            app.set_t3k_avatar(Image::default());
         }
     }
     app.global::<Features>().set_tone3000(settings.connected());
@@ -162,6 +357,15 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
     app.set_t3k_available(true);
     apply(app, &settings);
     let verify = settings.connected();
+    let pictures = PICTURES
+        .get_or_init(|| {
+            Arc::new(Pictures {
+                app: app.as_weak(),
+                state: Mutex::new(PictureState::default()),
+                wake: Condvar::new(),
+            })
+        })
+        .clone();
     let shared = Arc::new(Shared {
         settings: Mutex::new(settings),
         token_lock: Mutex::new(()),
@@ -172,6 +376,8 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
         tone_generation: AtomicU64::new(0),
         models_dir,
         state: state.clone(),
+        pictures,
+        account_avatar: Mutex::new(None),
     });
 
     // Check the stored session in the background; offline is fine, only a
@@ -238,6 +444,7 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
                     ConnectEvent::Code(code) => show_code(&app, &code),
                     ConnectEvent::Connected(settings) => {
                         events.connection.lock().unwrap().take();
+                        events.account_avatar.lock().unwrap().take();
                         let user = settings.session.as_ref().map(|s| s.username.clone());
                         apply(&app, &settings);
                         *events.settings.lock().unwrap() = settings;
@@ -274,6 +481,7 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
         if let Err(e) = settings.disconnect() {
             app.set_t3k_error(format!("{e:#}").into());
         }
+        state.account_avatar.lock().unwrap().take();
         apply(&app, &settings);
         crate::show_status(&app, "Disconnected from TONE3000".into());
     });
@@ -318,6 +526,8 @@ fn fits(block: &FileBlock, tone: &Tone) -> bool {
 }
 
 fn tone_row(shared: &Shared, library: &Library, tone: &Tone) -> T3kTone {
+    let (image_key, image) = shared.pictures.get(tone.image(), PICTURE_SIDE);
+    let (avatar_key, avatar) = shared.pictures.get(tone.avatar(), AVATAR_SIDE);
     T3kTone {
         title: tone.title.as_str().into(),
         creator: tone.creator().into(),
@@ -330,6 +540,34 @@ fn tone_row(shared: &Shared, library: &Library, tone: &Tone) -> T3kTone {
         usable: library.target.is_some_and(|b| fits(b, tone)),
         block_uri: block_for(tone).map(|b| b.uri).unwrap_or_default().into(),
         block_name: block_for(tone).map(|b| b.name).unwrap_or_default().into(),
+        image,
+        avatar,
+        image_key,
+        avatar_key,
+    }
+}
+
+/// Show the signed-in account's avatar, asking TONE3000 for it once
+fn show_account_avatar(app: &App, shared: &Arc<Shared>) {
+    let known = shared.account_avatar.lock().unwrap().clone();
+    match known {
+        Some(url) => {
+            let (key, image) = shared.pictures.get(url.as_deref(), AVATAR_SIDE);
+            app.set_t3k_avatar_key(key);
+            app.set_t3k_avatar(image);
+        }
+        None => {
+            let weak = app.as_weak();
+            let shared = shared.clone();
+            std::thread::spawn(move || {
+                // Not reachable: the "@" placeholder stays, asked again next time
+                let Ok(url) = shared.call(tone3000::avatar) else {
+                    return;
+                };
+                *shared.account_avatar.lock().unwrap() = Some(url);
+                let _ = weak.upgrade_in_event_loop(move |app| show_account_avatar(&app, &shared));
+            });
+        }
     }
 }
 
@@ -465,6 +703,7 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
         ));
         app.set_t3k_gear_names(model(names));
         app.set_t3k_target_id(if block.is_some() { target_id } else { -1 });
+        show_account_avatar(&app, &state);
         app.set_t3k_target_name(block.map(|b| b.name).unwrap_or_default().into());
 
         let (tab, gear) = {
@@ -490,6 +729,7 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
         let page = {
             let mut library = state.library.lock().unwrap();
             if !more {
+                state.pictures.reset_queue();
                 library.list = list;
                 library.gear = gear.clone();
                 library.page = 0;
@@ -556,10 +796,23 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
             tone
         };
         let row = tone_row(&state, &state.library.lock().unwrap(), &tone);
-        app.set_t3k_detail(row);
+        app.set_t3k_detail(row.clone());
         app.set_t3k_detail_url(tone.page_url().trim_start_matches("https://").into());
         app.set_t3k_models_loading(tone.supported());
         app.set_t3k_detail_open(true);
+        // Tones downloaded before their picture was kept get it now
+        if row.on_board {
+            let weak = app.as_weak();
+            let shared = state.clone();
+            let tone = tone.clone();
+            std::thread::spawn(move || {
+                if library::save_picture(&shared.models_dir, &tone) {
+                    let _ = weak.upgrade_in_event_loop(move |app| {
+                        crate::refresh_chain(&app, &shared.state);
+                    });
+                }
+            });
+        }
         if !tone.supported() {
             return;
         }

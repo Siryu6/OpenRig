@@ -8,13 +8,14 @@ ships as a bootable OS image with A/B updates.
 
 <p align="center">
   <img src="docs/media/demo.gif" width="800"
-       alt="OpenRig on a 1024x600 screen: rack, knob strip, block editor, presets and the Live page">
+       alt="OpenRig on a 1024x600 screen: rack, knob strip, block editor, TONE3000 library, splits, presets, the Live page, tuner, looper and settings">
 </p>
 <p align="center"><sub>
   The x86_64 image running in QEMU at 1024x600. Captures from
   <a href="https://www.tone3000.com">TONE3000</a>: Boss MT-2 by @kosmicaudio,
   Peavey 5150 by @doubleyoud, BOSS CE-2w by @matteocapuni, Orange and Mesa
-  cabinets by @tonefactor.
+  cabinets by @tonefactor; the library shows the TONE3000 trending tones,
+  with their creators.
 </sub></p>
 
 - **Rack**: the signal flow on one screen, serial blocks plus A/B, Mix and
@@ -72,13 +73,17 @@ screen. It is a young project: expect rough edges.
   phone). Each user enters the *publishable* key (`t3k_pub_…`) of their own
   TONE3000 application; no key ships with the code. Once connected, the
   TONE3000 features are enabled (`Features.tone3000` flag in the UI): the
-  **TONE3000 library** (menu ⋮, or the TONE3000 button of a block)
+  **TONE3000 library** (menu ⋮, or the T3K Browse button of a block)
   lists your favorites, your own and downloaded tones, and the trending /
-  latest ones, by gear. Models are downloaded one at a time
+  latest ones, by gear, each with its picture, format and creator (avatar
+  and username), following the TONE3000 design requirements. Pictures are
+  fetched when shown and kept in memory only. Models are downloaded one at a time
   when you ask, into `models/Tone3000/<gear>/<tone>/` with the creator,
   license and link in `tone.json`, and can be loaded straight into the block.
   Opened from a block, the library only shows the gears that block plays;
   from the menu, "Add" puts a downloaded model in a new block of its type.
+  A block playing a TONE3000 tone carries the T3K mark, and its editor
+  shows the tone picture.
 - **Chain with splits**: serial chain plus nested A/B, Mix and L/R splits;
   a split's type can be changed from the rack (its blocks are kept).
 - **Stereo**: two outputs. The guitar comes in mono and becomes stereo where
@@ -228,7 +233,7 @@ src/
 ├── live_ui.rs           Live page: footswitch modes, tap tempo, hold → tuner
 ├── midi_io.rs           MIDI inputs (midir, feature midi): hot-plug, clock → tempo
 ├── midi_ui.rs           MIDI actions, learn in the block editor, Settings → MIDI
-├── tone3000/            TONE3000: account (device flow, tokens), library (lists, downloads)
+├── tone3000/            TONE3000: account (device flow, tokens), library (lists, downloads), pictures
 ├── tone3000_ui.rs       Settings → TONE3000 Connect, library page, Features.tone3000 flag
 ├── wifi.rs              Wi-Fi through NetworkManager (nmcli): scan, join, forget
 ├── wifi_ui.rs           Settings → Wi-Fi (worker thread running nmcli)
@@ -295,4 +300,6 @@ GPL-3.0-or-later (see [LICENSE](LICENSE)). The UI toolkit,
 royalty-free license does not cover embedded devices). Bundled third-party
 code keeps its own license: NeuralAudio (MIT, with NAM Core and RTNeural),
 the patched lilv bindings (MIT) and the patched Slint linuxkms backend
-(GPL-3.0) in `third_party/`.
+(GPL-3.0) in `third_party/`. The TONE3000 logos in `ui/assets/tone3000/`
+are trademarks of TONE3000, not covered by the GPL, and only used for the
+TONE3000 integration.

@@ -1,4 +1,5 @@
 import { Theme } from "../theme.slint";
+import { T3kMark } from "tone3000_brand.slint";
 
 // Rack block drawn after the gear it stands for, so the chain reads at a
 // glance: an amp head is a flat box with its control panel, a combo adds a
@@ -15,6 +16,7 @@ export component BlockShape {
     in property <bool> bypassed: false;
     in property <bool> selected: false;
     in property <bool> pressed: false;
+    in property <bool> t3k: false;      // loads a TONE3000 tone: carries its mark
 
     // Size of the gear (the rack keeps the same cells for every kind)
     out property <length> shape-width: root.kind == "amp" ? 90px : root.kind == "combo" ? 82px
@@ -74,8 +76,9 @@ export component BlockShape {
                 height: 1px;
                 background: root.trim;
             }
+            // Moved right to make room for the T3K mark
             for k in 5: Rectangle {
-                x: parent.width / 2 + (k - 2) * 11px - 2.5px;
+                x: parent.width / 2 + (k - 2) * 11px - 2.5px + (root.t3k ? 7px : 0px);
                 y: (parent.height - 5px) / 2;
                 width: 5px;
                 height: 5px;
@@ -150,6 +153,15 @@ export component BlockShape {
             wrap: word-wrap;
             overflow: elide;
         }
+    }
+
+    // Origin of the loaded tone (TONE3000 design requirements)
+    // Top left, clear of the name; on a pedal its knob is there, so bottom left
+    if root.t3k: T3kMark {
+        x: 4px;
+        y: root.kind == "pedal" ? parent.height - self.height - 4px : root.has-panel ? (root.panel-h - self.height) / 2 : 4px;
+        height: 6px;
+        opacity: root.bypassed ? 0.45 : 1.0;
     }
 
     // Status LED, with a halo when lit

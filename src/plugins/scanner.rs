@@ -347,6 +347,8 @@ pub const NAM_QUALITY: &str = "Quality";
 
 /// Metadata kept next to downloaded models, never a model itself
 pub const TONE_INFO_FILE: &str = "tone.json";
+/// Picture of a downloaded tone, next to its models
+pub const TONE_PICTURE_FILE: &str = "picture.png";
 
 /// True if `path` is a file the block `uri` can load
 pub fn accepts_file(uri: &str, path: &std::path::Path) -> bool {

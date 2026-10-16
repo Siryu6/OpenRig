@@ -14,6 +14,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use super::auth::{download_agent, get_json, AuthError};
+use crate::plugins::scanner::{TONE_INFO_FILE, TONE_PICTURE_FILE};
 
 /// Folder of the models dir holding the TONE3000 downloads
 pub const FOLDER: &str = "Tone3000";
@@ -95,6 +96,8 @@ pub fn file_extension(format: &str) -> Option<&'static str> {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Creator {
     pub username: String,
+    #[serde(default)]
+    pub avatar_url: Option<String>,
 }
 
 /// A tone (a capture pack: one or more models of a piece of gear)
@@ -124,6 +127,9 @@ pub struct Tone {
     pub irs_count: u32,
     #[serde(default)]
     pub sizes: Option<Vec<String>>,
+    /// Pictures of the gear, the first one is the tone's
+    #[serde(default)]
+    pub images: Option<Vec<String>>,
 }
 
 impl Tone {
@@ -132,6 +138,24 @@ impl Tone {
             .as_ref()
             .map(|u| u.username.as_str())
             .unwrap_or("unknown")
+    }
+
+    /// The tone's picture, if any
+    pub fn image(&self) -> Option<&str> {
+        self.images
+            .as_ref()?
+            .first()
+            .map(String::as_str)
+            .filter(|u| !u.is_empty())
+    }
+
+    /// The creator's avatar, if any
+    pub fn avatar(&self) -> Option<&str> {
+        self.user
+            .as_ref()?
+            .avatar_url
+            .as_deref()
+            .filter(|u| !u.is_empty())
     }
 
     pub fn supported(&self) -> bool {
@@ -297,6 +321,9 @@ struct ToneInfo {
     url: String,
     gear: String,
     format: String,
+    /// Picture shown in the block that loads it
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image: Option<String>,
     source: String,
 }
 
@@ -365,18 +392,50 @@ pub fn download(token: &str, models_dir: &Path, tone: &Tone, model: &Model) -> R
         url: tone.page_url(),
         gear: tone.gear.clone(),
         format: tone.format.clone(),
+        image: tone.image().map(str::to_string),
         source: "Downloaded from TONE3000 (https://www.tone3000.com)".into(),
     };
     crate::presets::store::write_atomic(
-        &dir.join("tone.json"),
+        &dir.join(TONE_INFO_FILE),
         serde_json::to_string_pretty(&info)?.as_bytes(),
     )?;
+    save_picture(models_dir, tone);
     Ok(relative)
+}
+
+/// Side of the picture kept with a downloaded tone
+const PICTURE_SIDE: u32 = 96;
+
+/// Keep the tone's picture with its models, for its block on stage (no
+/// network there); returns whether it was saved now. Optional: the models
+/// work without it.
+pub fn save_picture(models_dir: &Path, tone: &Tone) -> bool {
+    let dir = models_dir.join(tone.folder());
+    let path = dir.join(TONE_PICTURE_FILE);
+    let Some(url) = tone.image() else {
+        return false;
+    };
+    if path.is_file() || !dir.join(TONE_INFO_FILE).is_file() {
+        return false;
+    }
+    let saved = super::images::fetch(url, PICTURE_SIDE)
+        .and_then(|picture| super::images::encode_png(&picture))
+        .and_then(|data| crate::presets::store::write_atomic(&path, &data));
+    match saved {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::warn!("Picture of {} not saved: {:#}", tone.title, e);
+            false
+        }
+    }
 }
 
 /// Whether some model of this tone is on the pedalboard
 pub fn is_downloaded(models_dir: &Path, tone: &Tone) -> bool {
-    models_dir.join(tone.folder()).join("tone.json").is_file()
+    models_dir
+        .join(tone.folder())
+        .join(TONE_INFO_FILE)
+        .is_file()
 }
 
 #[cfg(test)]
@@ -415,12 +474,15 @@ mod tests {
     #[test]
     fn parses_api_lists() {
         let page = r#"{"data":[{"id":7,"title":"Cab","gear":"cab","format":"ir",
-            "user":{"username":"bob"},"license":"t3k","irs_count":4,"sizes":null,
+            "user":{"username":"bob","avatar_url":"https://api.tone3000.com/a.jpg"},
+            "license":"t3k","irs_count":4,"sizes":null,"images":["https://api.tone3000.com/i.jpg"],
             "makes":[{"id":1,"name":"Orange"}]}],"page":1,"page_size":25,"total":1,"total_pages":1}"#;
         let response: ListResponse<Tone> = serde_json::from_str(page).unwrap();
         let tone = &response.data[0];
         assert_eq!((tone.creator(), tone.gear.as_str()), ("bob", "cab"));
         assert!(tone.supported());
+        assert_eq!(tone.image(), Some("https://api.tone3000.com/i.jpg"));
+        assert_eq!(tone.avatar(), Some("https://api.tone3000.com/a.jpg"));
         // Trending / latest answer without pagination fields
         let short: ListResponse<Tone> = serde_json::from_str(r#"{"data":[]}"#).unwrap();
         assert_eq!(short.total_pages, None);

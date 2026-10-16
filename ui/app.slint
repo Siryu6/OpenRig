@@ -95,9 +95,12 @@ export component App inherits Window {
     in-out property <string> selected-file-types: "";        // ".nam, .json"
     in-out property <string> selected-file-title: "";  // tone of the current file
     in-out property <string> selected-file-subtitle: "";
+    in-out property <bool> selected-file-t3k: false;   // a TONE3000 download
+    in-out property <image> selected-file-image;       // its picture, saved with it
     in-out property <[ModelChoice]> selected-presets: [];
     in-out property <string> selected-preset-name: "";
     in-out property <[ModelChoice]> available-packs: [];
+    in-out property <bool> available-packs-pictures: false;  // TONE3000 tones among them
     in-out property <string> models-dir: "";
 
     // Presets / scenes
@@ -165,6 +168,8 @@ export component App inherits Window {
     in-out property <string> t3k-status: "signed-out";
     in-out property <string> t3k-client-id: "";
     in-out property <string> t3k-username: "";
+    in-out property <image> t3k-avatar;                // signed-in account, once loaded
+    in-out property <string> t3k-avatar-key: "";
     in-out property <string> t3k-user-code: "";
     in-out property <string> t3k-url: "";
     in-out property <image> t3k-qr;
@@ -528,9 +533,12 @@ export component App inherits Window {
                 file-types: root.selected-file-types;
                 file-title: root.selected-file-title;
                 file-subtitle: root.selected-file-subtitle;
+                file-t3k: root.selected-file-t3k;
+                file-image: root.selected-file-image;
                 presets: root.selected-presets;
                 preset-name: root.selected-preset-name;
                 packs: root.available-packs;
+                packs-pictures: root.available-packs-pictures;
                 models-dir: root.models-dir;
                 colors: root.block-colors;
                 color: root.selected-color;
@@ -714,6 +722,8 @@ export component App inherits Window {
                 target-name: root.t3k-target-name;
                 gear-ids: root.t3k-gear-ids;
                 gear-names: root.t3k-gear-names;
+                username: root.t3k-username;
+                avatar: root.t3k-avatar;
 
                 load(tab, gear) => {
                     root.t3k-load(tab, gear, false);

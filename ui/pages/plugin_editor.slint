@@ -2,6 +2,7 @@ import { Theme } from "../theme.slint";
 import { ParameterInfo, ModelChoice, ColorChoice } from "../types.slint";
 import { Button, Badge, Card, EmptyState, Icon, Knob, Stepper, Toggle } from "../components/controls.slint";
 import { Features } from "../features.slint";
+import { T3kBrand, T3kMark, T3kPicture } from "../components/tone3000_brand.slint";
 
 // Formats a parameter value for display ("12.5 dB", "40%", "3")
 export global ParamFormat {
@@ -51,10 +52,11 @@ component ChoiceSheet inherits Rectangle {
     in property <bool> show-none: false;
     in property <bool> none-current: false;
     in property <string> empty-text: "";
+    in property <bool> pictures: false;     // room for the tone pictures
     callback chosen(string);                // file, "" for none
     callback close();
 
-    private property <length> row-height: 56px;
+    private property <length> row-height: root.pictures ? 60px : 56px;
     private property <int> offset: root.show-none ? 1 : 0;
 
     background: Theme.scrim;
@@ -138,9 +140,18 @@ component ChoiceSheet inherits Rectangle {
                     background: choice-ta.pressed ? Theme.surface-hover : choice.current ? Theme.accent-soft : transparent;
 
                     HorizontalLayout {
-                        padding-left: Theme.space-md;
+                        padding-left: root.pictures ? 4px : Theme.space-md;
                         padding-right: Theme.space-md;
                         spacing: Theme.space-md;
+                        if root.pictures: VerticalLayout {
+                            alignment: center;
+                            T3kPicture {
+                                width: 48px;
+                                source: choice.image;
+                                // No picture: the T3K mark for a TONE3000 tone, else blank
+                                placeholder: choice.t3k ? "" : " ";
+                            }
+                        }
                         VerticalLayout {
                             horizontal-stretch: 1;
                             alignment: center;
@@ -194,9 +205,12 @@ export component PluginEditor {
     in property <string> file-types: "";
     in property <string> file-title: "";            // tone of the current file
     in property <string> file-subtitle: "";         // "by @creator"
+    in property <bool> file-t3k: false;             // a TONE3000 download
+    in property <image> file-image;                 // its picture, once loaded
     in property <[ModelChoice]> presets: [];        // presets of that tone
     in property <string> preset-name: "";
     in property <[ModelChoice]> packs: [];          // tones the block can load
+    in property <bool> packs-pictures: false;       // some of them have a picture
     in property <[ColorChoice]> colors: [];         // block palette
     in property <string> color: "";                 // colour of this block ("" = default)
     in property <color> color-value;
@@ -500,19 +514,38 @@ export component PluginEditor {
             height: 64px;
             HorizontalLayout {
                 padding: Theme.space-sm;
-                padding-left: Theme.space-lg;
+                padding-left: root.file-t3k && root.file != "" ? Theme.space-sm : Theme.space-lg;
                 spacing: Theme.space-sm;
+
+                // Tone picture of a TONE3000 download (design requirements)
+                if root.file-t3k && root.file != "": VerticalLayout {
+                    alignment: center;
+                    T3kPicture {
+                        width: 48px;
+                        source: root.file-image;
+                    }
+                }
 
                 VerticalLayout {
                     horizontal-stretch: 1;
                     alignment: center;
                     spacing: 2px;
-                    Text {
-                        text: root.file-label.to-uppercase() + (root.file-subtitle != "" ? "  ·  " + root.file-subtitle : "");
-                        color: Theme.text-muted;
-                        font-size: Theme.font-small;
-                        font-weight: Theme.weight-semibold;
-                        overflow: elide;
+                    HorizontalLayout {
+                        spacing: Theme.space-sm;
+                        if root.file-t3k && root.file != "": VerticalLayout {
+                            alignment: center;
+                            T3kMark {
+                                height: 10px;
+                            }
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: root.file-label.to-uppercase() + (root.file-subtitle != "" ? "  ·  " + root.file-subtitle : "");
+                            color: Theme.text-muted;
+                            font-size: Theme.font-small;
+                            font-weight: Theme.weight-semibold;
+                            overflow: elide;
+                        }
                     }
                     Text {
                         text: root.file != "" ? root.file-title : "Nothing loaded: audio passes through";
@@ -533,9 +566,11 @@ export component PluginEditor {
                     }
                 }
 
+                // Opens the TONE3000 library: compact place, the T3K mark
                 if Features.tone3000: Button {
                     horizontal-stretch: 0;
-                    text: "TONE3000";
+                    logo: T3kBrand.mark;
+                    text: "Browse";
                     enabled: root.instance-id >= 0;
                     clicked => {
                         root.browse-tone3000();
@@ -781,6 +816,7 @@ export component PluginEditor {
     if root.model-picker-open: ChoiceSheet {
         title: "Choose: " + root.file-label;
         choices: root.packs;
+        pictures: root.packs-pictures;
         show-none: true;
         none-current: root.file == "";
         empty-text: "Nothing found.\nCopy " + root.file-types + " files to\n" + root.models-dir;
