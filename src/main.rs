@@ -131,6 +131,12 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
                 .colors
                 .get(&n.instance_id)
                 .is_some_and(|c| views::block_color(c).is_some()),
+            t3k: !n.is_split
+                && chain
+                    .files
+                    .get(&n.instance_id)
+                    .and_then(|f| state.model_pack(&n.uri, f))
+                    .is_some_and(|p| p.tone3000),
         })
         .collect();
     let connectors: Vec<Connector> = connectors
@@ -159,6 +165,16 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
 
 /// Name of a block: blocks loading a file are named after its tone
 /// ("Boss MT-2")
+/// Picture saved with a downloaded tone (none without TONE3000)
+fn pack_picture(pack: Option<&ModelPack>) -> slint::Image {
+    #[cfg(feature = "tone3000")]
+    if let Some(path) = pack.and_then(|p| p.picture.as_deref()) {
+        return tone3000_ui::local_picture(path);
+    }
+    let _ = pack;
+    slint::Image::default()
+}
+
 pub(crate) fn block_name(
     state: &AppState,
     chain: &EffectChainState,
@@ -273,6 +289,8 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
         .map(|(f, label)| ModelChoice {
             title: label.as_str().into(),
             subtitle: SharedString::new(),
+            image: Default::default(),
+            t3k: false,
             file: f.as_str().into(),
             current: *f == view.file,
         })
@@ -294,6 +312,8 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
             .unwrap_or_default()
             .into(),
     );
+    app.set_selected_file_t3k(pack.as_ref().is_some_and(|p| p.tone3000));
+    app.set_selected_file_image(pack_picture(pack.as_ref()));
     app.set_selected_preset_name(preset_name);
     app.set_selected_presets(model(presets));
     app.set_selected_file(view.file.into());
@@ -583,6 +603,8 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
                     n => format!("{n} presets"),
                 };
                 ModelChoice {
+                    image: pack_picture(Some(&pack)),
+                    t3k: pack.tone3000,
                     subtitle: match &pack.creator {
                         Some(creator) => format!("by @{creator} · {presets}"),
                         None => presets,
@@ -595,6 +617,7 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
                 }
             })
             .collect();
+        app.set_available_packs_pictures(packs.iter().any(|p| p.t3k));
         app.set_available_packs(model(packs));
         app.set_models_dir(state.models_dir().display().to_string().into());
     });

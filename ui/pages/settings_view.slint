@@ -3,6 +3,7 @@ import { Button, Card, Icon, SectionHeader, Stepper, Toggle } from "../component
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 import { LogoMark, LogoText } from "../components/logo.slint";
 import { WifiNetwork } from "../types.slint";
+import { Tone3000Logo } from "../components/tone3000_brand.slint";
 
 // Signal strength as four bars
 component SignalBars inherits Rectangle {
@@ -414,17 +415,17 @@ export component SettingsView inherits Rectangle {
 
                     // Title row
                     HorizontalLayout {
-                        spacing: Theme.space-sm;
+                        spacing: Theme.space-md;
+                        // Entry point: the full logo (TONE3000 design requirements)
                         VerticalLayout {
                             alignment: center;
-                            Icon {
-                                name: "plug";
-                                color: Theme.accent;
+                            Tone3000Logo {
+                                height: 22px;
                             }
                         }
                         Text {
                             horizontal-stretch: 1;
-                            text: "TONE3000 Connect";
+                            text: "Connect";
                             color: Theme.text-primary;
                             font-size: Theme.font-title;
                             font-weight: Theme.weight-semibold;

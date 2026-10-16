@@ -23,6 +23,7 @@ export struct PositionedNode {
     kind: string,        // drawing: "amp" | "combo" | "cab" | "pedal" | "space" | ""
     tint: color,         // colour chosen in the editor (when tinted)
     tinted: bool,
+    t3k: bool,           // loads a TONE3000 download: shows the T3K mark
 }
 
 // Where a dragged block can be dropped (layout units)
@@ -145,6 +146,10 @@ export struct T3kTone {
     usable: bool,        // can be loaded in the block the library was opened from
     block-uri: string,   // block made for it, added to the chain by "Add" ("" = none)
     block-name: string,
+    image: image,        // tone picture, empty until loaded
+    avatar: image,       // creator's avatar, empty until loaded
+    image-key: string,   // which pictures these are, to fill them in once loaded
+    avatar-key: string,
 }
 
 // A model of the open TONE3000 tone
@@ -161,6 +166,8 @@ export struct ModelChoice {
     subtitle: string,
     file: string,        // relative to the models dir (a tone's first preset)
     current: bool,
+    image: image,        // picture saved with a TONE3000 tone (empty otherwise)
+    t3k: bool,           // a TONE3000 download
 }
 
 // A Wi-Fi network in range (Settings)

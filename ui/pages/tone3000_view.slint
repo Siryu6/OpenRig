@@ -1,12 +1,16 @@
 import { Theme } from "../theme.slint";
 import { T3kTone, T3kModel } from "../types.slint";
 import { Badge, Button, Card, Chip, EmptyState, Icon, Segmented } from "../components/controls.slint";
+import { Tone3000Logo, T3kPicture } from "../components/tone3000_brand.slint";
 
 export { T3kTone, T3kModel }
 
 // TONE3000 library: the user's favorites / own / downloaded tones and the
 // trending / latest lists, filtered by gear. Opening a tone lists its models;
 // each is downloaded only when asked, then usable in a NAM or IR block.
+// Laid out after the TONE3000 design requirements: full logo and the
+// signed-in account in the header, each tone with its picture, gear, format
+// and creator (avatar and username).
 export component Tone3000View inherits Rectangle {
     in property <int> tab: 0;                        // index in tab-names
     in property <string> gear: "";                   // API value, "" = all
@@ -26,6 +30,9 @@ export component Tone3000View inherits Rectangle {
     // Gear filters ("" = all); only the block's gears when opened from a block
     in property <[string]> gear-ids: [];
     in property <[string]> gear-names: [];
+    // Signed-in account
+    in property <string> username: "";
+    in property <image> avatar;
 
     callback load(int, string);                      // tab, gear
     callback load-more();
@@ -35,7 +42,7 @@ export component Tone3000View inherits Rectangle {
     callback add-model(string, string);              // block URI, relative path
 
     private property <[string]> tab-names: ["Favorites", "My tones", "Downloaded", "Trending", "Latest"];
-    private property <length> row-height: 60px;
+    private property <length> row-height: 64px;
 
     width: 100%;
     height: 100%;
@@ -44,6 +51,35 @@ export component Tone3000View inherits Rectangle {
         padding: Theme.space-md;
         padding-bottom: Theme.space-sm;
         spacing: Theme.space-sm;
+
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+            VerticalLayout {
+                alignment: center;
+                Tone3000Logo {
+                    height: 20px;
+                }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+            if root.username != "": VerticalLayout {
+                alignment: center;
+                T3kPicture {
+                    width: 26px;
+                    round: true;
+                    source: root.avatar;
+                    placeholder: "@";
+                }
+            }
+            if root.username != "": Text {
+                text: "@" + root.username;
+                color: Theme.text-secondary;
+                font-size: Theme.font-small;
+                font-weight: Theme.weight-semibold;
+                vertical-alignment: center;
+            }
+        }
 
         Segmented {
             options: root.tab-names;
@@ -100,13 +136,20 @@ export component Tone3000View inherits Rectangle {
                     opacity: tone.supported ? 1.0 : 0.55;
 
                     HorizontalLayout {
-                        padding-left: Theme.space-md;
+                        padding-left: 8px;
                         padding-right: Theme.space-md;
                         spacing: Theme.space-md;
                         VerticalLayout {
+                            alignment: center;
+                            T3kPicture {
+                                width: 48px;
+                                source: tone.image;
+                            }
+                        }
+                        VerticalLayout {
                             horizontal-stretch: 1;
                             alignment: center;
-                            spacing: 2px;
+                            spacing: 4px;
                             Text {
                                 text: tone.title;
                                 color: Theme.text-primary;
@@ -114,12 +157,23 @@ export component Tone3000View inherits Rectangle {
                                 font-weight: Theme.weight-semibold;
                                 overflow: elide;
                             }
-                            Text {
-                                text: "by @" + tone.creator + " · " + tone.detail
-                                    + (tone.license != "" ? " · " + tone.license : "");
-                                color: Theme.text-secondary;
-                                font-size: Theme.font-small;
-                                overflow: elide;
+                            HorizontalLayout {
+                                spacing: 6px;
+                                T3kPicture {
+                                    width: 16px;
+                                    round: true;
+                                    source: tone.avatar;
+                                    placeholder: "@";
+                                }
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: "@" + tone.creator + " · " + tone.detail
+                                        + (tone.license != "" ? " · " + tone.license : "");
+                                    color: Theme.text-secondary;
+                                    font-size: Theme.font-small;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
                             }
                         }
                         VerticalLayout {
@@ -127,6 +181,13 @@ export component Tone3000View inherits Rectangle {
                             Badge {
                                 text: tone.gear;
                                 tone: tone.supported ? "accent" : "neutral";
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Badge {
+                                text: tone.format.to-uppercase();
+                                tone: "neutral";
                             }
                         }
                         VerticalLayout {
@@ -165,23 +226,6 @@ export component Tone3000View inherits Rectangle {
                 }
             }
         }
-
-        // Attribution required by the TONE3000 API terms
-        HorizontalLayout {
-            alignment: start;
-            spacing: Theme.space-sm;
-            Text {
-                text: "Powered by TONE3000";
-                color: Theme.text-secondary;
-                font-size: Theme.font-caption;
-                font-weight: Theme.weight-bold;
-            }
-            Text {
-                text: "tone3000.com";
-                color: Theme.accent;
-                font-size: Theme.font-caption;
-            }
-        }
     }
 
     // ---------------- Tone sheet ----------------
@@ -209,9 +253,14 @@ export component Tone3000View inherits Rectangle {
 
                 HorizontalLayout {
                     spacing: Theme.space-md;
+                    T3kPicture {
+                        width: 88px;
+                        source: root.detail.image;
+                    }
                     VerticalLayout {
                         horizontal-stretch: 1;
-                        spacing: 2px;
+                        alignment: center;
+                        spacing: 4px;
                         Text {
                             text: root.detail.title;
                             color: Theme.text-primary;
@@ -219,8 +268,26 @@ export component Tone3000View inherits Rectangle {
                             font-weight: Theme.weight-semibold;
                             overflow: elide;
                         }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            T3kPicture {
+                                width: 20px;
+                                round: true;
+                                source: root.detail.avatar;
+                                placeholder: "@";
+                            }
+                            Text {
+                                horizontal-stretch: 1;
+                                text: "@" + root.detail.creator;
+                                color: Theme.text-primary;
+                                font-size: Theme.font-small;
+                                font-weight: Theme.weight-semibold;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
                         Text {
-                            text: "by @" + root.detail.creator + " · " + root.detail.gear
+                            text: root.detail.gear + " · " + root.detail.format.to-uppercase() + " · " + root.detail.detail
                                 + (root.detail.license != "" ? " · License: " + root.detail.license : "");
                             color: Theme.text-secondary;
                             font-size: Theme.font-small;

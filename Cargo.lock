@@ -3519,6 +3519,7 @@ dependencies = [
  "tracing-subscriber",
  "ureq",
  "uuid",
+ "zune-jpeg 0.5.5",
 ]
 
 [[package]]
