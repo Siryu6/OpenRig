@@ -244,14 +244,9 @@ impl Tuner {
 /// most of the tuner's work, run on the audio thread.
 fn dot(a: &[f32], b: &[f32]) -> f32 {
     let mut sums = [0.0f32; 8];
-    let (a_chunks, b_chunks) = (a.chunks_exact(8), b.chunks_exact(8));
-    let tail: f32 = a_chunks
-        .remainder()
-        .iter()
-        .zip(b_chunks.remainder())
-        .map(|(x, y)| x * y)
-        .sum();
-    for (x, y) in a_chunks.zip(b_chunks) {
+    let ((a_chunks, a_tail), (b_chunks, b_tail)) = (a.as_chunks::<8>(), b.as_chunks::<8>());
+    let tail: f32 = a_tail.iter().zip(b_tail).map(|(x, y)| x * y).sum();
+    for (x, y) in a_chunks.iter().zip(b_chunks) {
         for ((sum, x), y) in sums.iter_mut().zip(x).zip(y) {
             *sum += x * y;
         }

@@ -1,0 +1,193 @@
+# Binaries and OS images of a release, attached to its GitHub release.
+# Called by release.yml when the release PR is merged; also runs for a vX.Y.Z
+# tag pushed by hand, and by hand to build a release again.
+name: Build release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (vX.Y.Z)
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  release:
+    name: GitHub release
+    runs-on: ubuntu-24.04
+    steps:
+      # release-plz creates it; a tag pushed by hand has none yet
+      - run: |
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "$TAG"
+
+  binaries:
+    name: Binary (${{ matrix.name }})
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported runners: the binaries run on older glibc too
+          - name: linux-x86_64
+            runner: ubuntu-22.04
+          - name: linux-aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          submodules: recursive
+      - uses: ./.github/actions/linux-deps
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked
+      - name: Package
+        shell: bash
+        run: |
+          name="openrig-${TAG#v}-${{ matrix.name }}"
+          mkdir "$name"
+          cp target/release/pedalboard LICENSE README.md "$name/"
+          tar czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" >"$name.tar.gz.sha256"
+          gh release upload "$TAG" "$name.tar.gz" "$name.tar.gz.sha256" --clobber
+
+  os-image:
+    name: OS image (${{ matrix.board }})
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [x86_64, rpi5]
+    runs-on: ubuntu-24.04
+    # The hosted runner limit. A first x86_64 build (LLVM and clang for Mesa)
+    # may not fit: the build stops in time to save its compiler cache, and
+    # running the failed job again resumes from it.
+    timeout-minutes: 360
+    permissions:
+      contents: write
+      actions: write # prune the old compiler caches
+    env:
+      BOARD: ${{ matrix.board }}
+      BR2_CCACHE_DIR: ${{ github.workspace }}/../ccache
+      CCACHE_KEY: os-ccache-${{ matrix.board }}-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Free disk space
+        # A build takes about 30 GB; the runner keeps about 20 GB free
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache /usr/local/share/boost /usr/local/share/powershell \
+            /usr/share/swift /usr/local/julia* /opt/microsoft /opt/google
+          sudo docker image prune --all --force
+          df -h /
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          submodules: recursive
+      - name: Buildroot dependencies
+        # As in os/Dockerfile; with the system cmake, Buildroot does not build its own
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential bzip2 cmake cpio file flex libncurses-dev \
+            rsync unzip wget xz-utils
+      # Buildroot, the sources it downloads and the vendored crates
+      - id: downloads
+        uses: actions/cache/restore@v6
+        with:
+          path: os/.cache
+          key: os-dl-${{ matrix.board }}-${{ hashFiles('os/Makefile', 'os/configs/**', 'os/package/**', 'Cargo.lock') }}
+          restore-keys: os-dl-${{ matrix.board }}-
+      - uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.BR2_CCACHE_DIR }}
+          key: ${{ env.CCACHE_KEY }}
+          restore-keys: os-ccache-${{ matrix.board }}-
+      - name: Update signing key
+        # Images trust the certificate and only accept updates signed with
+        # the key (os/board/common/update-keys.sh): both are kept as secrets
+        env:
+          OS_UPDATE_KEY: ${{ secrets.OS_UPDATE_KEY }}
+          OS_UPDATE_CERT: ${{ secrets.OS_UPDATE_CERT }}
+        run: |
+          if [ -z "$OS_UPDATE_KEY" ] || [ -z "$OS_UPDATE_CERT" ]; then
+            echo "::error::Secrets OS_UPDATE_KEY and OS_UPDATE_CERT are not set (os/keys/key.pem and cert.pem)"
+            exit 1
+          fi
+          mkdir -p os/keys
+          (umask 077; printf '%s\n' "$OS_UPDATE_KEY" >os/keys/key.pem)
+          printf '%s\n' "$OS_UPDATE_CERT" >os/keys/cert.pem
+      - name: Configure
+        # The board configuration, plus a compiler cache kept across runs
+        run: |
+          make -C os "$BOARD-olddefconfig"
+          printf 'BR2_CCACHE=y\nBR2_CCACHE_INITIAL_SETUP="--max-size=4G"\n' >>"os/output/$BOARD/.config"
+          make -C os "$BOARD-olddefconfig"
+      - name: Build
+        env:
+          PEDALBOARD_OS_VERSION: ${{ env.TAG }}
+        run: |
+          export PEDALBOARD_OS_VERSION=${PEDALBOARD_OS_VERSION#v}
+          # Stop early enough to save the compiler cache within the job limit
+          status=0
+          timeout 315m make -C os "$BOARD" || status=$?
+          if [ "$status" = 124 ]; then
+            echo "::error::Out of time: run the failed jobs again, they resume from the compiler cache saved now"
+          fi
+          exit "$status"
+      - name: Compiler cache statistics
+        if: always()
+        run: os/output/$BOARD/host/bin/ccache -s || true
+      - name: Remove the signing key
+        if: always()
+        run: rm -f os/keys/key.pem
+      - name: Save the compiler cache
+        id: save-ccache
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.BR2_CCACHE_DIR }}
+          key: ${{ env.CCACHE_KEY }}
+      - name: Save the downloads
+        if: always() && steps.downloads.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: os/.cache
+          key: ${{ steps.downloads.outputs.cache-primary-key }}
+      - name: Prune old caches
+        # Only the latest compiler cache of the board is used: keep the
+        # repository under its cache quota
+        if: always() && steps.save-ccache.outcome == 'success'
+        run: |
+          # Only once the new one is saved
+          [ -n "$(gh cache list -R "$GITHUB_REPOSITORY" --key "$CCACHE_KEY" --json id -q '.[].id')" ] || exit 0
+          gh cache list -R "$GITHUB_REPOSITORY" --key "os-ccache-$BOARD-" --limit 100 --json id,key \
+            -q ".[] | select(.key != \"$CCACHE_KEY\") | .id" |
+            xargs -r -n1 gh cache delete -R "$GITHUB_REPOSITORY"
+      - name: Package
+        run: |
+          images=os/output/$BOARD/images
+          name="openrig-os-${TAG#v}-$BOARD"
+          case $BOARD in
+            rpi5) image=$images/sdcard.img ;;
+            *) image=$images/disk.img ;;
+          esac
+          xz -T0 -6 -c "$image" >"$name.img.xz"
+          cp "$images/update.raucb" "$name.raucb"
+          sha256sum "$name.img.xz" "$name.raucb" >"$name.sha256"
+          gh release upload "$TAG" "$name.img.xz" "$name.raucb" "$name.sha256" --clobber

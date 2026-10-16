@@ -1,0 +1,11 @@
+name: Linux build dependencies
+description: System libraries of the pedalboard app (see README, Build)
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          build-essential cmake pkg-config libjack-jackd2-dev liblilv-dev lv2-dev \
+          libasound2-dev libfontconfig1-dev libxkbcommon-dev
