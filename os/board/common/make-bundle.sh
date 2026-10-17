@@ -12,6 +12,7 @@
 set -eu
 
 COMMON_DIR=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=update-keys.sh
 . "$COMMON_DIR/update-keys.sh"
 compatible=$1
 shift

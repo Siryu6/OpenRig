@@ -1,0 +1,4 @@
+# shellcheck (CI "Scripts" job): follow the files the scripts source,
+# relative to the script, as the "# shellcheck source=" lines give them
+source-path=SCRIPTDIR
+external-sources=true

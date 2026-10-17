@@ -4,6 +4,8 @@
 # and started again when it exits; it quits by itself when the JACK server
 # stops or starts, to run on the new one.
 
+# The settings, with the same names as the defaults
+# shellcheck source=../../../etc/pedalboard/defaults
 . /run/pedalboard/config 2>/dev/null || . /etc/pedalboard/defaults
 case "$display_rotation" in
 0 | 90 | 180 | 270) ;;

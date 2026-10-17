@@ -40,7 +40,7 @@ if [ ! -e "$work/disk.img" ]; then
 	# Root shell on ttyS0, written into the copy's root filesystem
 	start=$(sfdisk -d "$work/disk.img" | sed -n 's/.*img2 : start= *\([0-9]*\),.*/\1/p')
 	dd if="$work/disk.img" of="$work/rootfs.ext4" bs=512 skip="$start" \
-		count=$(sfdisk -d "$work/disk.img" | sed -n 's/.*img2 :.*size= *\([0-9]*\),.*/\1/p') status=none
+		count="$(sfdisk -d "$work/disk.img" | sed -n 's/.*img2 :.*size= *\([0-9]*\),.*/\1/p')" status=none
 	debugfs -R "cat /etc/inittab" "$work/rootfs.ext4" 2>/dev/null >"$work/inittab"
 	echo "ttyS0::respawn:/sbin/getty -n -l /bin/sh -L 115200 ttyS0 vt100" >>"$work/inittab"
 	debugfs -w -R "rm /etc/inittab" "$work/rootfs.ext4" >/dev/null 2>&1
@@ -54,14 +54,14 @@ accel=tcg
 [ -w /dev/kvm ] && accel=kvm
 
 exec qemu-system-x86_64 \
-	-machine q35,accel=$accel -cpu max -smp 4 -m 2048 \
+	-machine "q35,accel=$accel" -cpu max -smp 4 -m 2048 \
 	-drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
 	-drive if=pflash,format=raw,file="$work/OVMF_VARS.fd" \
 	-drive if=virtio,format=raw,file="$work/disk.img" \
-	-device virtio-vga,xres=${screen%x*},yres=${screen#*x} -display none -vnc :0 \
+	-device "virtio-vga,xres=${screen%x*},yres=${screen#*x}" -display none -vnc :0 \
 	-audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0 \
 	-netdev user,id=net0,hostfwd=tcp::2222-:22 -device virtio-net-pci,netdev=net0 \
 	-device qemu-xhci -device usb-kbd -device usb-tablet \
-	-chardev socket,id=ser0,path="$work/serial.sock",server=on,wait=off,logfile="$work/serial.log" \
+	-chardev "socket,id=ser0,path=$work/serial.sock,server=on,wait=off,logfile=$work/serial.log" \
 	-serial chardev:ser0 \
 	-qmp unix:"$work/qmp.sock",server=on,wait=off
