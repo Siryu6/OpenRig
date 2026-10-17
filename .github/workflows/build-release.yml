@@ -84,7 +84,8 @@ jobs:
       actions: write # prune the old compiler caches
     env:
       BOARD: ${{ matrix.board }}
-      BR2_CCACHE_DIR: ${{ github.workspace }}/../ccache
+      # actions/cache refuses paths with ".."; kept out of os/.cache (the downloads)
+      BR2_CCACHE_DIR: ${{ github.workspace }}/os/.ccache
       CCACHE_KEY: os-ccache-${{ matrix.board }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Free disk space
