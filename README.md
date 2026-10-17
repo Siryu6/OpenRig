@@ -1,10 +1,22 @@
-# OpenRig
+<h1 align="center">OpenRig</h1>
 
-Open source guitar multi-effects pedalboard in Rust for the Raspberry Pi 5
-(and x86_64 mini PCs) with a touchscreen: LV2 effects hosted through lilv,
-neural amp captures (NAM), impulse responses, real-time audio with JACK, a
-native Slint UI, MIDI, and optional footswitches and encoder on GPIO. It
-ships as a bootable OS image with A/B updates.
+<p align="center">
+  <b>The open source guitar pedalboard you build yourself.</b><br>
+  Raspberry Pi 5 or x86_64 mini PC, a USB audio interface and a touchscreen.
+</p>
+
+<p align="center">
+  <a href="https://openrig.eu">Website</a> ·
+  <a href="https://openrig.eu/docs/">User guide</a> ·
+  <a href="https://openrig.eu/docs/getting-started/hardware/">Build one</a> ·
+  <a href="https://github.com/Siryu6/OpenRig/releases/latest">Download</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Siryu6/OpenRig/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Siryu6/OpenRig?color=f0a43c"></a>
+  <a href="https://github.com/Siryu6/OpenRig/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Siryu6/OpenRig/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue"></a>
+</p>
 
 <p align="center">
   <img src="docs/media/demo.gif" width="800"
@@ -18,202 +30,59 @@ ships as a bootable OS image with A/B updates.
   with their creators.
 </sub></p>
 
-- **Rack**: the signal flow on one screen, serial blocks plus A/B, Mix and
-  left/right splits. Tap a block to get its knobs at the bottom of the
-  screen, double tap for the full editor, long press to bypass.
-- **Amps, pedals, cabinets, rooms**: Neural Amp Modeler captures and impulse
-  responses as built-in blocks, next to any LV2 plugin.
-- **TONE3000**: link your account and download captures right on the
-  pedalboard (favorites, your own tones, trending), with credits and
-  licenses kept.
-- **Live**: 8 scenes per preset, setlists, stomp mode, tap tempo with the
-  tempo sent to plugins, tuner, looper.
-- **MIDI**: preset, scene and stomp control with a Helix-style map, clock
-  and CC learn.
-- **Appliance OS**: a Buildroot image that boots straight into the UI, with
-  a read-only system, a data partition and A/B updates with rollback.
+OpenRig turns a small computer into a multi-effects pedalboard. It ships as
+a bootable OS image that starts straight into a touch UI, runs effects in
+real time with JACK, and updates itself without risking the board.
 
-It runs on a Raspberry Pi 5 with a USB audio interface and a 10" touch
-screen. It is a young project: expect rough edges.
+- **[Rack](https://openrig.eu/docs/using/rack/)**: the whole signal flow on one screen, serial
+  blocks plus A/B, Mix and left/right splits, mono or stereo.
+- **[Neural amps, pedals and cabinets](https://openrig.eu/docs/using/neural-blocks/)**: Neural
+  Amp Modeler captures and impulse responses as built-in blocks, next to any
+  compatible [LV2 plugin](https://openrig.eu/docs/setup/lv2/).
+- **[TONE3000](https://openrig.eu/docs/using/tone3000/)**: link your account and download
+  captures right on the pedalboard, with credits and licenses kept.
+- **[Live](https://openrig.eu/docs/using/live/)**: 8 scenes per preset, setlists, stomp mode,
+  tap tempo, [tuner and looper](https://openrig.eu/docs/using/tuner-looper/).
+- **[MIDI](https://openrig.eu/docs/using/midi/)**: Helix-style map for presets, scenes and
+  stomps, clock and CC learn.
+- **[Updates](https://openrig.eu/docs/setup/updates/)**: a read-only system with signed A/B
+  updates that roll back when the new system does not start.
 
-## Features
+It is a young project: expect rough edges, and
+[tell us](https://github.com/Siryu6/OpenRig/issues) when you hit one.
 
-- **LV2 hosting**: plugins are discovered with lilv (`LV2_PATH` or the
-  standard locations). Controls, ranges, units, toggles, integers and
-  enumerations are read from the plugin metadata and edited in the UI. URID
-  map / unmap, options, bounded-block-length and isLive are provided; plugins
-  that need anything else are skipped. Atom inputs get the tempo
-  (`time:Position`) and MIDI. Without any installed plugin, a demo
-  catalogue (passthrough) keeps the UI usable for development.
-- **Amp, Amp + Cab and Pedal blocks** (feature `nam`, default): built-in neural blocks
-  running Neural Amp Modeler `.nam` captures (and RTNeural `.json` /
-  `.aidax` models) through [NeuralAudio](https://github.com/mikeoliphant/NeuralAudio).
-  The editor lists tones (a folder of captures, e.g. one TONE3000 tone)
-  rather than files: choosing a tone loads its first preset, and a drop-down
-  switches between its presets. Each block only lists the tones of its
-  gear (Amp: heads; Amp + Cab: combos and amps with their cab;
-  Pedal: pedals, outboard, experimental). Each has a noise gate (as in the NAM plugin: it listens to
-  the clean input and gates the model output); the amp blocks add a bass /
-  middle / treble tone stack, and packed A2 captures a Full / Light quality
-  (Light is about four times cheaper). Saved in presets. See [docs/NEURAL_MODELS.md](docs/NEURAL_MODELS.md).
-- **Cabinet and Space blocks**: impulse response loaders (`.wav`) for
-  cabinets and rooms, with level, dry/wet mix (35 % by default on Space),
-  loudness normalization (unity gain over the guitar band, 80 Hz – 5 kHz) and low / high cut. Zero latency; the tail of long room responses is
-  convolved on a worker thread so the audio callback cost stays flat.
-- **Wi-Fi** in Settings: scan, join (on-screen keyboard with symbols, hidden
-  password), disconnect, forget, radio on/off. It drives NetworkManager
-  through `nmcli` (as on Raspberry Pi OS); elsewhere (macOS, Windows, Linux
-  without NetworkManager) Settings says Wi-Fi is managed by the system.
-- **Power off / restart** from the menu ⋮ on the OS image (the launcher sets
-  `PEDALBOARD_POWER_REQUEST`; the app saves the session and quits, the
-  launcher switches the board off). Hidden on a desktop.
-- **TONE3000 Connect** (feature `tone3000`, default): Settings → TONE3000
-  Connect links a [tone3000.com](https://www.tone3000.com) account with the
-  OAuth device flow (QR code and short code on the screen, approved on a
-  phone). Each user enters the *publishable* key (`t3k_pub_…`) of their own
-  TONE3000 application; no key ships with the code. Once connected, the
-  TONE3000 features are enabled (`Features.tone3000` flag in the UI): the
-  **TONE3000 library** (menu ⋮, or the T3K Browse button of a block)
-  lists your favorites, your own and downloaded tones, and the trending /
-  latest ones, by gear, each with its picture, format and creator (avatar
-  and username), following the TONE3000 design requirements. Pictures are
-  fetched when shown and kept in memory only. Models are downloaded one at a time
-  when you ask, into `models/Tone3000/<gear>/<tone>/` with the creator,
-  license and link in `tone.json`, and can be loaded straight into the block.
-  Opened from a block, the library only shows the gears that block plays;
-  from the menu, "Add" puts a downloaded model in a new block of its type.
-  A block playing a TONE3000 tone carries the T3K mark, and its editor
-  shows the tone picture.
-- **Chain with splits**: serial chain plus nested A/B, Mix and L/R splits;
-  a split's type can be changed from the rack (its blocks are kept).
-- **Stereo**: two outputs. The guitar comes in mono and becomes stereo where
-  something makes it so: an L/R split (top branch to the left output, bottom
-  branch to the right one — e.g. front of house with a cabinet IR on one
-  side, a real cab without IR on the other), a Mix split with its branches
-  panned (Pan button, stereo mode: each branch from hard left to hard right,
-  centred by default), a plugin with two outputs or a stereo impulse
-  response. After that point, cabinet / space blocks and mono
-  LV2 plugins run once per side; NAM blocks (too costly to double) play the
-  mix of both sides. Mono mode (rack toggle, saved in presets) keeps the whole
-  path mono and sends the same signal to both outputs. The looper records in
-  stereo. In the rack a single line carries a mono signal and a double line
-  a stereo one.
-- **Touch rack**: blocks are drawn after their gear (flat amp head, combo,
-  cabinet with speakers, pedal with footswitch, reverb pill; LV2 plugins keep
-  a plain card), coloured by family (amp red, cab orange, drive yellow,
-  reverb teal, delay green, modulation blue…) or with a colour picked in the
-  block editor. The UI is styled like dark, minimal hardware: near-square
-  corners, amber accent, key-like buttons with status LEDs, recessed displays,
-  input / output LED meters with clip LEDs on the rack, knobs tinted with the block's colour, LED
-  tuner ramp, footswitch tiles on the Live page. Tap to select:
-  the block's controls show as knobs at the bottom of the rack (five per page)
-  for quick tweaks; double tap opens the full editor. Hold (0.35 s) and
-  release in place to bypass, hold and drag to move a block anywhere,
-  including into a split branch. A quick swipe scrolls the rack.
-- **Real-time safe audio**: chains are built off the audio thread and swapped
-  with a 20 ms equal-power crossfade. Parameters, bypass (10 ms ramp), A/B and
-  mix changes are applied live without rebuilding. The JACK callback does no
-  allocation and takes no blocking lock.
-- **Presets, scenes and setlists**: presets store the whole chain (splits,
-  parameter values, block colours) with 8 scenes and a tempo. A scene
-  recalls bypass, parameters and split settings instantly, without
-  rebuilding the chain; a setlist maps footswitch slots to presets, all
-  preloaded in memory.
-- **Live page**: 8 switch tiles in Stomp (block on/off, assignable),
-  Scenes or Setlist mode, tempo display with TAP. The last footswitch taps
-  the tempo and, held, opens the tuner. The tempo drives the BPM ports of
-  LV2 plugins.
-- **Tails (spillover)**: delays and reverbs keep ringing when bypassed or
-  when the scene changes.
-- **Session**: the current chain is saved a few seconds after each change (and on exit)
-  and restored at startup, so switching the pedalboard off is safe.
-- **Tuner** down to 38 Hz (7- and 8-string drop tunings, bass; analysis only while the tuner page is open, optional mute) and
-  **looper** (record, overdub layers, undo, 30 s max) after the effects.
-- **Resource monitor**: the top bar shows the DSP load (time spent in the
-  audio callback vs. the buffer period) and the SoC temperature, coloured
-  green / orange / red. Tapping it opens the details: DSP average and peak,
-  JACK load, CPU (total and busiest core), memory, dropouts (xruns), latency
-  and, on the Pi, under-voltage / throttling. Adding an effect while the load
-  is already high shows a warning. The block editor shows the share of a
-  CPU core the block uses.
-- **MIDI** (feature `midi`, default): every USB / DIN MIDI input is heard,
-  hot-plugged. Helix-compatible map: Program Change and CC0 banks for
-  presets (or setlist slots), CC69 scenes, CC64 tap, CC68 tuner, CC49–56
-  footswitches, CC60–63 looper; MIDI clock sets the tempo; MIDI learn on any
-  block parameter or on / off (expression pedals) with a heel / toe range,
-  saved with the preset; notes and free CCs go to LV2 plugins taking MIDI.
-  See [docs/MIDI.md](docs/MIDI.md).
-- **Hardware** (feature `gpio`): footswitches follow the Live page mode
-  (act when pressed; the tap switch also reads the hold), and keys `1`–`8`
-  and `t` do the same on a keyboard; the rotary encoder drives the UI like
-  the arrow and Return keys. Settings → Hardware sets what is wired: from
-  no footswitch to 8, the GPIO of each (with a LED that lights while it is
-  pressed, to check the wiring), the encoder or none, its push button or
-  none, its steps per detent. Kept in `hardware.json` in the data
-  directory; changes apply at once.
-- **OS image** (`os/`): Buildroot image for the Pi 5 and x86_64 mini PCs,
-  `PREEMPT_RT` kernel, read-only system, boot logo, the UI full screen
-  without X11 / Wayland, signed A/B updates (RAUC) that roll back when the
-  new system does not start. See [docs/OS.md](docs/OS.md).
-- **Updates** (feature `update`, default): Settings → Updates checks the
-  latest GitHub release and, on the OS image, installs it: the app alone
-  when the system did not change, else the whole system. See
-  [Updates](#updates).
+## Get started
 
-## Install
+1. **[Gather the hardware](https://openrig.eu/docs/getting-started/hardware/)**: a Raspberry Pi 5
+   (or an x86_64 mini PC), a class-compliant USB audio interface, a
+   touchscreen and a micro SD card. Footswitches and a MIDI pedal are optional.
+2. **Write the image** from the [latest release](https://github.com/Siryu6/OpenRig/releases/latest):
+   [Raspberry Pi 5](https://openrig.eu/docs/getting-started/raspberry-pi/) or
+   [x86_64 mini PC](https://openrig.eu/docs/getting-started/mini-pc/).
+3. **[First start](https://openrig.eu/docs/getting-started/first-start/)**: levels, Wi-Fi,
+   TONE3000 and your first sound.
 
-Everything comes from the [releases page](https://github.com/Siryu6/OpenRig/releases).
+Then the [tour of the screen](https://openrig.eu/docs/using/tour/) shows where everything is.
+When something goes wrong, see [Troubleshooting](https://openrig.eu/docs/help/troubleshooting/)
+and the [FAQ](https://openrig.eu/docs/help/faq/).
 
-### Raspberry Pi 5
+To try the app on a Linux desktop without the image, the release also holds
+`openrig-<version>-linux-x86_64.tar.gz` (and `aarch64`): it needs JACK and
+lilv (`apt install jackd2 liblilv-0-0`); start JACK, then `./pedalboard`.
 
-You need a Pi 5, a micro SD card, a USB audio interface (or a sound HAT)
-and a screen, ideally a touch screen (a mouse works too).
+## User guide
 
-1. Download `openrig-os-<version>-rpi5.img.xz`.
-2. Write it to the card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
-   (*Choose OS* → *Use custom*, no OS customisation: the image ignores it),
-   [balenaEtcher](https://etcher.balena.io), or:
-   ```bash
-   xz -dc openrig-os-<version>-rpi5.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
-   ```
-3. Plug the audio interface, insert the card and power on: it boots
-   straight into OpenRig. The first boot creates the data partition over
-   the rest of the card, so it takes a little longer.
-4. Settings → Wi-Fi to join a network (needed for TONE3000 and updates).
-   The first USB interface is used; to pick another one, or change the
-   buffer, edit `pedalboard.txt` on the card's first partition (readable
-   from any computer, see [docs/OS.md](docs/OS.md#settings)).
+| | |
+|---|---|
+| **Getting started** | [Hardware](https://openrig.eu/docs/getting-started/hardware/) · [Raspberry Pi 5](https://openrig.eu/docs/getting-started/raspberry-pi/) · [Mini PC](https://openrig.eu/docs/getting-started/mini-pc/) · [First start](https://openrig.eu/docs/getting-started/first-start/) |
+| **Playing** | [Tour](https://openrig.eu/docs/using/tour/) · [Rack](https://openrig.eu/docs/using/rack/) · [Block editor](https://openrig.eu/docs/using/editor/) · [Neural blocks](https://openrig.eu/docs/using/neural-blocks/) · [TONE3000](https://openrig.eu/docs/using/tone3000/) · [Presets, scenes and setlists](https://openrig.eu/docs/using/presets/) · [Live](https://openrig.eu/docs/using/live/) · [Tuner and looper](https://openrig.eu/docs/using/tuner-looper/) · [MIDI](https://openrig.eu/docs/using/midi/) |
+| **Setting up** | [Settings](https://openrig.eu/docs/setup/settings/) · [Updates](https://openrig.eu/docs/setup/updates/) · [Footswitches](https://openrig.eu/docs/setup/footswitches/) · [LV2 plugins](https://openrig.eu/docs/setup/lv2/) · [pedalboard.txt](https://openrig.eu/docs/setup/pedalboard-txt/) · [Performance](https://openrig.eu/docs/setup/performance/) |
+| **Help** | [Troubleshooting](https://openrig.eu/docs/help/troubleshooting/) · [SSH access](https://openrig.eu/docs/help/ssh/) · [FAQ](https://openrig.eu/docs/help/faq/) |
 
-### x86_64 mini PC
+The guide is built from [Siryu6/openrig-site](https://github.com/Siryu6/openrig-site):
+fixes are welcome there.
 
-Any UEFI x86_64 PC (Intel N100, Lenovo Tiny…) with Intel graphics (the
-image has no AMD GPU driver).
-
-1. Download `openrig-os-<version>-x86_64.img.xz`.
-2. Write it the same way to a USB stick or an SSD (the whole disk is
-   used: it erases it).
-3. In the firmware setup, disable Secure Boot and boot from that disk.
-
-Then as on the Pi. SSH access, `pedalboard.txt` and the details of the
-image are in [docs/OS.md](docs/OS.md).
-
-### Desktop Linux
-
-To try it without the image: `openrig-<version>-linux-x86_64.tar.gz` (or
-`aarch64`) holds the app. It needs JACK and lilv
-(`apt install jackd2 liblilv-0-0`); start JACK, then `./pedalboard`. See
-[Run](#run).
-
-### Updates
-
-On the pedalboard, Settings → Updates → **Check for updates**, then
-**Install**. When the new release runs on the same system, only the app is
-updated and restarts; when it needs a new system, the whole system is
-installed next to the running one and the pedalboard restarts on it,
-falling back to the previous one if it does not start. Presets, models and
-settings are kept. See [docs/OS.md](docs/OS.md#updates).
-
-## Build
+## Build from source
 
 Dependencies (Debian / Raspberry Pi OS):
 
@@ -362,7 +231,7 @@ third_party/NeuralAudio  Submodule: NAM Core + RTNeural
 third_party/lilv, i-slint-backend-linuxkms   Patched crates (see their PATCHED.md)
 ui/                      Slint UI (app.slint, types.slint, pages/, components/, theme.slint)
 os/                      Buildroot external tree: Pi 5 / x86_64 images, RAUC updates, init scripts
-docs/                    OS image, live (scenes, setlists, tempo), MIDI, neural amp models (NAM)
+docs/                    Features, OS image, live (scenes, setlists, tempo), MIDI, neural amp models (NAM)
 ```
 
 ## Architecture
@@ -381,13 +250,15 @@ Three threads share the chain:
   `try_lock` only, and atomics for the DSP meter. A new chain is crossfaded in;
   the old one is dropped off the audio thread.
 
-## Docs
+## Technical docs
 
-- [docs/OS.md](docs/OS.md): the pedalboard OS image (Raspberry Pi 5, x86_64
-  mini PC): build, flash, settings, SSH, storage, boot logo, A/B updates
+- [docs/FEATURES.md](docs/FEATURES.md): every feature in technical detail
+- [docs/OS.md](docs/OS.md): the OS image (Raspberry Pi 5, x86_64 mini PC): build, flash,
+  settings, SSH, storage, boot logo, A/B updates
 - [docs/SCENES.md](docs/SCENES.md): scenes, setlists, footswitch modes, tempo and tails
 - [docs/MIDI.md](docs/MIDI.md): the MIDI map, learn and ranges, clock, MIDI to plugins
-- [docs/NEURAL_MODELS.md](docs/NEURAL_MODELS.md): the Amp / Amp + Cab / Pedal / Cabinet / Space blocks, Tone3000, roadmap
+- [docs/NEURAL_MODELS.md](docs/NEURAL_MODELS.md): the Amp / Amp + Cab / Pedal / Cabinet /
+  Space blocks, TONE3000, roadmap
 - [PROJECT_STATUS.md](PROJECT_STATUS.md): what works, what is left
 
 ## License
