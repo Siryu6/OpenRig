@@ -8,6 +8,7 @@
 #   /data/ssh         root's authorized_keys (copied from the boot partition)
 #   /data/dropbear    SSH host keys
 #   /data/update      system update state (see pedalboard-update)
+#   /data/app         app updates (see pedalboard-update)
 #   /data/rauc        RAUC state (data-directory in /etc/rauc/system.conf)
 # The second system slot (for updates) and the data partition are created
 # on first boot, from the rest of the disk (/etc/pedalboard/partitions).

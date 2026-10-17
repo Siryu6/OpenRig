@@ -181,14 +181,12 @@ jobs:
             -q ".[] | select(.key != \"$CCACHE_KEY\") | .id" |
             xargs -r -n1 gh cache delete -R "$GITHUB_REPOSITORY"
       - name: Package
+        # Image, system and app updates, and the .json "Check for updates"
+        # reads (docs/OS.md, "Updates")
         run: |
-          images=os/output/$BOARD/images
+          os/release-assets.sh "$BOARD" "${TAG#v}" assets
           name="openrig-os-${TAG#v}-$BOARD"
-          case $BOARD in
-            rpi5) image=$images/sdcard.img ;;
-            *) image=$images/disk.img ;;
-          esac
-          xz -T0 -6 -c "$image" >"$name.img.xz"
-          cp "$images/update.raucb" "$name.raucb"
-          sha256sum "$name.img.xz" "$name.raucb" >"$name.sha256"
-          gh release upload "$TAG" "$name.img.xz" "$name.raucb" "$name.sha256" --clobber
+          # The .json last: a pedalboard reading it expects the bundles
+          gh release upload "$TAG" assets/"$name".img.xz assets/"$name".raucb \
+            assets/"$name"-app.raucb assets/"$name".sha256 --clobber
+          gh release upload "$TAG" assets/"$name".json --clobber

@@ -8,15 +8,33 @@
 #
 #   pedalboard-update install <file.raucb>  write an update to the other slot
 #   pedalboard-update reboot                restart, trying the update once
-#   pedalboard-update status                slots, version, last update
+#   pedalboard-update install-app <file.raucb>
+#                                           install an app update (app.raucb)
+#                                           on the data partition, tried at
+#                                           the next start of the app
+#   pedalboard-update status                slots, versions, last update
 #   pedalboard-update check                 at boot (S95update): keep the
 #                                           update tried, or report it failed
 #   pedalboard-update keep                  keep the update tried now (the UI
 #                                           asked to power off or restart:
 #                                           it runs)
+#   pedalboard-update app-start             (UI launcher) the app binary to run
+#   pedalboard-update app-check <file>      (UI launcher) the app tried has
+#                                           run UI_UP_SECS: kept if it wrote
+#                                           its alive file again, else stopped
+#   pedalboard-update app-exit <status> [<power request>]
+#                                           (UI launcher) the app quit: see
+#                                           app_exit
 #
 # RAUC calls /usr/libexec/pedalboard/rauc-backend for the boot slots; the
 # board's /usr/libexec/pedalboard/boot-slots switches them.
+#
+# An app update only replaces the app, for a system with the same OS_ID
+# (/etc/pedalboard-release): /data/app/<version> holds its binary, and the
+# files current, next (installed) and trying (being tried) in /data/app hold
+# a version. It runs only on the system it was installed on (same VERSION):
+# after a system update, the system's /usr/bin/pedalboard runs, and the app
+# update is forgotten once the new system is kept.
 
 SLOTS=/usr/libexec/pedalboard/boot-slots
 DIR=/data/update
@@ -26,6 +44,10 @@ STATE=$DIR/state
 # how long to wait for that
 UI_UP_SECS=30
 UI_WAIT_SECS=240
+APPS=/data/app
+# An app tried that quits by itself (status 0: the JACK server stopped or
+# started) is tried again at most this many times
+APP_RETRIES=3
 
 log() {
 	echo "$*"
@@ -116,6 +138,7 @@ keep() {
 	rauc status mark-good >/dev/null &&
 		set_state updated "$(booted)" &&
 		log "update kept: $(version)"
+	app_forget
 }
 
 check() {
@@ -139,8 +162,190 @@ check() {
 	esac
 }
 
+release() {
+	sed -n "s/^$1=\"\\(.*\\)\"/\\1/p" /etc/pedalboard-release
+}
+
 version() {
-	sed -n 's/^VERSION="\(.*\)"/\1/p' /etc/pedalboard-release
+	release VERSION
+}
+
+# Write a file of /data/app in one step
+app_set() {
+	echo "$2" >"$APPS/$1.tmp" && sync && mv "$APPS/$1.tmp" "$APPS/$1" && sync
+}
+
+app_get() {
+	cat "$APPS/$1" 2>/dev/null
+}
+
+# True if version $1 in /data/app runs on this system: built for its OS_ID
+# and installed on it (not on an older system with the same OS_ID: the
+# system's own app is newer)
+app_usable() {
+	[ -n "$1" ] && [ -x "$APPS/$1/pedalboard" ] &&
+		[ "$(cat "$APPS/$1/os-id" 2>/dev/null)" = "$(release OS_ID)" ] &&
+		[ "$(cat "$APPS/$1/system" 2>/dev/null)" = "$(version)" ]
+}
+
+# The app running: an update tried or kept, else the system's
+app_version() {
+	v=$(app_get trying)
+	if app_usable "$v"; then
+		echo "$v (on trial)"
+		return
+	fi
+	v=$(app_get current)
+	if app_usable "$v"; then echo "$v"; else release APP_VERSION; fi
+}
+
+install_app() {
+	tmp=$APPS/.extract
+	bundle=/run/rauc/bundle
+	rm -rf "$tmp"
+	mkdir -p "$APPS"
+	umount "$bundle" 2>/dev/null
+	# Checks the signature, like `rauc install`, and mounts the bundle with
+	# dm-verity (the image's unsquashfs cannot read it: no `rauc extract`)
+	if ! rauc mount "$1" >/dev/null; then
+		echo "Not a valid update signed for this pedalboard" >&2
+		return 1
+	fi
+	mkdir -p "$tmp"
+	if [ ! -f "$bundle/app.tar" ] || ! mkdir "$tmp/app" ||
+		! tar -C "$tmp/app" -xf "$bundle/app.tar"; then
+		umount "$bundle"
+		rm -rf "$tmp"
+		echo "Not an app update" >&2
+		return 1
+	fi
+	umount "$bundle"
+	v=$(cat "$tmp/app/version")
+	id=$(cat "$tmp/app/os-id")
+	case "$v" in
+	"" | *[!0-9A-Za-z.+-]* | .*)
+		rm -rf "$tmp"
+		echo "Invalid app version: $v" >&2
+		return 1
+		;;
+	esac
+	if [ "$id" != "$(release OS_ID)" ]; then
+		rm -rf "$tmp"
+		echo "This app $v is for another system: install the full update" >&2
+		return 1
+	fi
+	version >"$tmp/app/system" || return 1
+	# Run by the pedalboard user, whatever the umask of the caller
+	chmod 755 "$tmp/app" "$tmp/app/pedalboard" &&
+		chmod 644 "$tmp/app/version" "$tmp/app/os-id" "$tmp/app/system" || return 1
+	rm -rf "${APPS:?}/$v"
+	# $tmp goes last: app_clean does nothing while it exists
+	mv "$tmp/app" "$APPS/$v" && app_set next "$v" && rm -f "${APPS:?}/retries" &&
+		rm -rf "$tmp" || return 1
+	log "app $v installed: it runs at the next start of the app"
+}
+
+app_start() {
+	# A trial that never ended (the app hung and the power was cut, or a
+	# power cut in its first seconds): back to the previous app
+	v=$(app_get trying)
+	if [ -n "$v" ]; then
+		rm -f "${APPS:?}/trying" "${APPS:?}/retries"
+		sync
+		log "the app $v did not run $UI_UP_SECS s: back to the previous app" >&2
+	fi
+	# An update installed on another system (before a system update being
+	# tried) waits: it runs again if that system comes back
+	v=$(app_get next)
+	if app_usable "$v"; then
+		mv "$APPS/next" "$APPS/trying"
+		sync
+	fi
+	for f in trying current; do
+		v=$(app_get "$f")
+		[ -n "$v" ] || continue
+		if app_usable "$v"; then
+			# stdout is the path to run
+			[ "$f" = trying ] && log "trying app $v" >&2
+			echo "$APPS/$v/pedalboard"
+			return
+		fi
+		log "app $v was installed on another system: the system's app runs" >&2
+	done
+	echo /usr/bin/pedalboard
+}
+
+app_keep() {
+	v=$(app_get trying)
+	[ -n "$v" ] || return 0
+	mv "$APPS/trying" "$APPS/current" && rm -f "${APPS:?}/retries" && sync
+	log "app update kept: $v"
+}
+
+app_undo() {
+	rm -f "${APPS:?}/trying" "${APPS:?}/retries"
+	sync
+	log "the app $1 does not run ($2): back to the previous app"
+}
+
+# The app tried has run UI_UP_SECS: it runs if it wrote its alive file $1
+# again (removed a few seconds before), else it hangs and is stopped
+app_check() {
+	v=$(app_get trying)
+	[ -n "$v" ] || return 0
+	if [ -e "$1" ]; then
+		app_keep
+	else
+		log "the app $v does not respond: stopping it"
+		# It quits with an error status: app_exit undoes the update
+		# shellcheck disable=SC2046
+		kill -KILL $(pidof pedalboard) 2>/dev/null
+	fi
+}
+
+# The app quit. One tried that app_check kept is already current. Before
+# that, it is kept if the user asked to power off or restart from it ($2: it
+# runs), tried again if it quit by itself (status 0: the JACK server stopped
+# or started), at most APP_RETRIES times, else undone.
+app_exit() {
+	v=$(app_get trying)
+	if [ -n "$v" ]; then
+		retries=$(cat "$APPS/retries" 2>/dev/null)
+		retries=${retries:-0}
+		if [ -n "$2" ]; then
+			app_keep
+		elif [ "$1" != 0 ]; then
+			app_undo "$v" "status $1"
+		elif [ "$retries" -ge "$APP_RETRIES" ]; then
+			app_undo "$v" "it quit $retries times"
+		else
+			echo $((retries + 1)) >"$APPS/retries" &&
+				mv "$APPS/trying" "$APPS/next" && sync
+		fi
+	fi
+	app_clean
+}
+
+# A system kept: the app updates installed on the previous one never run
+app_forget() {
+	for f in current next; do
+		v=$(app_get "$f")
+		[ -z "$v" ] || app_usable "$v" || rm -f "${APPS:?}/${f:?}"
+	done
+	sync
+	app_clean
+}
+
+# Delete the versions no longer used (not while an install is under way)
+app_clean() {
+	[ ! -e "$APPS/.extract" ] || return 0
+	keep_versions=" $(app_get current) $(app_get next) $(app_get trying) "
+	for d in "$APPS"/*/; do
+		[ -d "$d" ] || continue
+		v=$(basename "$d")
+		case "$keep_versions" in *" $v "*) ;; *) rm -rf "$d" ;; esac
+	done
+	sync
 }
 
 case "$1" in
@@ -170,19 +375,30 @@ reboot)
 	*) exec reboot ;;
 	esac
 	;;
+install-app)
+	[ -n "$2" ] || {
+		echo "usage: $0 install-app <app.raucb>" >&2
+		exit 2
+	}
+	install_app "$2"
+	;;
 status)
-	echo "running:  slot $(booted), $(version)"
+	echo "running:  slot $(booted), $(version), app $(app_version)"
 	echo "default:  slot $("$SLOTS" primary)"
 	echo "update:   $(state || true)"
+	[ -z "$(app_get next)" ] || echo "app update: $(app_get next), at the next start of the app"
 	;;
 check) check ;;
 keep) keep ;;
+app-start) app_start ;;
+app-check) app_check "$2" ;;
+app-exit) app_exit "$2" "$3" ;;
 rauc-backend)
 	shift
 	rauc_backend "$@"
 	;;
 *)
-	sed -n '9,16s/^# \{0,1\}//p' "$0" >&2
+	sed -n '9,27s/^# \{0,1\}//p' "$0" >&2
 	exit 2
 	;;
 esac

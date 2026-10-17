@@ -1,6 +1,7 @@
 // Library exports for pedalboard crate
 
 pub mod audio;
+pub mod hardware;
 pub mod midi;
 pub mod monitor;
 pub mod plugins;
@@ -9,4 +10,6 @@ pub mod state;
 #[cfg(feature = "tone3000")]
 pub mod tone3000;
 pub mod ui;
+#[cfg(feature = "update")]
+pub mod update;
 pub mod wifi;

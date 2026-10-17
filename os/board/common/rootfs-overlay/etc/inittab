@@ -17,6 +17,8 @@ null::sysinit:/bin/ln -sf /proc/self/fd/2 /dev/stderr
 # Audio server and pedalboard UI, restarted whenever they exit
 ::respawn:/usr/libexec/pedalboard/jackd
 ::respawn:/usr/libexec/pedalboard/ui
+# Installs the updates downloaded from Settings (as root, for the UI)
+::respawn:/usr/libexec/pedalboard/updater
 
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/etc/init.d/rcK

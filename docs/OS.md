@@ -72,7 +72,9 @@ the display size. The copy's JACK buffer is
 
 ## Flash
 
-Write the image to a micro SD card (Pi) or a USB stick / SSD (mini PC) with
+Release images are on the [releases page](https://github.com/Siryu6/OpenRig/releases)
+(`openrig-os-<version>-rpi5.img.xz`, `…-x86_64.img.xz`; the tools below
+take them compressed). Write the image to a micro SD card (Pi) or a USB stick / SSD (mini PC) with
 [Raspberry Pi Imager](https://www.raspberrypi.com/software/) ("Use custom"),
 [balenaEtcher](https://etcher.balena.io), or `dd`:
 
@@ -123,7 +125,7 @@ System B and the data partition are created on first boot.
 `/data` holds what changes: `/data/pedalboard` (presets, setlists, session,
 NAM models, IRs, TONE3000 sign-in, LV2 bundles in `lv2/`), the Wi-Fi networks,
 root's `authorized_keys` (`/data/ssh`), the SSH host keys, the update state
-(`/data/update`, `/data/rauc`) and `/var/lib`. It is checked at every boot. When it cannot
+(`/data/update`, `/data/rauc`), app updates (`/data/app`) and `/var/lib`. It is checked at every boot. When it cannot
 be mounted, the pedalboard runs on a RAM disk (logged): nothing is kept.
 
 ## Start-up and services
@@ -196,21 +198,101 @@ to the user: `chown -R pedalboard:pedalboard /data/pedalboard`.
 
 ## Updates
 
-An update is a signed file, `update.raucb`, made by every build. It
-replaces the whole system (kernel, libraries, app) and keeps `/data`
-(presets, setlists, models, Wi-Fi networks) and the first partition
-(`pedalboard.txt`, `authorized_keys`).
+Settings → Updates → **Check for updates** compares the app with the
+latest [release](https://github.com/Siryu6/OpenRig/releases) and offers
+what to install, over Wi-Fi or Ethernet:
+
+- **App update**: when the release was built on the same system as the
+  one running, only the app is replaced (a few MB, the app restarts in a
+  few seconds).
+- **System update**: when the release needs a new system (kernel,
+  libraries, drivers, scripts…), the whole system is installed on the
+  other slot and the pedalboard restarts on it.
+
+Both keep `/data` (presets, setlists, models, Wi-Fi networks) and the first
+partition (`pedalboard.txt`, `authorized_keys`). Nothing is checked or
+downloaded without the button.
+
+### App or system: `OS_ID`
+
+Each image records in `/etc/pedalboard-release` its version, the app's
+(`APP_VERSION`), its board and `OS_ID`: a fingerprint of everything in the
+system but the app (Buildroot's version, the board's defconfig, and every
+file of `os/board`, `os/package` but `package/pedalboard/pedalboard.mk`,
+and the external tree; computed by `board/common/post-build.sh`). Two
+releases with the same `OS_ID` have the same system, so the app alone can
+go from one to the other. A change in the system, including a library the
+app's package selects (`package/pedalboard/Config.in`), changes the
+`OS_ID` by itself: the next release then requires a system update, with
+nothing to remember.
+
+Each build makes two signed bundles in `images/` (`board/common/make-bundle.sh`):
+`update.raucb`, the whole system, and `app.raucb`, the app alone with the
+`OS_ID` it was built for. A release publishes per board
+(`os/release-assets.sh`):
+
+| File | |
+|---|---|
+| `openrig-os-<version>-<board>.img.xz` | Image to [flash](#flash) |
+| `openrig-os-<version>-<board>.raucb` | System update |
+| `openrig-os-<version>-<board>-app.raucb` | App update |
+| `openrig-os-<version>-<board>.json` | What the pedalboard reads: version, board, `OS_ID`, and the two bundles (file, size, SHA-256) |
+| `openrig-os-<version>-<board>.sha256` | Checksums |
+
+The pedalboard picks the app update when the `.json`'s `OS_ID` is its own,
+else the system update. Until the `.json` of its board is published (the
+release images take hours to build), it reports the release as being
+prepared.
+
+### How it installs
+
+The app runs as the `pedalboard` user and cannot install anything: it
+downloads the bundle into `/data/pedalboard/update`, checks its SHA-256,
+then asks `/usr/libexec/pedalboard/updater` (started by init, as root)
+through the FIFO `/run/pedalboard/update/request`. The updater copies the
+bundle out of the app's reach and runs `pedalboard-update`, which checks
+its signature with RAUC like any update:
+
+- a **system update** (`pedalboard-update install`) is written to the
+  other slot and tried at the next restart (below);
+- an **app update** (`pedalboard-update install-app`) is extracted to
+  `/data/app/<version>`, refused if its `OS_ID` is not the system's, and
+  tried at the next start of the app: the UI launcher
+  (`/usr/libexec/pedalboard/ui`) runs it instead of `/usr/bin/pedalboard`.
+
+The app tried is kept once it has run 30 seconds and still responds (it
+writes `/run/pedalboard/app/alive` again every second; the launcher removes
+it at 25 s and looks for it at 30 s), or when it is switched off or
+restarted from its menu before. It is undone, and the previous app runs
+again, when it crashes, hangs (the launcher stops it at 30 s), or the power
+is cut before it was kept. When it quits by itself before (the JACK server
+stopped or started), it is tried again, up to three times.
+
+An app update runs only on the system it was installed on. After a system
+update, the system's own app runs (it is at least as new); the app update
+is used again if the board goes back to the previous system, and deleted
+once the new one is kept.
+
+### By hand
+
+The same bundles install over SSH, e.g. from a release or a local build:
 
 ```bash
 scp -O os/output/rpi5/images/update.raucb root@192.168.1.42:/data/
 ssh root@192.168.1.42
 pedalboard-update install /data/update.raucb   # written to the slot not running
 pedalboard-update reboot                       # start it, once
-pedalboard-update status
+pedalboard-update status                       # slots, versions, last update
 rm /data/update.raucb
 ```
 
-The update is written to the other slot while the pedalboard keeps
+and `pedalboard-update install-app /data/app.raucb` for an app update,
+used at the next start of the app. A system installed by hand replaces any
+app update, like one installed from Settings.
+
+### Trial and rollback
+
+A system update is written to the other slot while the pedalboard keeps
 playing (about a minute), then tried once at the next reboot. If the
 pedalboard UI keeps running for 30 seconds on it, it becomes the default.
 If it does not (the system does not start, crashes, or the UI does not
@@ -221,6 +303,8 @@ Switching off or restarting from the menu during the trial keeps the
 update: the UI was running. The one-time start uses the firmware's tryboot flag
 on the Pi (set by `rpi-tryboot`, an image package) and GRUB's `grubenv` on
 x86_64.
+
+### Signing key
 
 Updates are checked with [RAUC](https://rauc.io): the board installs only
 bundles signed with the key of the build that made its image. That key is
@@ -234,7 +318,8 @@ The release images are built by GitHub Actions
 (`.github/workflows/build-release.yml`) with the key and certificate of the
 repository secrets `OS_UPDATE_KEY` and `OS_UPDATE_CERT` (the contents of
 `os/keys/key.pem` and `cert.pem`); without them the build stops rather
-than sign with a new key.
+than sign with a new key. An image built locally with another key only
+takes updates from GitHub after flashing a release image once.
 
 What an update does not change: the partitions, the Raspberry Pi
 EEPROM bootloader, and on x86_64 GRUB and `grub.cfg` (on the EFI
