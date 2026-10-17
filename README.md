@@ -238,8 +238,9 @@ Each [release](https://github.com/Siryu6/OpenRig/releases) ships:
 Versions follow [semantic versioning](https://semver.org) and come from
 [conventional commits](https://www.conventionalcommits.org) (`feat:`,
 `fix:`, `feat!:`…). [release-plz](https://release-plz.dev) keeps a release
-PR up to date with the next version and `CHANGELOG.md`. Nothing is released
-until it is merged: merging it tags the release, and
+PR up to date with the next version and `CHANGELOG.md`; only `feat:`, `fix:`
+and `perf:` commits open one (`ci:`, `docs:`, `chore:`… wait for the next).
+Nothing is released until it is merged: merging it tags the release, and
 `.github/workflows/build-release.yml` attaches the binaries and images to it.
 That workflow also runs for a `vX.Y.Z` tag pushed by hand, and can be run by
 hand to build a release again. The OS images take hours on GitHub's

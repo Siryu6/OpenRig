@@ -13,3 +13,6 @@ semver_check = false
 # feat: bumps the minor version even before 1.0 (0.1.0 -> 0.2.0)
 features_always_increment_minor = true
 pr_labels = ["release"]
+# Only these commits open a release PR: ci:, docs:, chore:, test:… alone
+# wait for the next one
+release_commits = "^(feat|fix|perf)(\\(.*\\))?!?:"
