@@ -17,8 +17,8 @@ rm -f "$TARGET"/usr/bin/diagtool "$TARGET"/usr/bin/llvm-spirv \
 	"$TARGET"/usr/bin/llvm-* "$TARGET"/usr/bin/llc "$TARGET"/usr/bin/opt
 
 # Nothing left may need what was removed
-missing=$(find "$TARGET/usr/lib" "$TARGET/usr/bin" "$TARGET/lib" -type f 2>/dev/null |
-	xargs -r readelf -d 2>/dev/null |
+missing=$(find "$TARGET/usr/lib" "$TARGET/usr/bin" "$TARGET/lib" -type f \
+	-exec readelf -d {} + 2>/dev/null |
 	sed -n 's/.*(NEEDED).*\[\(libclang[^]]*\|libLLVMSPIRV[^]]*\)\].*/\1/p' | sort -u)
 if [ -n "$missing" ]; then
 	echo "post-build: still needed: $missing" >&2

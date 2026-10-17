@@ -17,6 +17,8 @@
 [ "$1" = start ] || exit 0
 
 DEFAULTS=/etc/pedalboard/defaults
+# The board's (board/<board>/rootfs-overlay)
+# shellcheck source=../../../../rpi5/rootfs-overlay/etc/pedalboard/partitions
 . /etc/pedalboard/partitions
 CONFIG=/run/pedalboard/config
 
@@ -103,6 +105,7 @@ root_disk
 mount -t vfat -o ro,noexec,nosuid,nodev "/dev/${prefix}1" /boot ||
 	log "no boot partition on /dev/$disk"
 read_config
+# shellcheck source=../pedalboard/defaults
 . "$CONFIG"
 
 if ! mount_data; then

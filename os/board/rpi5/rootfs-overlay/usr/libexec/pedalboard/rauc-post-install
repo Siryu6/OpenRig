@@ -14,10 +14,13 @@ BOOT_B=5eda1b0a-b007-4000-8000-00000000000b
 
 new_boot=
 slot=
+class=
+device=
+bootname=
 for i in $RAUC_TARGET_SLOTS; do
-	eval class=\$RAUC_SLOT_CLASS_$i
-	eval device=\$RAUC_SLOT_DEVICE_$i
-	eval bootname=\$RAUC_SLOT_BOOTNAME_$i
+	eval "class=\$RAUC_SLOT_CLASS_$i"
+	eval "device=\$RAUC_SLOT_DEVICE_$i"
+	eval "bootname=\$RAUC_SLOT_BOOTNAME_$i"
 	case "$class" in
 	boot) new_boot=$device ;;
 	rootfs) slot=$bootname ;;
@@ -39,6 +42,8 @@ mount -t vfat "$new_boot" "$new"
 
 # Arguments of the running cmdline.txt that its image did not have
 extra=
+# One line of space-separated arguments
+# shellcheck disable=SC2013
 for arg in $(cat "$old/cmdline.txt"); do
 	case "$arg" in root=* | rauc.slot=*) continue ;; esac
 	case " $(cat "$old/cmdline.base" 2>/dev/null) " in

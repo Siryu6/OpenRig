@@ -26,6 +26,15 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
+  scripts:
+    name: Scripts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      # The OS image's shell scripts (BusyBox sh): every file under os/
+      # starting with #!/bin/sh. Settings in .shellcheckrc
+      - run: git grep -lz '^#!/bin/sh' -- os | xargs -0 shellcheck
+
   clippy:
     name: Clippy
     runs-on: ubuntu-24.04

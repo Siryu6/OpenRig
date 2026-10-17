@@ -3,6 +3,8 @@
 # JACK server on the audio interface set in pedalboard.txt. Run by init and
 # started again when it exits (interface unplugged, crash).
 
+# The settings, with the same names as the defaults
+# shellcheck source=../../../etc/pedalboard/defaults
 . /run/pedalboard/config 2>/dev/null || . /etc/pedalboard/defaults
 
 # ALSA card for "auto": the first one that is not an HDMI output

@@ -12,6 +12,7 @@ mkdir -p "$TARGET/boot" "$TARGET/data" "$TARGET/root/.ssh" \
 	"$TARGET/etc/NetworkManager/system-connections"
 
 # Updates are accepted when signed with this build's key (update-keys.sh)
+# shellcheck source=update-keys.sh
 . "$OS_DIR/board/common/update-keys.sh"
 install -D -m 0644 "$UPDATE_CERT" "$TARGET/etc/rauc/keyring.pem"
 

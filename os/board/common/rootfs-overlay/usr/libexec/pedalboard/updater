@@ -57,7 +57,7 @@ while :; do
 	status "$id" installing
 	logger -t pedalboard-update "installing the $kind update $file"
 	rm -rf "$INCOMING"
-	mkdir -p -m 700 "$INCOMING"
+	mkdir -p "${INCOMING%/*}" && mkdir -m 700 "$INCOMING"
 	if ! as_app test -f "$DOWNLOADS/$file"; then
 		status "$id" error "Download not found"
 	elif ! as_app cat "$DOWNLOADS/$file" >"$INCOMING/$file" 2>/dev/null; then
