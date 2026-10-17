@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/Siryu6/OpenRig/compare/v0.1.0...v0.2.0) - 2026-10-17
+
+### Added
+
+- in-app updates and hardware settings
+
+### Other
+
+- open release PRs only for feat, fix and perf commits
+- save the compiler cache of the OS image builds
+
 ## [0.1.0](https://github.com/Siryu6/OpenRig/releases/tag/v0.1.0) - 2026-10-16
 
 ### Added
