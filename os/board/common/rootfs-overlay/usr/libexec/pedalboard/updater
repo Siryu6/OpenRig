@@ -1,0 +1,74 @@
+#!/bin/sh
+#
+# Installs the updates the app downloaded ("Check for updates" in Settings).
+# Run by init as root; the app runs as the pedalboard user and asks through
+# a FIFO, one line per update:
+#
+#   <id> system <file>   the whole system (update.raucb), on the other slot
+#   <id> app <file>      the app alone (app.raucb), on the data partition
+#
+# <file> is a file name in the app's download directory. The progress is in
+# $DIR/status: "<id> installing", "<id> done <kind>" or "<id> error <message>".
+# See pedalboard-update and docs/OS.md, "Updates".
+
+DIR=/run/pedalboard/update
+DOWNLOADS=/data/pedalboard/update
+# Root's copy: RAUC refuses a bundle other users can still change
+INCOMING=/data/update/incoming
+
+# The download directory belongs to the app's user, who could replace it
+# with a link: its files are read and deleted with that user's rights only
+as_app() {
+	/usr/bin/setpriv --reuid=pedalboard --regid=pedalboard --clear-groups "$@"
+}
+
+status() {
+	echo "$*" >"$DIR/status.tmp" && mv -f "$DIR/status.tmp" "$DIR/status"
+}
+
+install -d -m 755 "$DIR"
+rm -f "$DIR/request"
+mkfifo -m 600 "$DIR/request" && chown pedalboard:pedalboard "$DIR/request" || exit 1
+status - idle
+
+while :; do
+	# Waits for the app to write a request
+	read -r id kind file <"$DIR/request" || continue
+	case "$id" in "" | *[!0-9A-Za-z_-]*) continue ;; esac
+	case "$kind" in
+	system) command=install ;;
+	app) command=install-app ;;
+	*)
+		status "$id" error "Unknown update kind: $kind"
+		continue
+		;;
+	esac
+	# A plain name: letters, digits, ".", "_", "-", ending in .raucb
+	case "$file" in
+	.* | *[!0-9A-Za-z._-]*) file= ;;
+	?*.raucb) ;;
+	*) file= ;;
+	esac
+	if [ -z "$file" ]; then
+		status "$id" error "Invalid file name"
+		continue
+	fi
+
+	status "$id" installing
+	logger -t pedalboard-update "installing the $kind update $file"
+	rm -rf "$INCOMING"
+	mkdir -p -m 700 "$INCOMING"
+	if ! as_app test -f "$DOWNLOADS/$file"; then
+		status "$id" error "Download not found"
+	elif ! as_app cat "$DOWNLOADS/$file" >"$INCOMING/$file" 2>/dev/null; then
+		status "$id" error "Not enough space on the data partition"
+	elif out=$(nice /usr/sbin/pedalboard-update "$command" "$INCOMING/$file" 2>&1); then
+		status "$id" "done" "$kind"
+	else
+		logger -t pedalboard-update "$out"
+		status "$id" error "$(echo "$out" | grep . | tail -1)"
+	fi
+	rm -rf "$INCOMING"
+	as_app rm -f "${DOWNLOADS:?}/${file:?}"
+	sync
+done

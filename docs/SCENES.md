@@ -67,8 +67,9 @@ Assignments are saved in the preset.
 Switches act when pressed, not on release, so a scene change lands on the
 beat.
 
-**Tap switch**: with two switches or more, the last physical switch (FS 4
-with the four default GPIOs) taps the tempo instead by default. Held for
+**Tap switch**: with two switches or more (Settings → Hardware), the last
+physical switch (FS 4 with the four default GPIOs) taps the tempo instead
+by default. Held for
 0.8 s it opens the tuner; pressing any switch then closes it and goes back
 to the previous page. It can be
 turned off in Settings, which gives the switch back to the mode.

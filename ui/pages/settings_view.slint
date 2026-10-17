@@ -4,6 +4,7 @@ import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 import { LogoMark, LogoText } from "../components/logo.slint";
 import { WifiNetwork } from "../types.slint";
 import { Tone3000Logo } from "../components/tone3000_brand.slint";
+import { Features } from "../features.slint";
 
 // Signal strength as four bars
 component SignalBars inherits Rectangle {
@@ -21,7 +22,26 @@ component SignalBars inherits Rectangle {
     }
 }
 
-// Settings page: Wi-Fi, and TONE3000 Connect, which links a tone3000.com
+// A setting: its label on the left, its control on the right
+component SettingRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <color> label-color: Theme.text-secondary;
+    spacing: Theme.space-md;
+    VerticalLayout {
+        alignment: center;
+        horizontal-stretch: 1;
+        Text {
+            text: root.label;
+            color: root.label-color;
+            font-size: Theme.font-caption;
+            font-weight: Theme.weight-bold;
+            letter-spacing: 0.8px;
+        }
+    }
+    @children
+}
+
+// Settings page: hardware, MIDI, Wi-Fi, and TONE3000 Connect, which links a tone3000.com
 // account with the OAuth device flow (code + QR on screen, approval on a phone).
 export component SettingsView inherits Rectangle {
     // Wi-Fi
@@ -37,10 +57,21 @@ export component SettingsView inherits Rectangle {
     callback wifi-disconnect();
     callback wifi-forget(string);
 
-    // Footswitches
+    // Hardware: footswitches (and their GPIOs), encoder
     in property <int> footswitch-count: 4;
     in property <bool> tap-switch: true;
+    in property <int> footswitch-down-mask: 0;
+    in property <[int]> hardware-footswitch-pins: [];
+    in property <bool> hardware-encoder: false;
+    in property <int> hardware-encoder-a: 5;
+    in property <int> hardware-encoder-b: 6;
+    in property <int> hardware-encoder-button: 13;  // -1: none
+    in property <int> hardware-encoder-steps: 4;
+    in property <string> hardware-message: "";
     callback tap-switch-changed(bool);
+    callback hardware-step(string, int, int);
+    callback hardware-set-encoder(bool);
+    callback hardware-set-encoder-button(bool);
 
     // MIDI
     in property <bool> midi-available: false;
@@ -64,6 +95,21 @@ export component SettingsView inherits Rectangle {
     callback t3k-connect(string);                    // publishable key
     callback t3k-cancel();
     callback t3k-disconnect();
+
+    // Updates (Features.update: built with the update feature)
+    // "idle" | "checking" | "up-to-date" | "available" (not installable here)
+    // | "preparing" (files still building) | "ready" | "downloading"
+    // | "installing" | "installed" | "error"
+    in property <string> update-status: "idle";
+    in property <string> update-current: "";         // running versions
+    in property <string> update-version: "";         // latest release
+    in property <string> update-kind: "";            // "app" | "system"
+    in property <string> update-size: "";            // "15 MB"
+    in property <float> update-progress: 0;          // download, 0..1
+    in property <string> update-message: "";         // error
+    callback update-check();
+    callback update-install();
+    callback update-restart();
 
 
     private property <bool> editing-key: false;
@@ -92,43 +138,192 @@ export component SettingsView inherits Rectangle {
                 text: "SETTINGS";
             }
 
-            // ---------------------------------------------- Footswitches
+            // ------------------------------------------------- Hardware
             Card {
-                HorizontalLayout {
+                VerticalLayout {
                     padding: Theme.space-lg;
                     spacing: Theme.space-md;
-                    VerticalLayout {
-                        alignment: center;
-                        Icon {
-                            name: "footswitch";
-                            color: Theme.accent;
+
+                    HorizontalLayout {
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                name: "footswitch";
+                                color: Theme.accent;
+                            }
+                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: "Hardware";
+                                color: Theme.text-primary;
+                                font-size: Theme.font-title;
+                                font-weight: Theme.weight-semibold;
+                            }
+                            Text {
+                                text: Features.gpio ? "What is wired to the GPIO header: each input between its GPIO (BCM number) and ground. Changes apply at once."
+                                    : "Footswitches played from the keys 1–8 of a keyboard. MIDI footswitches work whatever the number.";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-small;
+                                wrap: word-wrap;
+                            }
                         }
                     }
-                    VerticalLayout {
-                        horizontal-stretch: 1;
-                        alignment: center;
-                        spacing: 2px;
-                        Text {
-                            text: "Tap tempo on FS " + root.footswitch-count;
-                            color: Theme.text-primary;
-                            font-size: Theme.font-title;
-                            font-weight: Theme.weight-semibold;
-                        }
-                        Text {
-                            text: "The last footswitch taps the tempo; hold it to open the tuner, press any switch to close it.";
-                            color: Theme.text-secondary;
-                            font-size: Theme.font-small;
-                            wrap: word-wrap;
+
+                    SettingRow {
+                        label: "FOOTSWITCHES";
+                        Stepper {
+                            width: 180px;
+                            text: root.footswitch-count == 0 ? "None" : root.footswitch-count;
+                            can-decrement: root.footswitch-count > 0;
+                            can-increment: root.footswitch-count < 8;
+                            decrement => {
+                                root.hardware-step("footswitches", 0, -1);
+                            }
+                            increment => {
+                                root.hardware-step("footswitches", 0, 1);
+                            }
                         }
                     }
-                    VerticalLayout {
-                        alignment: center;
+
+                    // One row per switch, its LED lit while it is pressed
+                    if Features.gpio: VerticalLayout {
+                        spacing: Theme.space-sm;
+                        for pin[i] in root.hardware-footswitch-pins: SettingRow {
+                            label: "FS " + (i + 1);
+                            label-color: Theme.text-primary;
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    property <bool> down: Math.mod(Math.floor(root.footswitch-down-mask / Math.pow(2, i)), 2) == 1;
+                                    width: 10px;
+                                    height: 10px;
+                                    border-radius: 5px;
+                                    background: self.down ? Theme.accent : Theme.display;
+                                    border-width: 1px;
+                                    border-color: self.down ? Theme.accent : Theme.border-strong;
+                                }
+                            }
+                            Stepper {
+                                width: 180px;
+                                text: "GPIO " + pin;
+                                decrement => {
+                                    root.hardware-step("footswitch", i, -1);
+                                }
+                                increment => {
+                                    root.hardware-step("footswitch", i, 1);
+                                }
+                            }
+                        }
+                    }
+
+                    if root.footswitch-count >= 2: SettingRow {
+                        label: "TAP TEMPO ON FS " + root.footswitch-count;
                         Toggle {
                             checked: root.tap-switch;
                             toggled(on) => {
                                 root.tap-switch-changed(on);
                             }
                         }
+                    }
+                    if root.footswitch-count >= 2: Text {
+                        text: "The last footswitch taps the tempo; hold it to open the tuner, press any switch to close it.";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+
+                    if Features.gpio: SettingRow {
+                        label: "ROTARY ENCODER";
+                        Toggle {
+                            checked: root.hardware-encoder;
+                            toggled(on) => {
+                                root.hardware-set-encoder(on);
+                            }
+                        }
+                    }
+                    if Features.gpio && root.hardware-encoder: VerticalLayout {
+                        spacing: Theme.space-sm;
+                        SettingRow {
+                            label: "A";
+                            label-color: Theme.text-primary;
+                            Stepper {
+                                width: 180px;
+                                text: "GPIO " + root.hardware-encoder-a;
+                                decrement => {
+                                    root.hardware-step("encoder-a", 0, -1);
+                                }
+                                increment => {
+                                    root.hardware-step("encoder-a", 0, 1);
+                                }
+                            }
+                        }
+                        SettingRow {
+                            label: "B";
+                            label-color: Theme.text-primary;
+                            Stepper {
+                                width: 180px;
+                                text: "GPIO " + root.hardware-encoder-b;
+                                decrement => {
+                                    root.hardware-step("encoder-b", 0, -1);
+                                }
+                                increment => {
+                                    root.hardware-step("encoder-b", 0, 1);
+                                }
+                            }
+                        }
+                        SettingRow {
+                            label: "PUSH BUTTON";
+                            label-color: Theme.text-primary;
+                            Toggle {
+                                checked: root.hardware-encoder-button >= 0;
+                                toggled(on) => {
+                                    root.hardware-set-encoder-button(on);
+                                }
+                            }
+                            if root.hardware-encoder-button >= 0: Stepper {
+                                width: 180px;
+                                text: "GPIO " + root.hardware-encoder-button;
+                                decrement => {
+                                    root.hardware-step("encoder-button", 0, -1);
+                                }
+                                increment => {
+                                    root.hardware-step("encoder-button", 0, 1);
+                                }
+                            }
+                        }
+                        SettingRow {
+                            label: "STEPS PER DETENT";
+                            label-color: Theme.text-primary;
+                            Stepper {
+                                width: 180px;
+                                text: root.hardware-encoder-steps;
+                                can-decrement: root.hardware-encoder-steps > 1;
+                                can-increment: root.hardware-encoder-steps < 4;
+                                decrement => {
+                                    root.hardware-step("encoder-steps", 0, -1);
+                                }
+                                increment => {
+                                    root.hardware-step("encoder-steps", 0, 1);
+                                }
+                            }
+                        }
+                        Text {
+                            text: "Turning moves the focus like the arrow keys, the button confirms like Return. Lower the steps per detent if it takes several clicks to move.";
+                            color: Theme.text-muted;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    if root.hardware-message != "": Text {
+                        text: root.hardware-message;
+                        color: Theme.danger;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
                     }
                 }
             }
@@ -648,6 +843,159 @@ export component SettingsView inherits Rectangle {
                             color: Theme.accent;
                             font-size: Theme.font-caption;
                         }
+                    }
+                }
+            }
+
+            // -------------------------------------------- Updates
+            if Features.update: Card {
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    HorizontalLayout {
+                        spacing: Theme.space-sm;
+                        VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                name: "refresh";
+                                color: Theme.accent;
+                            }
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: "Updates";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-title;
+                            font-weight: Theme.weight-semibold;
+                            vertical-alignment: center;
+                        }
+                        Button {
+                            horizontal-stretch: 0;
+                            text: root.update-status == "checking" ? "Checking…" : "Check for updates";
+                            variant: "ghost";
+                            enabled: root.update-status != "checking" && root.update-status != "downloading"
+                                && root.update-status != "installing" && root.update-status != "installed";
+                            clicked => {
+                                root.update-check();
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: root.update-current;
+                        color: Theme.text-muted;
+                        font-size: Theme.font-small;
+                    }
+
+                    if root.update-status == "up-to-date": Text {
+                        text: "OpenRig is up to date.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                    }
+                    if root.update-status == "available": Text {
+                        text: "OpenRig " + root.update-version + " is available: github.com/Siryu6/OpenRig/releases";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                    if root.update-status == "preparing": Text {
+                        text: "OpenRig " + root.update-version + " is out; its update for this pedalboard is still being built. Check again later.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+
+                    if root.update-status == "ready": HorizontalLayout {
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: Theme.space-xs;
+                            Text {
+                                text: "OpenRig " + root.update-version + " is available";
+                                color: Theme.text-primary;
+                                font-size: Theme.font-body;
+                                font-weight: Theme.weight-medium;
+                            }
+                            Text {
+                                text: root.update-kind == "app"
+                                    ? "App update, " + root.update-size + ": it runs when you restart OpenRig; the system stays as it is."
+                                    : "System update, " + root.update-size + ": this version needs a new system. It runs when you restart the pedalboard, which goes back to the current one if it does not start.";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-small;
+                                wrap: word-wrap;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Button {
+                                text: "Install";
+                                variant: "primary";
+                                clicked => {
+                                    root.update-install();
+                                }
+                            }
+                        }
+                    }
+
+                    if root.update-status == "downloading": VerticalLayout {
+                        spacing: Theme.space-sm;
+                        Text {
+                            text: "Downloading OpenRig " + root.update-version + "… " + round(root.update-progress * 100) + " %";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                        }
+                        Rectangle {
+                            height: 6px;
+                            border-radius: 3px;
+                            background: Theme.surface-raised;
+                            Rectangle {
+                                x: 0;
+                                width: parent.width * clamp(root.update-progress, 0, 1);
+                                border-radius: 3px;
+                                background: Theme.accent;
+                            }
+                        }
+                    }
+                    if root.update-status == "installing": Text {
+                        text: root.update-kind == "app"
+                            ? "Installing OpenRig " + root.update-version + "…"
+                            : "Writing the new system. This takes a few minutes; keep the pedalboard on.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+
+                    if root.update-status == "installed": HorizontalLayout {
+                        spacing: Theme.space-md;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: root.update-kind == "app"
+                                ? "OpenRig " + root.update-version + " is installed. Restart OpenRig to use it."
+                                : "OpenRig " + root.update-version + " is installed. Restart the pedalboard to use it.";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-small;
+                            vertical-alignment: center;
+                            wrap: word-wrap;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Button {
+                                text: root.update-kind == "app" ? "Restart OpenRig" : "Restart now";
+                                variant: "primary";
+                                clicked => {
+                                    root.update-restart();
+                                }
+                            }
+                        }
+                    }
+
+                    if root.update-status == "error": Text {
+                        text: root.update-message;
+                        color: Theme.danger;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
                     }
                 }
             }

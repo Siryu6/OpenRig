@@ -6,4 +6,8 @@ export global Features {
     in-out property <bool> tone3000: false;
     // The OS can switch the board off or restart it for the app
     in-out property <bool> power: false;
+    // Built with the update feature: "Check for updates" in Settings
+    in-out property <bool> update: false;
+    // Built with the gpio feature: footswitches and encoder on the GPIO
+    in-out property <bool> gpio: false;
 }

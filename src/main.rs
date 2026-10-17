@@ -1,11 +1,14 @@
 #[cfg(feature = "gpio")]
 mod gpio;
+mod hardware_ui;
 mod live_ui;
 #[cfg(feature = "midi")]
 mod midi_io;
 mod midi_ui;
 #[cfg(feature = "tone3000")]
 mod tone3000_ui;
+#[cfg(feature = "update")]
+mod update_ui;
 mod wifi_ui;
 
 use anyhow::Result;
@@ -51,6 +54,10 @@ const EXIT_ON_AUDIO_CHANGE: &str = "PEDALBOARD_EXIT_ON_AUDIO_CHANGE";
 /// Set by the OS image: a file the app writes `poweroff` or `reboot` to
 /// before quitting, for the supervisor to switch the board off or restart it
 const POWER_REQUEST: &str = "PEDALBOARD_POWER_REQUEST";
+/// Set by the OS image: a file the app writes again every second while its
+/// event loop runs, for the supervisor to tell a running app from a hung one
+/// (an app update on trial is kept only if it does)
+const ALIVE_FILE: &str = "PEDALBOARD_ALIVE_FILE";
 
 pub(crate) fn model<T: Clone + 'static>(items: Vec<T>) -> ModelRc<T> {
     ModelRc::new(VecModel::from(items))
@@ -1071,6 +1078,24 @@ fn start_audio_watch(app: &App, engine: Option<Rc<AudioEngine>>) -> slint::Timer
     timer
 }
 
+/// Writes the supervisor's alive file again whenever it was removed
+fn start_alive_timer() -> Option<slint::Timer> {
+    let path = std::path::PathBuf::from(std::env::var_os(ALIVE_FILE)?);
+    let timer = slint::Timer::default();
+    timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_secs(1),
+        move || {
+            if !path.exists() {
+                if let Err(e) = std::fs::write(&path, b"") {
+                    warn!("{}: {e}", path.display());
+                }
+            }
+        },
+    );
+    Some(timer)
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -1154,23 +1179,18 @@ fn main() -> Result<()> {
     #[cfg(feature = "tone3000")]
     tone3000_ui::setup(&app, &state);
     wifi_ui::setup(&app);
+    #[cfg(feature = "update")]
+    update_ui::setup(&app);
     live_ui::setup(&app, &state);
     midi_ui::setup(&app, &state);
     refresh_all(&app, &state);
     let _timer = start_poll_timer(&app, &state, engine.as_deref());
     let _monitor = start_monitor_timer(&app, engine.clone());
     let _audio_watch = start_audio_watch(&app, engine.clone());
+    let _alive = start_alive_timer();
 
-    #[cfg(feature = "gpio")]
-    let _gpio = match gpio::Gpio::start(app.as_weak(), state.clone()) {
-        Ok(gpio) => Some(gpio),
-        Err(e) => {
-            warn!("GPIO disabled: {:#}", e);
-            None
-        }
-    };
-    #[cfg(feature = "gpio")]
-    live_ui::refresh(&app, &state);
+    // Footswitches and encoder, on the GPIO with the gpio feature
+    hardware_ui::setup(&app, &state);
 
     app.run()?;
 

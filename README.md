@@ -146,11 +146,72 @@ screen. It is a young project: expect rough edges.
 - **Hardware** (feature `gpio`): footswitches follow the Live page mode
   (act when pressed; the tap switch also reads the hold), and keys `1`–`8`
   and `t` do the same on a keyboard; the rotary encoder drives the UI like
-  the arrow and Return keys.
+  the arrow and Return keys. Settings → Hardware sets what is wired: from
+  no footswitch to 8, the GPIO of each (with a LED that lights while it is
+  pressed, to check the wiring), the encoder or none, its push button or
+  none, its steps per detent. Kept in `hardware.json` in the data
+  directory; changes apply at once.
 - **OS image** (`os/`): Buildroot image for the Pi 5 and x86_64 mini PCs,
   `PREEMPT_RT` kernel, read-only system, boot logo, the UI full screen
   without X11 / Wayland, signed A/B updates (RAUC) that roll back when the
   new system does not start. See [docs/OS.md](docs/OS.md).
+- **Updates** (feature `update`, default): Settings → Updates checks the
+  latest GitHub release and, on the OS image, installs it: the app alone
+  when the system did not change, else the whole system. See
+  [Updates](#updates).
+
+## Install
+
+Everything comes from the [releases page](https://github.com/Siryu6/OpenRig/releases).
+
+### Raspberry Pi 5
+
+You need a Pi 5, a micro SD card, a USB audio interface (or a sound HAT)
+and a screen, ideally a touch screen (a mouse works too).
+
+1. Download `openrig-os-<version>-rpi5.img.xz`.
+2. Write it to the card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
+   (*Choose OS* → *Use custom*, no OS customisation: the image ignores it),
+   [balenaEtcher](https://etcher.balena.io), or:
+   ```bash
+   xz -dc openrig-os-<version>-rpi5.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
+   ```
+3. Plug the audio interface, insert the card and power on: it boots
+   straight into OpenRig. The first boot creates the data partition over
+   the rest of the card, so it takes a little longer.
+4. Settings → Wi-Fi to join a network (needed for TONE3000 and updates).
+   The first USB interface is used; to pick another one, or change the
+   buffer, edit `pedalboard.txt` on the card's first partition (readable
+   from any computer, see [docs/OS.md](docs/OS.md#settings)).
+
+### x86_64 mini PC
+
+Any UEFI x86_64 PC (Intel N100, Lenovo Tiny…) with Intel graphics (the
+image has no AMD GPU driver).
+
+1. Download `openrig-os-<version>-x86_64.img.xz`.
+2. Write it the same way to a USB stick or an SSD (the whole disk is
+   used: it erases it).
+3. In the firmware setup, disable Secure Boot and boot from that disk.
+
+Then as on the Pi. SSH access, `pedalboard.txt` and the details of the
+image are in [docs/OS.md](docs/OS.md).
+
+### Desktop Linux
+
+To try it without the image: `openrig-<version>-linux-x86_64.tar.gz` (or
+`aarch64`) holds the app. It needs JACK and lilv
+(`apt install jackd2 liblilv-0-0`); start JACK, then `./pedalboard`. See
+[Run](#run).
+
+### Updates
+
+On the pedalboard, Settings → Updates → **Check for updates**, then
+**Install**. When the new release runs on the same system, only the app is
+updated and restarts; when it needs a new system, the whole system is
+installed next to the running one and the pedalboard restarts on it,
+falling back to the previous one if it does not start. Presets, models and
+settings are kept. See [docs/OS.md](docs/OS.md#updates).
 
 ## Build
 
@@ -176,7 +237,7 @@ cargo build --no-default-features --features winit,lv2,midi   # without NAM nor 
 cargo build --no-default-features --features winit,lv2,nam,midi   # without TONE3000 Connect (no HTTPS client)
 cargo build --no-default-features        # no liblilv, NAM, MIDI nor display: demo plugins, tests
 cargo build --release --features kms     # + full screen without X11 / Wayland (libinput, libgbm, EGL)
-cargo build --release --no-default-features --features kms,lv2,nam,tone3000,midi,gpio,splash   # as in the Pi image
+cargo build --release --no-default-features --features kms,lv2,nam,tone3000,midi,gpio,splash,update   # as in the Pi image
 cargo test
 ```
 
@@ -210,15 +271,18 @@ still starts with audio disabled.
 | `PEDALBOARD_DATA_DIR` | platform data dir (`~/.local/share/pedalboard` on Linux) | Presets, setlists, session, `models/` (NAM models and IRs) |
 | `PEDALBOARD_TONE3000_CLIENT_ID` | unset | Prefills the TONE3000 publishable key (`t3k_pub_…`) when none is saved |
 | `PEDALBOARD_NO_AUTOCONNECT` | unset | Do not connect JACK ports |
-| `PEDALBOARD_FOOTSWITCH_PINS` | `17,27,22,23` | Footswitch GPIOs (BCM) |
-| `PEDALBOARD_ENCODER_PINS` | `5,6,13` | Encoder A, B, button (empty: none) |
-| `PEDALBOARD_ENCODER_STEPS` | `4` | Quadrature steps per detent |
+| `PEDALBOARD_FOOTSWITCH_PINS` | `17,27,22,23` | Footswitch GPIOs (BCM), until set in Settings → Hardware (empty: none) |
+| `PEDALBOARD_ENCODER_PINS` | `5,6,13` | Encoder A, B and button, until set in Settings (`A,B`: no button; empty: no encoder) |
+| `PEDALBOARD_ENCODER_STEPS` | `4` | Quadrature steps per detent (1, 2 or 4), until set in Settings |
+| `PEDALBOARD_UPDATE_URL` | GitHub's latest release | Release read by "Check for updates", to test with another server (plain HTTP allowed) |
 | `LV2_PATH` | system | Where LV2 bundles are searched |
 | `RUST_LOG` | `info` | Log level |
 | `PEDALBOARD_EXIT_ON_AUDIO_CHANGE` | unset | Quit when the JACK server stops or starts (the OS launcher starts the UI again) |
 | `PEDALBOARD_POWER_REQUEST` | unset | File where Power off / Restart is requested (set by the OS launcher; shows the menu entry) |
+| `PEDALBOARD_ALIVE_FILE` | unset | File written again every second while the UI runs (set by the OS launcher, to tell an app update that hangs) |
 
-Switches and encoder are wired between the GPIO and ground (internal pull-ups).
+Switches and encoder are wired between the GPIO and ground (internal
+pull-ups); the GPIOs are set in Settings → Hardware.
 
 Guitar-oriented LV2 packages: `guitarix-lv2`, `x42-plugins`, `calf-plugins`,
 `dragonfly-reverb-lv2`, `lsp-plugins-lv2`.
@@ -232,8 +296,10 @@ Each [release](https://github.com/Siryu6/OpenRig/releases) ships:
   system (`apt install jackd2 liblilv-0-0`).
 - `openrig-os-<version>-rpi5.img.xz` and `…-x86_64.img.xz`: the OS images,
   to write to a card or a disk (Raspberry Pi Imager, `dd`, balenaEtcher).
-- `openrig-os-<version>-<board>.raucb`: the signed update bundles, for
-  `pedalboard-update install` on a running pedalboard.
+- `openrig-os-<version>-<board>.raucb` and `…-<board>-app.raucb`: the
+  signed system and app updates, and `openrig-os-<version>-<board>.json`,
+  which tells a pedalboard checking for updates which one it needs (see
+  [docs/OS.md](docs/OS.md#updates)).
 
 Versions follow [semantic versioning](https://semver.org) and come from
 [conventional commits](https://www.conventionalcommits.org) (`feat:`,
@@ -241,7 +307,8 @@ Versions follow [semantic versioning](https://semver.org) and come from
 PR up to date with the next version and `CHANGELOG.md`; only `feat:`, `fix:`
 and `perf:` commits open one (`ci:`, `docs:`, `chore:`… wait for the next).
 Nothing is released until it is merged: merging it tags the release, and
-`.github/workflows/build-release.yml` attaches the binaries and images to it.
+`.github/workflows/build-release.yml` attaches the binaries and images to it
+(`os/release-assets.sh` makes the files of each board, the `.json` last).
 That workflow also runs for a `vX.Y.Z` tag pushed by hand, and can be run by
 hand to build a release again. The OS images take hours on GitHub's
 runners: when a first build runs out of time, it saves its compiler cache
@@ -256,6 +323,7 @@ src/
 ├── main.rs              UI wiring (callbacks, polling and monitor timers)
 ├── bin/splash.rs        Boot logo on the Linux framebuffer (feature splash, OS image)
 ├── gpio.rs              Footswitches and encoder (feature gpio)
+├── hardware_ui.rs       Settings → Hardware (footswitches, encoder, their GPIOs), restarts the GPIO
 ├── live_ui.rs           Live page: footswitch modes, tap tempo, hold → tuner
 ├── midi_io.rs           MIDI inputs (midir, feature midi): hot-plug, clock → tempo
 ├── midi_ui.rs           MIDI actions, learn in the block editor, Settings → MIDI
@@ -263,7 +331,10 @@ src/
 ├── tone3000_ui.rs       Settings → TONE3000 Connect, library page, Features.tone3000 flag
 ├── wifi.rs              Wi-Fi through NetworkManager (nmcli): scan, join, forget
 ├── wifi_ui.rs           Settings → Wi-Fi (worker thread running nmcli)
+├── update.rs            Updates: latest GitHub release, app or system, download, request to the OS updater
+├── update_ui.rs         Settings → Updates (worker thread: check, download, install)
 ├── monitor.rs           DSP meter, xruns, CPU / RAM / temperature / throttling
+├── hardware.rs          What is wired (footswitch / encoder GPIOs): hardware.json, environment defaults
 ├── audio/
 │   ├── jack_client.rs   JACK callback: tuner → effects → looper
 │   ├── chain_switcher.rs  Builder thread, crossfade, live commands

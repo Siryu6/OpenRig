@@ -27,21 +27,40 @@ power=/run/pedalboard/power
 install -d -o pedalboard -g pedalboard -m 700 "$power"
 rm -f "$power/request"
 
-# util-linux, not the BusyBox applets of the same name (fewer options)
-/usr/bin/prlimit --rtprio=95 --memlock=unlimited \
-	/usr/bin/setpriv --reuid=pedalboard --regid=pedalboard --init-groups --reset-env \
-	env PEDALBOARD_DATA_DIR=/data/pedalboard \
-	LV2_PATH=/data/pedalboard/lv2:/usr/lib/lv2 \
-	PEDALBOARD_EXIT_ON_AUDIO_CHANGE=1 \
-	PEDALBOARD_POWER_REQUEST="$power/request" \
-	SLINT_BACKEND=linuxkms \
-	SLINT_KMS_ROTATION="$display_rotation" \
-	/usr/bin/pedalboard 2>&1 |
-	logger -t pedalboard
+# The system's app, or an app update (tried once, see pedalboard-update):
+# kept once it has run 30 s. The app writes its alive file again every
+# second: removed at 25 s, it is back at 30 s unless the app hangs.
+alive=/run/pedalboard/app/alive
+install -d -o pedalboard -g pedalboard -m 755 /run/pedalboard/app
+rm -f /run/pedalboard/app/alive
+app=$(/usr/sbin/pedalboard-update app-start)
+(sleep 25 && rm -f /run/pedalboard/app/alive && sleep 5 &&
+	exec /usr/sbin/pedalboard-update app-check "$alive") &
+keeper=$!
+
+# util-linux, not the BusyBox applets of the same name (fewer options).
+# The exit status goes through a file: a pipe gives logger's.
+{
+	/usr/bin/prlimit --rtprio=95 --memlock=unlimited \
+		/usr/bin/setpriv --reuid=pedalboard --regid=pedalboard --init-groups --reset-env \
+		env PEDALBOARD_DATA_DIR=/data/pedalboard \
+		LV2_PATH=/data/pedalboard/lv2:/usr/lib/lv2 \
+		PEDALBOARD_EXIT_ON_AUDIO_CHANGE=1 \
+		PEDALBOARD_POWER_REQUEST="$power/request" \
+		PEDALBOARD_ALIVE_FILE="$alive" \
+		PEDALBOARD_UPDATE_DIR=/run/pedalboard/update \
+		SLINT_BACKEND=linuxkms \
+		SLINT_KMS_ROTATION="$display_rotation" \
+		"$app" 2>&1
+	echo $? >/run/pedalboard/ui-status
+} | logger -t pedalboard
+kill "$keeper" 2>/dev/null
+request=$(cat "$power/request" 2>/dev/null)
+/usr/sbin/pedalboard-update app-exit "$(cat /run/pedalboard/ui-status)" "$request"
 
 # The UI ran until asked: an update being tried is kept (the check at boot
 # would wait 30 s for it, and an early power off would undo the update)
-case "$(cat "$power/request" 2>/dev/null)" in
+case "$request" in
 poweroff)
 	/usr/sbin/pedalboard-update keep
 	logger -t pedalboard "switching off"

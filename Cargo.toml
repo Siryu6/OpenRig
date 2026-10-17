@@ -23,7 +23,7 @@ path = "src/bin/splash.rs"
 required-features = ["splash"]
 
 [features]
-default = ["winit", "lv2", "nam", "tone3000", "midi"]
+default = ["winit", "lv2", "nam", "tone3000", "midi", "update"]
 # Desktop window (X11 / Wayland)
 winit = ["slint/backend-winit", "slint/renderer-femtovg"]
 # Full screen straight on the display (DRM/KMS + libinput), without X11 or
@@ -44,6 +44,9 @@ tone3000 = ["dep:ureq", "dep:qrcodegen", "dep:zune-jpeg", "dep:png"]
 midi = ["dep:midir"]
 # pedalboard-splash (Linux framebuffer)
 splash = ["dep:png", "dep:libc"]
+# "Check for updates" in Settings: latest release on GitHub; on the
+# pedalboard OS, downloads it and hands it to the system installer
+update = ["dep:ureq", "dep:ring", "dep:libc"]
 
 [dependencies]
 lilv = { version = "0.2.4", optional = true }
@@ -84,6 +87,7 @@ rppal = { version = "0.19", optional = true }
 fft-convolver = "0.4"
 hound = "3"
 ureq = { version = "3.4", features = ["json"], optional = true }
+ring = { version = "0.17", optional = true }  # SHA-256 of the updates (already in ureq's TLS)
 qrcodegen = { version = "1.8", optional = true }
 midir = { version = "0.11.0", optional = true }  # MIDI input: ALSA, CoreMIDI, WinMM
 png = { version = "0.18", optional = true }

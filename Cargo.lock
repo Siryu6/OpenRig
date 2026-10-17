@@ -3509,6 +3509,7 @@ dependencies = [
  "midir",
  "png 0.18.0",
  "qrcodegen",
+ "ring",
  "rppal",
  "serde",
  "serde_json",

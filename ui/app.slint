@@ -121,6 +121,15 @@ export component App inherits Window {
     in-out property <[MenuItem]> stomp-choices: [];
     in-out property <int> footswitch-count: 4;  // physical switches
     in-out property <bool> tap-switch: true;    // the last one taps the tempo
+    in-out property <int> footswitch-down-mask: 0;  // bit n: switch n held
+    // Settings → Hardware: GPIOs of the switches and encoder (-1: no button)
+    in-out property <[int]> hardware-footswitch-pins: [];
+    in-out property <bool> hardware-encoder: false;
+    in-out property <int> hardware-encoder-a: 5;
+    in-out property <int> hardware-encoder-b: 6;
+    in-out property <int> hardware-encoder-button: 13;
+    in-out property <int> hardware-encoder-steps: 4;
+    in-out property <string> hardware-message: "";  // error
     // MIDI
     in property <bool> midi-available: false;    // built with MIDI and the system allows it
     in property <string> midi-devices: "";       // devices listened to
@@ -174,6 +183,15 @@ export component App inherits Window {
     in-out property <string> t3k-url: "";
     in-out property <image> t3k-qr;
     in-out property <string> t3k-error: "";
+
+    // Updates (see SettingsView)
+    in-out property <string> update-status: "idle";
+    in-out property <string> update-current: "";
+    in-out property <string> update-version: "";
+    in-out property <string> update-kind: "";
+    in-out property <string> update-size: "";
+    in-out property <float> update-progress: 0;
+    in-out property <string> update-message: "";
 
     // TONE3000 library (view 8)
     in-out property <int> t3k-tab: 0;
@@ -238,6 +256,11 @@ export component App inherits Window {
     callback rename-scene(int, string);
     callback assign-stomp(int, string);
     callback tap-switch-changed(bool);
+    // what: "footswitches" | "footswitch" (index) | "encoder-a" | "encoder-b"
+    // | "encoder-button" | "encoder-steps"; delta: +1 / -1
+    callback hardware-step(string, int, int);
+    callback hardware-set-encoder(bool);
+    callback hardware-set-encoder-button(bool);
     callback midi-channel-changed(int);
     callback midi-clock-changed(bool);
     callback midi-learn-toggled(bool);
@@ -261,6 +284,9 @@ export component App inherits Window {
     callback wifi-connect(string, string);           // ssid, password ("" = saved / open)
     callback wifi-disconnect();
     callback wifi-forget(string);
+    callback update-check();
+    callback update-install();
+    callback update-restart();
     callback t3k-connect(string);                    // publishable key
     callback t3k-cancel();
     callback t3k-disconnect();
@@ -271,7 +297,7 @@ export component App inherits Window {
     callback t3k-add-model(string, string);          // block URI, relative path
     callback tuner-mute-toggled(bool);
     callback tuner-reference-pitch-changed(float);
-    callback power(string);                          // "poweroff" | "reboot"
+    callback power(string);                          // "poweroff" | "reboot" | "restart" (the app)
     in-out property <bool> power-dialog: false;
     in-out property <string> power-action: "";       // set once chosen
 
@@ -792,6 +818,23 @@ export component App inherits Window {
                 tap-switch-changed(on) => {
                     root.tap-switch-changed(on);
                 }
+                footswitch-down-mask: root.footswitch-down-mask;
+                hardware-footswitch-pins: root.hardware-footswitch-pins;
+                hardware-encoder: root.hardware-encoder;
+                hardware-encoder-a: root.hardware-encoder-a;
+                hardware-encoder-b: root.hardware-encoder-b;
+                hardware-encoder-button: root.hardware-encoder-button;
+                hardware-encoder-steps: root.hardware-encoder-steps;
+                hardware-message: root.hardware-message;
+                hardware-step(what, index, delta) => {
+                    root.hardware-step(what, index, delta);
+                }
+                hardware-set-encoder(on) => {
+                    root.hardware-set-encoder(on);
+                }
+                hardware-set-encoder-button(on) => {
+                    root.hardware-set-encoder-button(on);
+                }
                 midi-available: root.midi-available;
                 midi-devices: root.midi-devices;
                 midi-channel: root.midi-channel;
@@ -831,6 +874,22 @@ export component App inherits Window {
                 t3k-url: root.t3k-url;
                 t3k-qr: root.t3k-qr;
                 t3k-error: root.t3k-error;
+                update-status: root.update-status;
+                update-current: root.update-current;
+                update-version: root.update-version;
+                update-kind: root.update-kind;
+                update-size: root.update-size;
+                update-progress: root.update-progress;
+                update-message: root.update-message;
+                update-check => {
+                    root.update-check();
+                }
+                update-install => {
+                    root.update-install();
+                }
+                update-restart => {
+                    root.update-restart();
+                }
 
                 t3k-connect(key) => {
                     root.t3k-connect(key);

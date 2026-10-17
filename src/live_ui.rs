@@ -84,14 +84,18 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
         refresh(&app, &st);
     });
     let (weak, st) = (app.as_weak(), state.clone());
+    // Keys 1-8: as many as the switches set in Settings → Hardware
     app.on_footswitch_down(move |slot| {
         if let (Some(app), Ok(slot)) = (weak.upgrade(), usize::try_from(slot)) {
-            footswitch_down(&app, &st, slot);
+            if slot < usize::try_from(app.get_footswitch_count()).unwrap_or(0) {
+                footswitch_down(&app, &st, slot);
+            }
         }
     });
-    app.on_footswitch_up(|slot| {
-        if let Ok(slot) = usize::try_from(slot) {
-            footswitch_up(slot);
+    let weak = app.as_weak();
+    app.on_footswitch_up(move |slot| {
+        if let (Some(app), Ok(slot)) = (weak.upgrade(), usize::try_from(slot)) {
+            footswitch_up(&app, slot);
         }
     });
 }
@@ -118,6 +122,7 @@ pub fn footswitch_down(app: &App, state: &Arc<AppState>, slot: usize) {
         Some(s.presses)
     });
     let Some(press) = press else { return };
+    show_down(app);
 
     // The tuner opened from a switch: any switch closes it
     if let Some(view) = SWITCHES.with(|s| s.borrow_mut().tuner_return.take()) {
@@ -148,10 +153,23 @@ pub fn footswitch_down(app: &App, state: &Arc<AppState>, slot: usize) {
 }
 
 /// A footswitch came back up
-pub fn footswitch_up(slot: usize) {
+pub fn footswitch_up(app: &App, slot: usize) {
     if let Some(bit) = 1u32.checked_shl(slot as u32) {
         SWITCHES.with(|s| s.borrow_mut().down &= !bit);
+        show_down(app);
     }
+}
+
+/// Forget the footswitches held (the hardware changed)
+pub fn release_footswitches(app: &App) {
+    SWITCHES.with(|s| s.borrow_mut().down = 0);
+    show_down(app);
+}
+
+/// The switches held, for the LEDs of Settings → Hardware
+fn show_down(app: &App) {
+    let down = SWITCHES.with(|s| s.borrow().down);
+    app.set_footswitch_down_mask(down as i32);
 }
 
 pub(crate) fn tap(app: &App, state: &AppState) {
