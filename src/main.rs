@@ -173,6 +173,7 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
     app.set_chain_bottom(max_y);
     app.set_stereo_mode(chain.stereo_mode);
     refresh_editor(app, state, &chain);
+    routing_ui::chain_changed(app, state);
     // Scenes and stomp switches follow the chain
     live_ui::refresh(app, state);
 }

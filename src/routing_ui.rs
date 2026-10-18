@@ -38,6 +38,21 @@ struct Editor {
     saver: Timer,
 }
 
+impl Drop for Editor {
+    /// Save a change still waiting when the app quits
+    fn drop(&mut self) {
+        if self.saver.running() {
+            save(&self.routing);
+        }
+    }
+}
+
+fn save(routing: &Routing) {
+    if let Err(e) = routing.save(&pedalboard::state::data_dir()) {
+        warn!("Could not save the routing: {e:#}");
+    }
+}
+
 /// What the callbacks share
 #[derive(Clone)]
 struct Context {
@@ -63,11 +78,7 @@ impl Context {
         let routing = editor.routing.clone();
         editor
             .saver
-            .start(TimerMode::SingleShot, SAVE_DELAY, move || {
-                if let Err(e) = routing.save(&pedalboard::state::data_dir()) {
-                    warn!("Could not save the routing: {e:#}");
-                }
-            });
+            .start(TimerMode::SingleShot, SAVE_DELAY, move || save(&routing));
     }
 }
 
@@ -79,7 +90,7 @@ pub fn setup(app: &App, state: &Arc<AppState>, engine: Option<&AudioEngine>) -> 
     };
     let control = engine.routing();
     let (inputs, outputs) = (control.inputs, control.outputs);
-    let routing = Routing::load(&pedalboard::state::data_dir());
+    let routing = control.initial.clone();
     let rows = Rc::new(VecModel::default());
     app.set_routing_available(true);
     app.set_routing_inputs(inputs as i32);
@@ -115,12 +126,7 @@ pub fn setup(app: &App, state: &Arc<AppState>, engine: Option<&AudioEngine>) -> 
     app.on_routing_set_pan(move |p, pan| c.change(|r, _, _| r.edit(port(p), |s| s.pan = pan)));
     let c = context.clone();
     app.on_routing_set_fold(move |p, fold| {
-        let fold = match fold {
-            1 => Fold::Left,
-            2 => Fold::Right,
-            _ => Fold::Sum,
-        };
-        c.change(|r, _, _| r.edit(port(p), |s| s.fold = fold))
+        c.change(|r, _, _| r.edit(port(p), |s| s.fold = Fold::from_index(fold)))
     });
     let c = context;
     app.on_routing_toggle(move |p, what| {
@@ -165,8 +171,15 @@ fn edit_block(app: &App, state: &AppState, id: i32, change: impl FnOnce(&mut Blo
     let mut io = state.chain().io.get(&id).copied().unwrap_or_default();
     change(&mut io);
     report(app, state.set_block_io(id, io));
-    show_blocks(app, state);
     refresh_chain(app, state);
+}
+
+/// The chain changed (edit, preset, scene, undo): list its blocks again if
+/// the view is open
+pub(crate) fn chain_changed(app: &App, state: &AppState) {
+    if app.get_current_view() == VIEW {
+        show_blocks(app, state);
+    }
 }
 
 /// The blocks of the current preset, in signal order
@@ -234,7 +247,7 @@ fn show(
     while port < outputs {
         let row = match routing.strip(port as u8) {
             Some(strip) => {
-                let (source, main) = match strip.source {
+                let (source, bus) = match strip.source {
                     Source::Main => ("Main mix".to_string(), true),
                     Source::Send(s) => (format!("Send {}", s + 1), true),
                     Source::Input(i) => (format!("Input {}", i + 1), false),
@@ -251,14 +264,10 @@ fn show(
                     can_link: routing.can_link(port as u8, outputs),
                     assigned: true,
                     source: source.into(),
-                    main,
+                    bus,
                     gain_db: strip.gain_db,
                     pan: strip.pan,
-                    fold: match strip.fold {
-                        Fold::Sum => 0,
-                        Fold::Left => 1,
-                        Fold::Right => 2,
-                    },
+                    fold: strip.fold.index(),
                     mute: strip.mute,
                     solo: strip.solo,
                     invert: strip.invert,

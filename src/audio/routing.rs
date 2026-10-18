@@ -86,6 +86,21 @@ pub enum Fold {
     Right,
 }
 
+impl Fold {
+    /// As the L+R / L / R choice of the routing view
+    pub fn index(self) -> i32 {
+        self as i32
+    }
+
+    pub fn from_index(index: i32) -> Self {
+        match index {
+            1 => Fold::Left,
+            2 => Fold::Right,
+            _ => Fold::Sum,
+        }
+    }
+}
+
 /// One or two outputs playing a source
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Strip {
@@ -189,10 +204,14 @@ impl Routing {
         }
         let mut used = [false; MAX_PORTS];
         for strip in &self.strips {
-            if let Source::Input(i) = strip.source {
-                if i as usize >= MAX_PORTS {
-                    bail!("There is no input {}", i as usize + 1);
+            match strip.source {
+                Source::Input(i) if i as usize >= MAX_PORTS => {
+                    bail!("There is no input {}", i as usize + 1)
                 }
+                Source::Send(s) if s as usize >= MAX_SENDS => {
+                    bail!("There is no send {}", s as usize + 1)
+                }
+                _ => {}
             }
             if !strip.gain_db.is_finite() || !strip.pan.is_finite() {
                 bail!("Output {}: invalid level or pan", strip.port as usize + 1);
@@ -359,12 +378,12 @@ impl Routing {
         } else if let Some(strip) = self.strip_mut(port).filter(|s| s.stereo) {
             // Two outputs playing the same source: the left and right sides
             // of the main mix or a send, or the same input on both
-            let main = !matches!(strip.source, Source::Input(_));
+            let bus = !matches!(strip.source, Source::Input(_));
             strip.stereo = false;
-            strip.fold = if main { Fold::Left } else { Fold::Sum };
+            strip.fold = if bus { Fold::Left } else { Fold::Sum };
             let second = Strip {
                 port: port + 1,
-                fold: if main { Fold::Right } else { Fold::Sum },
+                fold: if bus { Fold::Right } else { Fold::Sum },
                 ..*strip
             };
             self.strips.push(second);
@@ -485,6 +504,8 @@ pub struct RoutingControl {
     /// Ports the pedalboard registered
     pub inputs: usize,
     pub outputs: usize,
+    /// The routing the audio thread started with
+    pub initial: Routing,
 }
 
 impl RoutingControl {
@@ -493,8 +514,8 @@ impl RoutingControl {
     }
 }
 
-/// Output mixer of the audio thread: plays the main mix and the inputs on
-/// the outputs, with every gain ramped
+/// Output mixer of the audio thread: plays the main mix, the sends and the
+/// inputs on the outputs, with every gain ramped
 pub struct OutputRouter {
     target: Mix,
     current: [PortMix; MAX_PORTS],
@@ -524,6 +545,7 @@ impl OutputRouter {
                 tx,
                 inputs,
                 outputs,
+                initial: routing.clone(),
             },
         )
     }
@@ -685,6 +707,14 @@ mod tests {
         };
         assert!(routing.validate().is_err());
         assert!(Routing::default().validate().is_ok());
+        let missing_send = Routing {
+            input: 0,
+            strips: vec![Strip {
+                source: Source::Send(MAX_SENDS as u8),
+                ..Strip::main(0, true)
+            }],
+        };
+        assert!(missing_send.validate().is_err());
     }
 
     #[test]

@@ -166,6 +166,7 @@ component OutputStrip inherits Rectangle {
                     label: "LEVEL";
                     value-text: (root.output.gain-db > 0 ? "+" : "") + round(root.output.gain-db * 10) / 10 + " dB";
                     value: root.output.gain-db;
+                    // GAIN_RANGE_DB in src/audio/routing.rs
                     minimum: -60;
                     maximum: 12;
                     changed(v) => {
@@ -186,7 +187,7 @@ component OutputStrip inherits Rectangle {
             }
 
             // A stereo source on a single output
-            if !root.output.stereo && root.output.main: Segmented {
+            if !root.output.stereo && root.output.bus: Segmented {
                 options: ["L+R", "L", "R"];
                 current-index: root.output.fold;
                 activated(i) => {
@@ -274,7 +275,7 @@ component BlockRow inherits HorizontalLayout {
         width: 150px;
         text: root.block.send < 0 ? "Off" : "Send " + (root.block.send + 1);
         can-decrement: root.block.send >= 0;
-        can-increment: root.block.send < 3;
+        can-increment: root.block.send < 3; // MAX_SENDS - 1, src/audio/routing.rs
         decrement => {
             root.step-send(root.block.instance-id, -1);
         }
@@ -449,7 +450,7 @@ export component RoutingView inherits Rectangle {
                     CardTitle {
                         icon: "split";
                         title: "Sends and returns" + (root.preset-name != "" ? " · " + root.preset-name : "");
-                        text: "A return replaces the signal before a block with an input (a bass DI before a cabinet). A send takes the signal after a block, to play it on an output above (a dry signal before the amp, a 100 % wet reverb). Saved with the preset.";
+                        text: "A return replaces the signal before a block with an input (a bass DI before a cabinet). A send takes the signal after a block, to play it on an output above (a dry signal before the amp, a 100% wet reverb). Saved with the preset.";
                     }
 
                     if root.blocks.length == 0: Text {

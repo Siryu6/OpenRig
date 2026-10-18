@@ -59,10 +59,10 @@ pub struct ChainSpec {
 /// period: the inputs of the interface (returns) and the send buses (sends)
 pub struct ChainIo<'a> {
     /// Buffer of each input, for the whole period
-    pub inputs: &'a [&'a [f32]],
+    inputs: &'a [&'a [f32]],
     /// Send buses (left, right), for the whole period; sends add to them,
     /// so the caller clears them every period
-    pub sends: &'a mut [[Vec<f32>; 2]],
+    sends: &'a mut [[Vec<f32>; 2]],
     /// Start of the part of the period being processed
     offset: usize,
     /// Level of the sends over that part (a chain fading out of a switch
@@ -91,7 +91,7 @@ impl<'a> ChainIo<'a> {
     }
 }
 
-/// Inputs and sends when there are none (tests, a chain without them)
+/// No inputs and no sends: returns play silence, sends go nowhere
 pub fn no_io<R>(f: impl FnOnce(&mut ChainIo) -> R) -> R {
     let mut sends: [[Vec<f32>; 2]; 0] = [];
     f(&mut ChainIo::new(&[], &mut sends))
@@ -647,6 +647,8 @@ impl EffectChain {
                 }
             };
             let io = spec.io.get(&id).copied().unwrap_or_default();
+            // A return on an input the interface lacks (a preset made on a
+            // bigger one) plays silence
             if let Some(input) = io.input.filter(|&i| (i as usize) < MAX_PORTS) {
                 built.push(ProcNode::Return { input, stereo });
             }

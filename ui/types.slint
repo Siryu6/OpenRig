@@ -207,7 +207,7 @@ export struct RoutingOutput {
     can-link: bool,     // can become a pair with the next output
     assigned: bool,     // plays something (else off)
     source: string,     // "Main mix", "Input 2", "Off"
-    main: bool,         // the source is a stereo bus: the main mix or a send
+    bus: bool,          // the source is a stereo bus: the main mix or a send
     gain-db: float,
     pan: float,         // -1 left … 1 right
     fold: int,          // stereo source on one output: 0 L+R, 1 L, 2 R

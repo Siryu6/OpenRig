@@ -235,12 +235,12 @@ impl ProcessHandler for PedalboardProcessor {
             // Only after a JACK buffer size increase
             left.resize(n, 0.0);
             right.resize(n, 0.0);
+            for bus in self.sends.iter_mut().flatten() {
+                bus.resize(n, 0.0);
+            }
         }
         let (left, right) = (&mut left[..n], &mut right[..n]);
         for bus in self.sends.iter_mut().flatten() {
-            if bus.len() < n {
-                bus.resize(n, 0.0);
-            }
             bus[..n].fill(0.0);
         }
 
@@ -255,15 +255,17 @@ impl ProcessHandler for PedalboardProcessor {
             left.copy_from_slice(input);
         }
 
-        // Effects: mono in, left and right out. Returns read the inputs
-        // (silent while the tuner mutes), sends fill the send buses.
+        // Effects: mono in, left and right out. Returns read the inputs,
+        // sends fill the send buses. While the tuner mutes, the inputs are
+        // silent everywhere: in the returns and played straight on an output.
         let mut inputs: [&[f32]; MAX_PORTS] = [&[]; MAX_PORTS];
         for (slot, port) in inputs.iter_mut().zip(&self.in_ports) {
             *slot = port.as_slice(ps);
         }
-        let returned = if muted { 0 } else { self.in_ports.len() };
+        let ports = self.in_ports.len();
+        let heard = if muted { 0 } else { ports };
         let switching = {
-            let mut io = ChainIo::new(&inputs[..returned], &mut self.sends);
+            let mut io = ChainIo::new(&inputs[..heard], &mut self.sends);
             self.chain_switcher.process_io(left, right, &mut io)
         };
 
@@ -283,8 +285,7 @@ impl ProcessHandler for PedalboardProcessor {
                 bus.fill(0.0);
             }
         }
-        let in_ports = &self.in_ports;
-        let passed = |i: u8| in_ports.get(i as usize).map(|p| p.as_slice(ps));
+        let passed = |i: u8| inputs[..heard].get(i as usize).copied();
         // The main mix, then each send
         let mut buses: [[&[f32]; 2]; 1 + MAX_SENDS] = [[&[], &[]]; 1 + MAX_SENDS];
         buses[0] = [left, right];
@@ -296,8 +297,8 @@ impl ProcessHandler for PedalboardProcessor {
             self.router.render(port, &buses, passed, out);
             self.ports.record_output(port, out);
         }
-        for (port, input) in in_ports.iter().enumerate() {
-            self.ports.record_input(port, input.as_slice(ps));
+        for (port, input) in inputs[..ports].iter().enumerate() {
+            self.ports.record_input(port, input);
         }
         self.levels.record(input, left, right);
 
