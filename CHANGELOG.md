@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/Siryu6/OpenRig/compare/v0.2.0...v0.3.0) - 2026-10-18
+
+### Added
+
+- *(rack)* Send and Return blocks ([#9](https://github.com/Siryu6/OpenRig/pull/9))
+- *(audio)* sends and returns on the blocks of a preset ([#9](https://github.com/Siryu6/OpenRig/pull/9))
+- *(ui)* routing view for the inputs and outputs ([#9](https://github.com/Siryu6/OpenRig/pull/9))
+- *(audio)* use every input and output of the interface ([#9](https://github.com/Siryu6/OpenRig/pull/9))
+
+### Other
+
+- inputs, outputs, sends and returns ([#9](https://github.com/Siryu6/OpenRig/pull/9))
+- *(routing)* tidy the sends, returns and routing view ([#9](https://github.com/Siryu6/OpenRig/pull/9))
+- point the README to openrig.eu and its user guide
+- Merge pull request #7 from Siryu6/ci/shellcheck
+- check the OS shell scripts with shellcheck
+
 ## [0.2.0](https://github.com/Siryu6/OpenRig/compare/v0.1.0...v0.2.0) - 2026-10-17
 
 ### Added
