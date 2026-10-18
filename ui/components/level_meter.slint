@@ -3,7 +3,7 @@ import { Levels } from "../types.slint";
 
 // One LED bar: 24 segments of 2 dB, green up to -12 dB, amber up to -4 dB,
 // red above; unlit segments keep a faint tint of their colour
-component LedBar inherits Rectangle {
+export component LedBar inherits Rectangle {
     in property <float> level;     // 0..1
     private property <int> count: 24;
     private property <length> step: self.width / self.count;

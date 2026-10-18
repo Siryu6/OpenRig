@@ -5,6 +5,7 @@ mod live_ui;
 #[cfg(feature = "midi")]
 mod midi_io;
 mod midi_ui;
+mod routing_ui;
 #[cfg(feature = "tone3000")]
 mod tone3000_ui;
 #[cfg(feature = "update")]
@@ -1183,6 +1184,7 @@ fn main() -> Result<()> {
     update_ui::setup(&app);
     live_ui::setup(&app, &state);
     midi_ui::setup(&app, &state);
+    let _routing_meters = routing_ui::setup(&app, engine.as_deref());
     refresh_all(&app, &state);
     let _timer = start_poll_timer(&app, &state, engine.as_deref());
     let _monitor = start_monitor_timer(&app, engine.clone());

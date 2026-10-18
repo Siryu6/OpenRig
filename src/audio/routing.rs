@@ -10,6 +10,7 @@
 //! supported.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use anyhow::{bail, Context, Result};
 use crossbeam_channel::{Receiver, Sender};
@@ -90,7 +91,7 @@ impl Strip {
     }
 
     /// Outputs it covers
-    fn ports(&self) -> std::ops::Range<usize> {
+    pub fn ports(&self) -> std::ops::Range<usize> {
         let first = self.port as usize;
         first..first + if self.stereo { 2 } else { 1 }
     }
@@ -227,6 +228,114 @@ impl Routing {
     }
 }
 
+/// Editing, as done from the Routing view. `inputs` and `outputs` are the
+/// ports of the interface: a change never reaches past them.
+impl Routing {
+    /// The strip starting on output `port`
+    pub fn strip(&self, port: u8) -> Option<&Strip> {
+        self.strips.iter().find(|s| s.port == port)
+    }
+
+    fn strip_mut(&mut self, port: u8) -> Option<&mut Strip> {
+        self.strips.iter_mut().find(|s| s.port == port)
+    }
+
+    /// The strip playing on output `port`, whether it starts there or not
+    fn covering(&self, port: u8) -> Option<&Strip> {
+        self.strips
+            .iter()
+            .find(|s| s.ports().contains(&(port as usize)))
+    }
+
+    /// Next or previous input feeding the chain
+    pub fn step_input(&mut self, delta: i32, inputs: usize) {
+        let last = inputs.clamp(1, MAX_PORTS) as i32 - 1;
+        self.input = (self.input as i32 + delta).clamp(0, last) as u8;
+    }
+
+    /// Next or previous source of the output (or pair) starting on `port`:
+    /// off, the main mix, then each input. Off removes the strip.
+    pub fn step_source(&mut self, port: u8, delta: i32, inputs: usize, outputs: usize) {
+        if port as usize >= outputs.min(MAX_PORTS) {
+            return;
+        }
+        // Off, Main, Input 1..n
+        let count = 2 + inputs.min(MAX_PORTS) as i32;
+        let index = match self.strip(port).map(|s| s.source) {
+            None if self.covering(port).is_some() => return,
+            None => 0,
+            Some(Source::Main) => 1,
+            Some(Source::Input(i)) => 2 + i as i32,
+        };
+        let next = (index + delta).clamp(0, count - 1);
+        let source = match next {
+            0 => {
+                self.strips.retain(|s| s.port != port);
+                return;
+            }
+            1 => Source::Main,
+            n => Source::Input((n - 2) as u8),
+        };
+        match self.strip_mut(port) {
+            Some(strip) => strip.source = source,
+            None => {
+                self.strips.push(Strip {
+                    source,
+                    ..Strip::main(port, false)
+                });
+                self.strips.sort_by_key(|s| s.port);
+            }
+        }
+    }
+
+    /// Whether the output (or pair) on `port` can become a pair with the
+    /// next output: it plays something, and the next output exists and is
+    /// not part of another pair
+    pub fn can_link(&self, port: u8, outputs: usize) -> bool {
+        let next = port as usize + 1;
+        matches!(self.strip(port), Some(s) if !s.stereo)
+            && next < outputs.min(MAX_PORTS)
+            && self.strip(next as u8).is_none_or(|s| !s.stereo)
+    }
+
+    /// Make the output on `port` and the next one a stereo pair (the next
+    /// output's own settings are dropped), or split a pair into two outputs
+    /// playing the same source
+    pub fn set_linked(&mut self, port: u8, linked: bool, outputs: usize) {
+        if linked {
+            if !self.can_link(port, outputs) {
+                return;
+            }
+            self.strips.retain(|s| s.port != port + 1);
+            if let Some(strip) = self.strip_mut(port) {
+                strip.stereo = true;
+            }
+        } else if let Some(strip) = self.strip_mut(port).filter(|s| s.stereo) {
+            // Two outputs playing the same source: the left and right sides
+            // of the main mix, or the same input on both
+            let main = strip.source == Source::Main;
+            strip.stereo = false;
+            strip.fold = if main { Fold::Left } else { Fold::Sum };
+            let second = Strip {
+                port: port + 1,
+                fold: if main { Fold::Right } else { Fold::Sum },
+                ..*strip
+            };
+            self.strips.push(second);
+            self.strips.sort_by_key(|s| s.port);
+        }
+    }
+
+    /// Change the strip starting on `port`, if there is one
+    pub fn edit(&mut self, port: u8, change: impl FnOnce(&mut Strip)) {
+        if let Some(strip) = self.strip_mut(port) {
+            change(strip);
+            strip.gain_db = strip.gain_db.clamp(GAIN_RANGE_DB.0, GAIN_RANGE_DB.1);
+            strip.pan = strip.pan.clamp(-1.0, 1.0);
+        }
+    }
+}
+
 /// What one output plays, as gains
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PortMix {
@@ -271,6 +380,52 @@ pub struct Mix {
     /// Input feeding the chain
     pub input: u8,
     pub ports: [PortMix; MAX_PORTS],
+}
+
+/// Peak level of every input and output, for the Routing view. Written by
+/// the audio thread, read and reset by the UI.
+#[derive(Debug)]
+pub struct PortMeter {
+    /// f32 bits: the order of the bits of non-negative floats is their
+    /// numeric order, so `fetch_max` keeps the highest peak
+    inputs: [AtomicU32; MAX_PORTS],
+    outputs: [AtomicU32; MAX_PORTS],
+}
+
+impl Default for PortMeter {
+    fn default() -> Self {
+        Self {
+            inputs: std::array::from_fn(|_| AtomicU32::new(0)),
+            outputs: std::array::from_fn(|_| AtomicU32::new(0)),
+        }
+    }
+}
+
+impl PortMeter {
+    fn record(slot: Option<&AtomicU32>, buffer: &[f32]) {
+        let peak = buffer.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        if let (Some(slot), true) = (slot, peak.is_finite()) {
+            slot.fetch_max(peak.to_bits(), Ordering::Relaxed);
+        }
+    }
+
+    /// Record one cycle of input `port` (real-time safe)
+    pub fn record_input(&self, port: usize, buffer: &[f32]) {
+        Self::record(self.inputs.get(port), buffer);
+    }
+
+    /// Record one cycle of output `port` (real-time safe)
+    pub fn record_output(&self, port: usize, buffer: &[f32]) {
+        Self::record(self.outputs.get(port), buffer);
+    }
+
+    /// Peaks of the inputs and outputs since the previous call
+    pub fn take(&self) -> ([f32; MAX_PORTS], [f32; MAX_PORTS]) {
+        let take = |slots: &[AtomicU32; MAX_PORTS]| {
+            std::array::from_fn(|i| f32::from_bits(slots[i].swap(0, Ordering::Relaxed)))
+        };
+        (take(&self.inputs), take(&self.outputs))
+    }
 }
 
 /// Sends a new routing to the audio thread
@@ -509,5 +664,75 @@ mod tests {
         router.render(0, [&main, &main], input, &mut out);
         assert!(out[0] > 0.5 && out[0] < 1.0, "ramping: {}", out[0]);
         assert!((out[15] - 0.5).abs() < 1e-6, "input alone: {}", out[15]);
+    }
+
+    #[test]
+    fn sources_step_from_off_to_the_inputs() {
+        let mut routing = Routing::default();
+        routing.step_source(2, 1, 2, 4);
+        assert_eq!(routing.strip(2).map(|s| s.source), Some(Source::Main));
+        routing.step_source(2, 2, 2, 4);
+        assert_eq!(routing.strip(2).map(|s| s.source), Some(Source::Input(1)));
+        // No input 3 on this interface
+        routing.step_source(2, 1, 2, 4);
+        assert_eq!(routing.strip(2).map(|s| s.source), Some(Source::Input(1)));
+        routing.step_source(2, -9, 2, 4);
+        assert!(routing.strip(2).is_none());
+        // Output 2 belongs to the 1–2 pair; output 5 does not exist
+        routing.step_source(1, 1, 2, 4);
+        routing.step_source(4, 1, 2, 4);
+        assert_eq!(routing, Routing::default());
+    }
+
+    #[test]
+    fn linking_makes_a_pair_and_unlinking_keeps_both_sides() {
+        let mut routing = Routing::default();
+        routing.set_linked(0, false, 4);
+        assert_eq!(
+            routing.strip(0).map(|s| (s.stereo, s.fold)),
+            Some((false, Fold::Left))
+        );
+        assert_eq!(
+            routing.strip(1).map(|s| (s.stereo, s.fold)),
+            Some((false, Fold::Right))
+        );
+        assert_eq!(routing.mix(1, 4), Routing::default().mix(1, 4));
+
+        routing.set_linked(0, true, 4);
+        assert!(routing.strip(0).is_some_and(|s| s.stereo));
+        assert!(routing.strip(1).is_none());
+        assert!(routing.validate().is_ok());
+
+        // The last output has no next one to pair with
+        routing.step_source(3, 1, 1, 4);
+        assert!(!routing.can_link(3, 4));
+        routing.set_linked(3, true, 4);
+        assert!(routing.strip(3).is_some_and(|s| !s.stereo));
+    }
+
+    #[test]
+    fn edits_stay_in_range() {
+        let mut routing = Routing::default();
+        routing.edit(0, |s| {
+            s.gain_db = 40.0;
+            s.pan = -3.0;
+        });
+        let strip = routing.strip(0).unwrap();
+        assert_eq!((strip.gain_db, strip.pan), (GAIN_RANGE_DB.1, -1.0));
+        routing.step_input(5, 2);
+        assert_eq!(routing.input, 1);
+        routing.step_input(-5, 2);
+        assert_eq!(routing.input, 0);
+    }
+
+    #[test]
+    fn port_meter_keeps_the_peak_until_read() {
+        let meter = PortMeter::default();
+        meter.record_output(2, &[0.1, -0.6, 0.3]);
+        meter.record_output(2, &[0.2]);
+        meter.record_input(0, &[0.5]);
+        let (inputs, outputs) = meter.take();
+        assert_eq!((inputs[0], outputs[2]), (0.5, 0.6));
+        assert_eq!(meter.take().1[2], 0.0);
     }
 }

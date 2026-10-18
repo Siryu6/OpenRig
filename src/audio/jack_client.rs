@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use super::chain_switcher::ChainControl;
-use super::routing::{OutputRouter, Routing, RoutingControl, MAX_PORTS};
+use super::routing::{OutputRouter, PortMeter, Routing, RoutingControl, MAX_PORTS};
 use super::{ChainSwitcher, Looper, Tuner, TunerResult};
 use crate::monitor::{DspMeter, LevelMeter};
 use crate::plugins::Lv2Host;
@@ -22,6 +22,8 @@ pub struct ActiveJack {
     pub routing: RoutingControl,
     pub meter: Arc<DspMeter>,
     pub levels: Arc<LevelMeter>,
+    /// Peaks of every input and output (Routing view)
+    pub ports: Arc<PortMeter>,
     /// Set when the server shuts down or drops the client
     pub stopped: Arc<AtomicBool>,
     pub sample_rate: f32,
@@ -103,9 +105,11 @@ impl JackClientBuilder {
 
         let meter = Arc::new(DspMeter::default());
         let levels = Arc::new(LevelMeter::default());
+        let ports = Arc::new(PortMeter::default());
         let processor = PedalboardProcessor {
             meter: meter.clone(),
             levels: levels.clone(),
+            ports: ports.clone(),
             period_per_frame: Duration::from_secs_f64(1.0 / sample_rate.max(1.0) as f64),
             in_ports,
             out_ports,
@@ -136,6 +140,7 @@ impl JackClientBuilder {
             routing: routing_control,
             meter,
             levels,
+            ports,
             stopped,
             sample_rate,
             buffer_size,
@@ -197,6 +202,7 @@ pub struct PedalboardProcessor {
     meter: Arc<DspMeter>,
     /// Input and output peaks
     levels: Arc<LevelMeter>,
+    ports: Arc<PortMeter>,
     period_per_frame: Duration,
     in_ports: Vec<jack::Port<jack::AudioIn>>,
     out_ports: Vec<jack::Port<jack::AudioOut>>,
@@ -250,8 +256,12 @@ impl ProcessHandler for PedalboardProcessor {
         let in_ports = &self.in_ports;
         let passed = |i: u8| in_ports.get(i as usize).map(|p| p.as_slice(ps));
         for (port, out) in self.out_ports.iter_mut().enumerate() {
-            self.router
-                .render(port, [left, right], passed, out.as_mut_slice(ps));
+            let out = out.as_mut_slice(ps);
+            self.router.render(port, [left, right], passed, out);
+            self.ports.record_output(port, out);
+        }
+        for (port, input) in in_ports.iter().enumerate() {
+            self.ports.record_input(port, input.as_slice(ps));
         }
         self.levels.record(input, left, right);
 

@@ -111,6 +111,10 @@ export component SettingsView inherits Rectangle {
     callback update-install();
     callback update-restart();
 
+    // Inputs and outputs (the routing itself has its own view)
+    in property <string> routing-summary: "";
+    callback open-routing();
+
 
     private property <bool> editing-key: false;
     private property <string> key-draft: "";
@@ -324,6 +328,53 @@ export component SettingsView inherits Rectangle {
                         color: Theme.danger;
                         font-size: Theme.font-small;
                         wrap: word-wrap;
+                    }
+                }
+            }
+
+            // ----------------------------------------- Inputs and outputs
+            Card {
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    HorizontalLayout {
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                name: "routing";
+                                color: Theme.accent;
+                            }
+                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: "Inputs and outputs";
+                                color: Theme.text-primary;
+                                font-size: Theme.font-title;
+                                font-weight: Theme.weight-semibold;
+                            }
+                            Text {
+                                text: root.routing-summary;
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-small;
+                                wrap: word-wrap;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Button {
+                                width: 160px;
+                                text: "Routing";
+                                icon: "routing";
+                                clicked => {
+                                    root.open-routing();
+                                }
+                            }
+                        }
                     }
                 }
             }

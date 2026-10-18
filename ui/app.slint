@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
 import {
     PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus,
-    T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile
+    T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile, RoutingOutput
 } from "types.slint";
 // Pages
 import { PluginRack } from "pages/rack.slint";
@@ -14,6 +14,7 @@ import { LooperView } from "pages/looper_view.slint";
 import { LiveView } from "pages/live_view.slint";
 import { SettingsView } from "pages/settings_view.slint";
 import { Tone3000View } from "pages/tone3000_view.slint";
+import { RoutingView } from "pages/routing_view.slint";
 import { Features } from "features.slint";
 import { TextEdit, TextEditing } from "components/virtual_keyboard.slint";
 // Components
@@ -193,6 +194,15 @@ export component App inherits Window {
     in-out property <float> update-progress: 0;
     in-out property <string> update-message: "";
 
+    // Routing (view 10, opened from the settings)
+    in-out property <bool> routing-available: false;
+    in-out property <string> routing-summary: "";
+    in-out property <int> routing-inputs: 1;
+    in-out property <int> routing-input: 0;
+    in-out property <[RoutingOutput]> routing-outputs: [];
+    in-out property <[float]> routing-input-levels: [];
+    in-out property <[float]> routing-output-levels: [];
+
     // TONE3000 library (view 8)
     in-out property <int> t3k-tab: 0;
     in-out property <string> t3k-gear: "";
@@ -297,6 +307,13 @@ export component App inherits Window {
     callback t3k-add-model(string, string);          // block URI, relative path
     callback tuner-mute-toggled(bool);
     callback tuner-reference-pitch-changed(float);
+    callback routing-step-input(int);
+    callback routing-step-source(int, int);          // first output, delta
+    callback routing-set-linked(int, bool);
+    callback routing-set-gain(int, float);           // first output, dB
+    callback routing-set-pan(int, float);
+    callback routing-set-fold(int, int);             // 0 = L+R, 1 = L, 2 = R
+    callback routing-toggle(int, string);            // "mute" | "solo" | "invert"
     callback power(string);                          // "poweroff" | "reboot" | "restart" (the app)
     in-out property <bool> power-dialog: false;
     in-out property <string> power-action: "";       // set once chosen
@@ -392,11 +409,13 @@ export component App inherits Window {
                 root.current-view == 9 ? "live" : "";
             current-view-name: root.current-view == 1 ? root.selected-plugin-name :
                 root.current-view == 7 ? "Settings" :
-                root.current-view == 8 ? "TONE3000" : "Add effect";
+                root.current-view == 8 ? "TONE3000" :
+                root.current-view == 10 ? "Routing" : "Add effect";
             preset-name: root.current-preset-name;
             scene-name: root.live-scene-name;
             tempo: root.tempo;
-            show-back-button: root.current-view == 1 || root.current-view == 2 || root.current-view == 7 || root.current-view == 8;
+            back-label: root.current-view == 10 ? "Settings" : "Rack";
+            show-back-button: root.current-view == 1 || root.current-view == 2 || root.current-view == 7 || root.current-view == 8 || root.current-view == 10;
             audio-running: root.audio-running;
             resources: root.resources;
 
@@ -404,7 +423,7 @@ export component App inherits Window {
                 root.show-resources = true;
             }
             back-clicked => {
-                root.current-view = root.current-view == 8 ? root.t3k-return-view : 0;
+                root.current-view = root.current-view == 8 ? root.t3k-return-view : root.current-view == 10 ? 7 : 0;
             }
             rack-clicked => {
                 root.current-view = 0;
@@ -812,7 +831,41 @@ export component App inherits Window {
                 }
             }
 
+            if root.current-view == 10: RoutingView {
+                available: root.routing-available;
+                inputs: root.routing-inputs;
+                input: root.routing-input;
+                outputs: root.routing-outputs;
+                input-levels: root.routing-input-levels;
+                output-levels: root.routing-output-levels;
+                step-input(delta) => {
+                    root.routing-step-input(delta);
+                }
+                step-source(port, delta) => {
+                    root.routing-step-source(port, delta);
+                }
+                set-linked(port, on) => {
+                    root.routing-set-linked(port, on);
+                }
+                set-gain(port, db) => {
+                    root.routing-set-gain(port, db);
+                }
+                set-pan(port, pan) => {
+                    root.routing-set-pan(port, pan);
+                }
+                set-fold(port, fold) => {
+                    root.routing-set-fold(port, fold);
+                }
+                toggle(port, what) => {
+                    root.routing-toggle(port, what);
+                }
+            }
+
             if root.current-view == 7: SettingsView {
+                routing-summary: root.routing-summary;
+                open-routing => {
+                    root.current-view = 10;
+                }
                 footswitch-count: root.footswitch-count;
                 tap-switch: root.tap-switch;
                 tap-switch-changed(on) => {
@@ -1043,6 +1096,8 @@ export component App inherits Window {
                     root.show-context-menu = false;
                 } else if (root.current-view == 8) {
                     root.current-view = root.t3k-return-view;
+                } else if (root.current-view == 10) {
+                    root.current-view = 7;
                 } else if (root.current-view == 1 || root.current-view == 2 || root.current-view == 7) {
                     root.current-view = 0;
                 }

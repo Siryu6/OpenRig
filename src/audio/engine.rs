@@ -6,7 +6,7 @@ use tracing::info;
 
 use super::chain_switcher::ChainControl;
 use super::jack_client::{ActiveJack, JackClientBuilder};
-use super::routing::{Routing, RoutingControl};
+use super::routing::{PortMeter, Routing, RoutingControl};
 use super::{Looper, Tuner, TunerResult};
 use crate::monitor::{DspMeter, LevelMeter};
 use crate::plugins::Lv2Host;
@@ -64,6 +64,11 @@ impl AudioEngine {
     /// Input and output peaks, for the level meters
     pub fn levels(&self) -> Arc<LevelMeter> {
         self.jack.levels.clone()
+    }
+
+    /// Peaks of every input and output, for the Routing view
+    pub fn port_levels(&self) -> Arc<PortMeter> {
+        self.jack.ports.clone()
     }
 
     /// True once the JACK server has shut down: audio stays off until the

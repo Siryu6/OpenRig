@@ -197,3 +197,20 @@ export struct LiveTile {
     color: color,      // LED colour (the block's for stomps)
     switch: int,       // physical footswitch number (1-based), 0 if none
 }
+
+// An output, or a stereo pair of outputs, in the Routing view
+export struct RoutingOutput {
+    port: int,          // first output (0 = output 1)
+    label: string,      // "1–2", "3"
+    stereo: bool,
+    can-link: bool,     // can become a pair with the next output
+    assigned: bool,     // plays something (else off)
+    source: string,     // "Main mix", "Input 2", "Off"
+    main: bool,         // the source is the main mix
+    gain-db: float,
+    pan: float,         // -1 left … 1 right
+    fold: int,          // stereo source on one output: 0 L+R, 1 L, 2 R
+    mute: bool,
+    solo: bool,
+    invert: bool,
+}

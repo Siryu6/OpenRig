@@ -60,6 +60,7 @@ export component TopBar inherits Rectangle {
     in property <string> scene-name: "";        // scene of the preset
     in property <float> tempo: 120;
     in property <bool> show-back-button: false;
+    in property <string> back-label: "Rack";     // where the back button goes
     in property <bool> audio-running: false;
     in property <ResourceStatus> resources;
 
@@ -85,7 +86,7 @@ export component TopBar inherits Rectangle {
         // Left: back button (sub-views) or preset selector
         if root.show-back-button: Button {
             icon: "back";
-            text: "Rack";
+            text: root.back-label;
             variant: "ghost";
             clicked => {
                 root.back-clicked();
