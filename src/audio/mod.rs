@@ -2,6 +2,7 @@ pub mod chain_switcher;
 pub mod engine;
 pub mod jack_client;
 pub mod looper;
+pub mod routing;
 pub mod split_chain;
 pub mod tuner;
 

@@ -97,7 +97,7 @@ impl ChainCommand {
 /// Left and right gains placing a branch at `pan` (-1 left … 1 right). The
 /// centre keeps both sides at full level, so a centred mix sounds as in
 /// mono; hard left and right make an L/R split.
-fn pan_gains(pan: f32) -> (f32, f32) {
+pub(crate) fn pan_gains(pan: f32) -> (f32, f32) {
     let pan = pan.clamp(-1.0, 1.0);
     ((1.0 - pan).min(1.0), (1.0 + pan).min(1.0))
 }
@@ -108,7 +108,7 @@ pub fn is_panned(split_type: SplitType, pan: [f32; 2]) -> bool {
 }
 
 /// Move `current` towards `target` by at most `step`
-fn ramp(current: &mut f32, target: f32, step: f32) {
+pub(crate) fn ramp(current: &mut f32, target: f32, step: f32) {
     if *current < target {
         *current = (*current + step).min(target);
     } else if *current > target {

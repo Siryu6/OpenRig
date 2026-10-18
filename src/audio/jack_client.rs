@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use super::chain_switcher::ChainControl;
+use super::routing::{OutputRouter, Routing, RoutingControl, MAX_PORTS};
 use super::{ChainSwitcher, Looper, Tuner, TunerResult};
 use crate::monitor::{DspMeter, LevelMeter};
 use crate::plugins::Lv2Host;
@@ -18,6 +19,7 @@ const CROSSFADE_MS: f32 = 20.0;
 pub struct ActiveJack {
     pub client: jack::AsyncClient<Notifications, PedalboardProcessor>,
     pub control: ChainControl,
+    pub routing: RoutingControl,
     pub meter: Arc<DspMeter>,
     pub levels: Arc<LevelMeter>,
     /// Set when the server shuts down or drops the client
@@ -41,6 +43,7 @@ impl JackClientBuilder {
     /// Connect to the JACK server, register ports and start processing
     pub fn activate(
         self,
+        routing: &Routing,
         host: Arc<Lv2Host>,
         tuner: Arc<Mutex<Tuner>>,
         looper: Arc<Mutex<Looper>>,
@@ -62,17 +65,37 @@ impl JackClientBuilder {
         *tuner.lock().unwrap() = Tuner::new(sample_rate);
         *looper.lock().unwrap() = Looper::new(sample_rate);
 
-        let in_port = client
-            .register_port("guitar_in", jack::AudioIn)
-            .context("Failed to register input port")?;
-        let out_ports = [
-            client
-                .register_port("out_left", jack::AudioOut)
-                .context("Failed to register the left output port")?,
-            client
-                .register_port("out_right", jack::AudioOut)
-                .context("Failed to register the right output port")?,
-        ];
+        // As many inputs and outputs as the interface has (at least the
+        // guitar input and a stereo pair)
+        let (captures, playbacks) = physical_ports(&client);
+        let inputs = captures.len().clamp(1, MAX_PORTS);
+        let outputs = playbacks.len().clamp(2, MAX_PORTS);
+        let mut in_ports = Vec::with_capacity(inputs);
+        for i in 1..=inputs {
+            let mut port = client
+                .register_port(&format!("in_{i}"), jack::AudioIn)
+                .with_context(|| format!("Failed to register input {i}"))?;
+            if i == 1 {
+                // The name of the single input before multi-channel support
+                let _ = port.set_alias(&format!("{}:guitar_in", self.client_name));
+            }
+            in_ports.push(port);
+        }
+        let mut out_ports = Vec::with_capacity(outputs);
+        for i in 1..=outputs {
+            let mut port = client
+                .register_port(&format!("out_{i}"), jack::AudioOut)
+                .with_context(|| format!("Failed to register output {i}"))?;
+            if let Some(side) = ["out_left", "out_right"].get(i - 1) {
+                let _ = port.set_alias(&format!("{}:{side}", self.client_name));
+            }
+            out_ports.push(port);
+        }
+        info!("{inputs} inputs, {outputs} outputs");
+        // With a single physical output, the routing sees one output, so the
+        // main pair is summed on it
+        let heard = if playbacks.len() == 1 { 1 } else { outputs };
+        let (router, routing_control) = OutputRouter::new(routing, inputs, heard, sample_rate);
 
         let (chain_switcher, control) =
             ChainSwitcher::new(host, sample_rate, buffer_size, CROSSFADE_MS)
@@ -84,8 +107,9 @@ impl JackClientBuilder {
             meter: meter.clone(),
             levels: levels.clone(),
             period_per_frame: Duration::from_secs_f64(1.0 / sample_rate.max(1.0) as f64),
-            in_port,
+            in_ports,
             out_ports,
+            router,
             tuner,
             looper,
             tuner_tx,
@@ -103,12 +127,13 @@ impl JackClientBuilder {
                 processor,
             )
             .context("Failed to activate JACK client")?;
-        connect_system_ports(client.as_client(), &self.client_name);
+        connect_system_ports(client.as_client(), &self.client_name, &captures, &playbacks);
 
         info!("JACK client activated and processing audio");
         Ok(ActiveJack {
             client,
             control,
+            routing: routing_control,
             meter,
             levels,
             stopped,
@@ -123,23 +148,27 @@ pub fn server_running() -> bool {
     Client::new("pedalboard-probe", ClientOptions::NO_START_SERVER).is_ok()
 }
 
-/// Auto-connect to the first physical capture/playback ports, if any.
+/// Physical capture and playback ports (the audio interface's inputs and
+/// outputs), in order
+fn physical_ports(client: &Client) -> (Vec<String>, Vec<String>) {
+    let physical = |flags| client.ports(None, Some("32 bit float mono audio"), flags);
+    (
+        physical(jack::PortFlags::IS_PHYSICAL | jack::PortFlags::IS_OUTPUT),
+        physical(jack::PortFlags::IS_PHYSICAL | jack::PortFlags::IS_INPUT),
+    )
+}
+
+/// Connect input n to the interface's input n and output n to its output n.
 /// Can be disabled with PEDALBOARD_NO_AUTOCONNECT=1.
-fn connect_system_ports(client: &Client, name: &str) {
+fn connect_system_ports(client: &Client, name: &str, captures: &[String], playbacks: &[String]) {
     if std::env::var_os("PEDALBOARD_NO_AUTOCONNECT").is_some() {
         return;
     }
-    let physical = |flags| client.ports(None, Some("32 bit float mono audio"), flags);
-    let captures = physical(jack::PortFlags::IS_PHYSICAL | jack::PortFlags::IS_OUTPUT);
-    let playbacks = physical(jack::PortFlags::IS_PHYSICAL | jack::PortFlags::IS_INPUT);
-
-    if let Some(capture) = captures.first() {
-        let _ = client.connect_ports_by_name(capture, &format!("{name}:guitar_in"));
+    for (i, capture) in captures.iter().take(MAX_PORTS).enumerate() {
+        let _ = client.connect_ports_by_name(capture, &format!("{name}:in_{}", i + 1));
     }
-    // Left and right on the first two playback ports. With a single one,
-    // only the left side is connected: use the mono mode.
-    for (side, playback) in ["out_left", "out_right"].iter().zip(&playbacks) {
-        let _ = client.connect_ports_by_name(&format!("{name}:{side}"), playback);
+    for (i, playback) in playbacks.iter().take(MAX_PORTS).enumerate() {
+        let _ = client.connect_ports_by_name(&format!("{name}:out_{}", i + 1), playback);
     }
 }
 
@@ -161,16 +190,17 @@ impl NotificationHandler for Notifications {
     }
 }
 
-/// Audio callback: input → tuner → effect chain → looper → left and right
-/// outputs
+/// Audio callback: input → tuner → effect chain → looper → output mixer
+/// (the main mix and the inputs on the outputs)
 pub struct PedalboardProcessor {
     /// Time spent in the callback vs. the buffer period
     meter: Arc<DspMeter>,
     /// Input and output peaks
     levels: Arc<LevelMeter>,
     period_per_frame: Duration,
-    in_port: jack::Port<jack::AudioIn>,
-    out_ports: [jack::Port<jack::AudioOut>; 2],
+    in_ports: Vec<jack::Port<jack::AudioIn>>,
+    out_ports: Vec<jack::Port<jack::AudioOut>>,
+    router: OutputRouter,
     tuner: Arc<Mutex<Tuner>>,
     looper: Arc<Mutex<Looper>>,
     tuner_tx: Sender<TunerResult>,
@@ -184,7 +214,8 @@ impl ProcessHandler for PedalboardProcessor {
     fn process(&mut self, _client: &Client, ps: &ProcessScope) -> Control {
         let start = Instant::now();
         super::flush_denormals();
-        let input = self.in_port.as_slice(ps);
+        self.router.update();
+        let input = self.in_ports[self.router.chain_input()].as_slice(ps);
         let n = input.len();
         let [left, right] = &mut self.scratch;
         if left.len() < n {
@@ -216,9 +247,12 @@ impl ProcessHandler for PedalboardProcessor {
             left.fill(0.0);
             right.fill(0.0);
         }
-        let [out_left, out_right] = &mut self.out_ports;
-        out_left.as_mut_slice(ps).copy_from_slice(left);
-        out_right.as_mut_slice(ps).copy_from_slice(right);
+        let in_ports = &self.in_ports;
+        let passed = |i: u8| in_ports.get(i as usize).map(|p| p.as_slice(ps));
+        for (port, out) in self.out_ports.iter_mut().enumerate() {
+            self.router
+                .render(port, [left, right], passed, out.as_mut_slice(ps));
+        }
         self.levels.record(input, left, right);
 
         // Running the old and the new chain together while switching costs

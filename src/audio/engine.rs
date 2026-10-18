@@ -6,6 +6,7 @@ use tracing::info;
 
 use super::chain_switcher::ChainControl;
 use super::jack_client::{ActiveJack, JackClientBuilder};
+use super::routing::{Routing, RoutingControl};
 use super::{Looper, Tuner, TunerResult};
 use crate::monitor::{DspMeter, LevelMeter};
 use crate::plugins::Lv2Host;
@@ -25,13 +26,21 @@ impl AudioEngine {
     ) -> Result<Self> {
         info!("Starting audio engine");
         let (tuner_tx, tuner_rx) = bounded(16);
-        let jack = JackClientBuilder::new("pedalboard").activate(host, tuner, looper, tuner_tx)?;
+        let routing = Routing::load(&crate::state::data_dir());
+        let jack = JackClientBuilder::new("pedalboard")
+            .activate(&routing, host, tuner, looper, tuner_tx)?;
         Ok(Self { jack, tuner_rx })
     }
 
     /// Handles to send chain specs and live commands to the audio thread
     pub fn control(&self) -> ChainControl {
         self.jack.control.clone()
+    }
+
+    /// Handle to change the input feeding the chain and what the outputs
+    /// play, with the number of inputs and outputs
+    pub fn routing(&self) -> RoutingControl {
+        self.jack.routing.clone()
     }
 
     /// Receiver for tuner results
