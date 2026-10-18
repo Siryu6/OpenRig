@@ -68,6 +68,11 @@ Last update: 2026-10-15.
   LV2 blocks after the stereo point, stereo looper and preset crossfade,
   split type change from the rack. Tested with unit tests (and a real LV2
   plugin), not yet on a stereo interface.
+- Inputs and outputs (see `docs/ROUTING.md`): every port of the interface,
+  output router (main mix, 4 sends, inputs passed through; level, balance,
+  mute, solo, polarity, 10 ms ramps), Send and Return blocks in the rack,
+  Routing page with meters. Tested with unit tests and a 4 x 4
+  dummy JACK server under Xvfb, not yet on a real multi-channel interface.
 - MIDI (see `docs/MIDI.md`): all inputs heard and hot-plugged (250 ms scan),
   Helix-style map (PC / CC0 banks, setlist slots and CC32 setlists, scenes,
   footswitches, looper, tap, tuner, modes, preset step), clock → tempo,
@@ -113,6 +118,8 @@ Last update: 2026-10-15.
   costs about 12 % of one core, an IR block almost nothing. Still to check:
   latency, GPIO wiring (switch hold and debounce), touchscreen, the firmware
   throttling readout (`get_throttled`).
+- Inputs and outputs on a real interface with more than 2 x 2 channels, and
+  the Routing page on the Pi's 480-pixel screen (it scrolls).
 - MIDI with real hardware (AudioBox DIN input, USB controllers), on macOS
   (CoreMIDI) and Windows (WinMM).
 - Keys `1`–`8` / `t`: not reachable under Xvfb without a window manager; the

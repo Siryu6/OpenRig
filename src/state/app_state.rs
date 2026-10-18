@@ -2171,6 +2171,22 @@ mod tests {
     }
 
     #[test]
+    fn sends_and_returns_are_blocks_of_the_preset() {
+        use crate::plugins::scanner::{ret, RETURN_URI};
+        let (state, dir) = state();
+        let id = state.add_plugin(RETURN_URI).unwrap();
+        assert_eq!(state.chain().params[&id], vec![1.0, 0.0, 100.0]);
+        state.set_parameter(id, ret::INPUT, 3.0).unwrap();
+        let preset = state.save_preset("Bass".into()).unwrap();
+
+        state.clear_chain();
+        state.load_preset(&preset).unwrap();
+        assert_eq!(state.chain().params[&id][ret::INPUT], 3.0);
+        assert_eq!(state.plugin_name(RETURN_URI), "Return");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn presets_round_trip_the_whole_chain() {
         let (state, dir) = state();
         let split = state.add_split(SplitType::Mix).unwrap();

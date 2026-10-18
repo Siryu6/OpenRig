@@ -51,6 +51,13 @@ What OpenRig does, in more technical detail than the
   shows the tone picture.
 - **Chain with splits**: serial chain plus nested A/B, Mix and L/R splits;
   a split's type can be changed from the rack (its blocks are kept).
+- **Inputs and outputs**: every input and output of the interface (up to
+  16 each). One input feeds the effects; each output or stereo pair plays
+  the main mix, one of 4 sends, or an input passed straight through, with
+  level, balance, mute, solo and polarity (kept for the rig in
+  `routing.json`). Send and Return blocks, placed anywhere in the rack,
+  copy the signal at their place to a send bus or bring an input in, with
+  level, mix and bypass per scene. See [ROUTING.md](ROUTING.md).
 - **Stereo**: two outputs. The guitar comes in mono and becomes stereo where
   something makes it so: an L/R split (top branch to the left output, bottom
   branch to the right one — e.g. front of house with a cabinet IR on one

@@ -1,0 +1,448 @@
+import { Theme } from "../theme.slint";
+import { Button, Card, EmptyState, Icon, Knob, Segmented, Stepper } from "../components/controls.slint";
+import { LedBar } from "../components/level_meter.slint";
+import { RoutingBlock, RoutingOutput } from "../types.slint";
+
+// Title and explanation of a card
+component CardTitle inherits HorizontalLayout {
+    in property <string> icon;
+    in property <string> title;
+    in property <string> text;
+    spacing: Theme.space-md;
+    VerticalLayout {
+        alignment: center;
+        Icon {
+            name: root.icon;
+            color: Theme.accent;
+        }
+    }
+    VerticalLayout {
+        horizontal-stretch: 1;
+        alignment: center;
+        spacing: 2px;
+        Text {
+            text: root.title;
+            color: Theme.text-primary;
+            font-size: Theme.font-title;
+            font-weight: Theme.weight-semibold;
+        }
+        Text {
+            text: root.text;
+            color: Theme.text-secondary;
+            font-size: Theme.font-small;
+            wrap: word-wrap;
+        }
+    }
+}
+
+// Knob with its name and value under it
+component LabeledKnob inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value-text;
+    in property <float> value;
+    in property <float> minimum;
+    in property <float> maximum;
+    callback changed(float);
+    spacing: 2px;
+    alignment: start;
+    HorizontalLayout {
+        alignment: center;
+        Knob {
+            size: 60px;
+            value: root.value;
+            minimum: root.minimum;
+            maximum: root.maximum;
+            changed(v) => {
+                root.changed(v);
+            }
+        }
+    }
+    Text {
+        text: root.label;
+        color: Theme.text-muted;
+        font-size: Theme.font-caption;
+        font-weight: Theme.weight-bold;
+        horizontal-alignment: center;
+    }
+    Text {
+        text: root.value-text;
+        color: Theme.text-primary;
+        font-size: Theme.font-small;
+        horizontal-alignment: center;
+    }
+}
+
+// One output, or a stereo pair: source, meter, level, balance, mute / solo / polarity
+component OutputStrip inherits Rectangle {
+    in property <RoutingOutput> output;
+    in property <float> level-a;     // meter of the first output (0..1)
+    in property <float> level-b;     // and of the second one of a pair
+    callback step-source(int, int);
+    callback set-linked(int, bool);
+    callback set-gain(int, float);
+    callback set-pan(int, float);
+    callback set-fold(int, int);
+    callback toggle(int, string);
+
+    width: 176px;
+    border-radius: Theme.radius-md;
+    background: Theme.surface-raised;
+    border-width: Theme.border-width;
+    border-color: root.output.solo ? Theme.warning.with-alpha(0.6) : Theme.border;
+
+    VerticalLayout {
+        alignment: start;
+        padding: Theme.space-sm;
+        spacing: Theme.space-sm;
+
+        HorizontalLayout {
+            height: Theme.touch-target;
+            spacing: Theme.space-sm;
+            Text {
+                horizontal-stretch: 1;
+                text: "OUT " + root.output.label;
+                color: root.output.assigned ? Theme.text-primary : Theme.text-muted;
+                font-size: Theme.font-small;
+                font-weight: Theme.weight-bold;
+                letter-spacing: 0.8px;
+                vertical-alignment: center;
+            }
+            if root.output.assigned && (root.output.stereo || root.output.can-link): Button {
+                icon: root.output.stereo ? "stereo" : "mono";
+                active: root.output.stereo;
+                clicked => {
+                    root.set-linked(root.output.port, !root.output.stereo);
+                }
+            }
+        }
+
+        Stepper {
+            text: root.output.source;
+            can-decrement: root.output.assigned;
+            decrement => {
+                root.step-source(root.output.port, -1);
+            }
+            increment => {
+                root.step-source(root.output.port, 1);
+            }
+        }
+
+        if root.output.assigned: VerticalLayout {
+            spacing: Theme.space-sm;
+
+            // Meter: one bar, or one per side of a pair
+            Rectangle {
+                height: 16px;
+                border-radius: Theme.radius-sm;
+                background: Theme.display;
+                border-width: 1px;
+                border-color: #000000;
+                if !root.output.stereo: LedBar {
+                    x: 4px;
+                    y: 4px;
+                    width: parent.width - 8px;
+                    height: 8px;
+                    level: root.level-a;
+                }
+                if root.output.stereo: LedBar {
+                    x: 4px;
+                    y: 3px;
+                    width: parent.width - 8px;
+                    height: 4px;
+                    level: root.level-a;
+                }
+                if root.output.stereo: LedBar {
+                    x: 4px;
+                    y: 9px;
+                    width: parent.width - 8px;
+                    height: 4px;
+                    level: root.level-b;
+                }
+            }
+
+            HorizontalLayout {
+                alignment: space-around;
+                LabeledKnob {
+                    label: "LEVEL";
+                    value-text: (root.output.gain-db > 0 ? "+" : "") + round(root.output.gain-db * 10) / 10 + " dB";
+                    value: root.output.gain-db;
+                    // GAIN_RANGE_DB in src/audio/routing.rs
+                    minimum: -60;
+                    maximum: 12;
+                    changed(v) => {
+                        root.set-gain(root.output.port, v);
+                    }
+                }
+                if root.output.stereo: LabeledKnob {
+                    label: "BALANCE";
+                    value-text: abs(root.output.pan) < 0.01 ? "C"
+                        : (root.output.pan < 0 ? "L " : "R ") + round(abs(root.output.pan) * 100);
+                    value: root.output.pan;
+                    minimum: -1;
+                    maximum: 1;
+                    changed(v) => {
+                        root.set-pan(root.output.port, v);
+                    }
+                }
+            }
+
+            // A stereo source on a single output
+            if !root.output.stereo && root.output.bus: Segmented {
+                options: ["L+R", "L", "R"];
+                current-index: root.output.fold;
+                activated(i) => {
+                    root.set-fold(root.output.port, i);
+                }
+            }
+
+            HorizontalLayout {
+                spacing: Theme.space-xs;
+                Button {
+                    horizontal-stretch: 1;
+                    text: "M";
+                    variant: root.output.mute ? "solid-danger" : "secondary";
+                    clicked => {
+                        root.toggle(root.output.port, "mute");
+                    }
+                }
+                Button {
+                    horizontal-stretch: 1;
+                    text: "S";
+                    variant: root.output.solo ? "warning" : "secondary";
+                    clicked => {
+                        root.toggle(root.output.port, "solo");
+                    }
+                }
+                Button {
+                    horizontal-stretch: 1;
+                    text: "Ø";
+                    active: root.output.invert;
+                    clicked => {
+                        root.toggle(root.output.port, "invert");
+                    }
+                }
+            }
+        }
+
+        if !root.output.assigned: Text {
+            text: "Silent";
+            color: Theme.text-muted;
+            font-size: Theme.font-small;
+            horizontal-alignment: center;
+        }
+    }
+}
+
+// A send or return block of the preset, and where it is
+component BlockRow inherits HorizontalLayout {
+    in property <RoutingBlock> block;
+    spacing: Theme.space-sm;
+
+    VerticalLayout {
+        horizontal-stretch: 1;
+        alignment: center;
+        spacing: 2px;
+        Text {
+            text: root.block.name;
+            color: root.block.bypassed ? Theme.text-secondary : Theme.text-primary;
+            font-size: Theme.font-body;
+            font-weight: Theme.weight-semibold;
+            overflow: elide;
+        }
+        Text {
+            text: root.block.place;
+            color: Theme.text-muted;
+            font-size: Theme.font-caption;
+            overflow: elide;
+        }
+    }
+    if root.block.bypassed: VerticalLayout {
+        alignment: center;
+        Text {
+            text: "Bypassed";
+            color: Theme.text-muted;
+            font-size: Theme.font-small;
+        }
+    }
+}
+
+// Routing: the input feeding the effects, what each output of the interface plays, and
+// the send and return blocks of the preset.
+// Kept apart from the rack: with a 2 x 2 interface there is nothing to change here. Sends
+// and returns are blocks of the rack, listed here to see what feeds each send.
+export component RoutingView inherits Rectangle {
+    in property <bool> available: false;     // audio running
+    in property <int> inputs: 1;
+    in property <int> input: 0;              // feeding the effects (0 = input 1)
+    in property <[RoutingOutput]> outputs: [];
+    in property <[float]> input-levels: [];  // meter positions, per input
+    in property <[float]> output-levels: []; // and per output
+    in property <string> preset-name;
+    in property <[RoutingBlock]> blocks: [];  // send and return blocks of the preset, in signal order
+
+    callback step-input(int);
+    callback step-source(int, int);          // first output, delta
+    callback set-linked(int, bool);
+    callback set-gain(int, float);
+    callback set-pan(int, float);
+    callback set-fold(int, int);
+    callback toggle(int, string);            // "mute" | "solo" | "invert"
+
+    width: 100%;
+    height: 100%;
+
+    if !root.available: EmptyState {
+        icon: "routing";
+        title: "Audio is off";
+        message: "Inputs and outputs can be set once the audio interface is running.";
+    }
+
+    if root.available: Flickable {
+        viewport-height: content.preferred-height;
+
+        content := VerticalLayout {
+            alignment: start;
+            padding: Theme.space-lg;
+            spacing: Theme.space-md;
+
+            Card {
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    CardTitle {
+                        icon: "routing";
+                        title: "Inputs";
+                        text: root.inputs > 1
+                            ? "The input that feeds the effects and the tuner. The others can be played straight on an output, without effects."
+                            : "The interface has a single input: it feeds the effects and the tuner.";
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.space-lg;
+                        if root.inputs > 1: VerticalLayout {
+                            alignment: center;
+                            spacing: Theme.space-xs;
+                            Text {
+                                text: "EFFECTS INPUT";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-caption;
+                                font-weight: Theme.weight-bold;
+                                letter-spacing: 0.8px;
+                            }
+                            Stepper {
+                                width: 180px;
+                                text: "Input " + (root.input + 1);
+                                can-decrement: root.input > 0;
+                                can-increment: root.input < root.inputs - 1;
+                                decrement => {
+                                    root.step-input(-1);
+                                }
+                                increment => {
+                                    root.step-input(1);
+                                }
+                            }
+                        }
+                        // A meter per input, to find which one is plugged
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: Theme.space-xs;
+                            for level[i] in root.input-levels: HorizontalLayout {
+                                spacing: Theme.space-sm;
+                                Text {
+                                    width: 44px;
+                                    text: "IN " + (i + 1);
+                                    color: i == root.input ? Theme.accent : Theme.text-muted;
+                                    font-size: Theme.font-caption;
+                                    font-weight: Theme.weight-bold;
+                                    vertical-alignment: center;
+                                }
+                                Rectangle {
+                                    height: 14px;
+                                    border-radius: Theme.radius-sm;
+                                    background: Theme.display;
+                                    LedBar {
+                                        x: 3px;
+                                        y: 3px;
+                                        width: parent.width - 6px;
+                                        height: 8px;
+                                        level: level;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Card {
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    CardTitle {
+                        icon: "volume";
+                        title: "Outputs";
+                        text: "What each output of the interface plays: the main mix of the effects, a send, or an input as it comes in. Kept for the whole pedalboard, whatever the preset.";
+                    }
+
+                    Flickable {
+                        height: strips.preferred-height;
+                        viewport-width: strips.preferred-width;
+                        strips := HorizontalLayout {
+                            alignment: start;
+                            spacing: Theme.space-sm;
+                            for output in root.outputs: OutputStrip {
+                                output: output;
+                                level-a: root.output-levels[output.port];
+                                level-b: root.output-levels[output.port + 1];
+                                step-source(port, delta) => {
+                                    root.step-source(port, delta);
+                                }
+                                set-linked(port, on) => {
+                                    root.set-linked(port, on);
+                                }
+                                set-gain(port, v) => {
+                                    root.set-gain(port, v);
+                                }
+                                set-pan(port, v) => {
+                                    root.set-pan(port, v);
+                                }
+                                set-fold(port, i) => {
+                                    root.set-fold(port, i);
+                                }
+                                toggle(port, what) => {
+                                    root.toggle(port, what);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Card {
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    CardTitle {
+                        icon: "split";
+                        title: "Sends and returns" + (root.preset-name != "" ? " · " + root.preset-name : "");
+                        text: "Add a Send or a Return to the rack from +, in the Routing family. A send copies the signal at its place to an output above (a dry signal before the amp, a 100% wet reverb); a return brings an input in (a bass DI before a cabinet).";
+                    }
+
+                    if root.blocks.length == 0: Text {
+                        text: "The preset has no send or return.";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-small;
+                    }
+
+                    for block in root.blocks: BlockRow {
+                        block: block;
+                    }
+                }
+            }
+        }
+    }
+}

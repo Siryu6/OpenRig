@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::midi::RawMidi;
-use crate::plugins::chain::{ChainCommand, ChainSpec, EffectChain};
+use crate::plugins::chain::{ChainCommand, ChainIo, ChainSpec, EffectChain};
 use crate::plugins::Lv2Host;
 
 /// Number of recent commands kept for replay
@@ -72,11 +72,16 @@ impl CrossfadeState {
     }
 
     fn progress(&self) -> f32 {
+        self.progress_after(0)
+    }
+
+    /// Progress `ahead` samples from now, up to 1
+    fn progress_after(&self, ahead: usize) -> f32 {
         match self {
             CrossfadeState::Active {
                 current_sample,
                 duration_samples,
-            } => (*current_sample as f32) / (*duration_samples as f32).max(1.0),
+            } => ((current_sample + ahead) as f32 / (*duration_samples as f32).max(1.0)).min(1.0),
             CrossfadeState::Idle => 1.0,
         }
     }
@@ -265,32 +270,52 @@ impl ChainSwitcher {
         }
     }
 
-    /// Process the mono input in `left` into the `left` and `right`
-    /// outputs, in place (audio thread). Returns true if two chains ran
-    /// (a crossfade to a new chain): a one-off load, not the chain's own.
+    /// `process_io` without inputs or sends
+    #[cfg(test)]
     pub fn process(&mut self, left: &mut [f32], right: &mut [f32]) -> bool {
+        crate::plugins::chain::no_io(|io| self.process_io(left, right, io))
+    }
+
+    /// Process the mono input in `left` into the `left` and `right`
+    /// outputs, in place (audio thread), with the inputs of the interface
+    /// for the returns and the send buses for the sends. Returns true if two
+    /// chains ran (a crossfade to a new chain): a one-off load, not the
+    /// chain's own.
+    pub fn process_io(&mut self, left: &mut [f32], right: &mut [f32], io: &mut ChainIo) -> bool {
         self.poll();
         let max_block = self.max_block;
         let mut switching = false;
-        for (l, r) in left.chunks_mut(max_block).zip(right.chunks_mut(max_block)) {
+        for (k, (l, r)) in left
+            .chunks_mut(max_block)
+            .zip(right.chunks_mut(max_block))
+            .enumerate()
+        {
+            let offset = k * max_block;
             if self.crossfade_state.is_active() && self.next.is_some() {
-                self.process_crossfade(l, r);
+                self.process_crossfade(l, r, io, offset);
                 switching = true;
             } else {
-                self.active.process(l, r);
+                io.part(offset, l.len(), 1.0, 1.0);
+                self.active.process_io(l, r, io);
             }
         }
         switching
     }
 
-    fn process_crossfade(&mut self, l: &mut [f32], r: &mut [f32]) {
+    fn process_crossfade(&mut self, l: &mut [f32], r: &mut [f32], io: &mut ChainIo, offset: usize) {
         let n = l.len();
         let [next_l, next_r] = &mut self.next_out;
         let (next_l, next_r) = (&mut next_l[..n], &mut next_r[..n]);
         next_l.copy_from_slice(l);
-        self.active.process(l, r);
+        // The sends of each chain follow its share of the crossfade
+        let angle =
+            |ahead| self.crossfade_state.progress_after(ahead) * std::f32::consts::FRAC_PI_2;
+        let (from, to) = (angle(0), angle(n));
+        io.part(offset, n, from.cos(), to.cos());
+        self.active.process_io(l, r, io);
         if let Some(next) = &mut self.next {
-            next.process(next_l, next_r);
+            io.part(offset, n, from.sin(), to.sin());
+            next.process_io(next_l, next_r, io);
         }
 
         // Equal-power crossfade, per sample

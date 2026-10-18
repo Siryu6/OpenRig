@@ -5,6 +5,7 @@ mod live_ui;
 #[cfg(feature = "midi")]
 mod midi_io;
 mod midi_ui;
+mod routing_ui;
 #[cfg(feature = "tone3000")]
 mod tone3000_ui;
 #[cfg(feature = "update")]
@@ -132,7 +133,7 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
             mix_ratio: n.mix_ratio,
             pan_a: n.pan[0],
             pan_b: n.pan[1],
-            kind: scanner::file_block(&n.uri).map_or("", |b| b.shape).into(),
+            kind: scanner::shape(&n.uri).into(),
             tint: rgb(block_tint(state, &chain, n.instance_id, &n.uri)),
             tinted: chain
                 .colors
@@ -166,6 +167,7 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
     app.set_chain_bottom(max_y);
     app.set_stereo_mode(chain.stereo_mode);
     refresh_editor(app, state, &chain);
+    routing_ui::chain_changed(app, state);
     // Scenes and stomp switches follow the chain
     live_ui::refresh(app, state);
 }
@@ -188,6 +190,9 @@ pub(crate) fn block_name(
     instance_id: usize,
     uri: &str,
 ) -> String {
+    if let Some(name) = routing_ui::routing_block_name(uri, chain.params.get(&instance_id)) {
+        return name;
+    }
     match chain.files.get(&instance_id) {
         Some(file) => state
             .model_pack(uri, file)
@@ -208,10 +213,7 @@ pub(crate) fn block_tint(
         .get(&instance_id)
         .and_then(|c| views::block_color(c))
         .unwrap_or_else(|| {
-            views::default_block_color(
-                scanner::file_block(uri).map_or("", |b| b.shape),
-                state.plugin_category(uri).as_ref(),
-            )
+            views::default_block_color(scanner::shape(uri), state.plugin_category(uri).as_ref())
         })
 }
 
@@ -1183,6 +1185,7 @@ fn main() -> Result<()> {
     update_ui::setup(&app);
     live_ui::setup(&app, &state);
     midi_ui::setup(&app, &state);
+    let _routing_meters = routing_ui::setup(&app, &state, engine.as_deref());
     refresh_all(&app, &state);
     let _timer = start_poll_timer(&app, &state, engine.as_deref());
     let _monitor = start_monitor_timer(&app, engine.clone());
