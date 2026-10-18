@@ -44,8 +44,8 @@ real time with JACK, and updates itself without risking the board.
 - **[Live](https://openrig.eu/docs/using/live/)**: 8 scenes per preset, setlists, stomp mode,
   tap tempo, [tuner and looper](https://openrig.eu/docs/using/tuner-looper/).
 - **[Inputs and outputs](https://openrig.eu/docs/setup/routing/)**: every input and output of
-  the interface, with sends and returns on any block: a dry signal for reamping, a bass DI, a
-  separate monitor mix.
+  the interface, with Send and Return blocks anywhere in the rack: a dry signal for reamping, a
+  bass DI, a separate monitor mix.
 - **[MIDI](https://openrig.eu/docs/using/midi/)**: Helix-style map for presets, scenes and
   stomps, clock and CC learn.
 - **[Updates](https://openrig.eu/docs/setup/updates/)**: a read-only system with signed A/B
@@ -141,10 +141,9 @@ chain and outputs 1 and 2 play its left and right sides, unless
 chain; for each output or pair: the main mix, one of four sends or an input
 passed through, level, balance, mute, solo, polarity, and how a stereo
 source plays on a single output). With a single playback port, both sides
-are summed on it. Presets can also attach a return (an input replacing the
-signal before a block) and a send (the signal after a block, copied to a
-send) to any block. All of it is set in Settings → Inputs and outputs →
-Routing; see [docs/ROUTING.md](docs/ROUTING.md).
+are summed on it. The outputs are set in Settings → Inputs and outputs →
+Routing. In the rack, a Send block copies the signal at its place to a send
+and a Return block brings an input in; see [docs/ROUTING.md](docs/ROUTING.md).
 `in_1`, `out_1` and `out_2` keep their former names as aliases
 (`guitar_in`, `out_left`, `out_right`). Without JACK, the UI still starts
 with audio disabled.

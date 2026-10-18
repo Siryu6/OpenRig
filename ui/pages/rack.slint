@@ -251,26 +251,6 @@ export component PluginRack {
                             pressed: node-ta.pressed && idx != root.drag-index;
                         }
 
-                        // Return and send of the block, set in the Routing view
-                        if node.io != "": Rectangle {
-                            x: (parent.width - self.width) / 2;
-                            y: parent.height + 4px;
-                            width: io-text.preferred-width + 10px;
-                            height: 14px;
-                            border-radius: 7px;
-                            background: Theme.display;
-                            border-width: 1px;
-                            border-color: Theme.accent.with-alpha(0.6);
-                            io-text := Text {
-                                text: node.io;
-                                color: Theme.accent;
-                                font-size: 9px;
-                                font-weight: Theme.weight-bold;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
-                        }
-
                         // Split node: round fork with its type
                         if node.is-split: Rectangle {
                             border-radius: Theme.radius-lg;

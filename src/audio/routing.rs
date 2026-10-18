@@ -3,10 +3,9 @@
 //! chain's main mix, a send, or an input passed straight through), with its
 //! level, balance, mute, solo and polarity.
 //!
-//! Sends and returns are points of the chain, attached to a block of a
-//! preset ([`BlockIo`]): a send copies the signal after the block to a send
-//! bus, which outputs can play; a return replaces the signal before the
-//! block with an input of the interface.
+//! Sends and returns are blocks of a preset (`plugins::scanner::SEND_URI`,
+//! `RETURN_URI`): a send copies the signal at its place to a send bus,
+//! which outputs can play; a return brings an input of the interface in.
 //!
 //! Set in the Routing view and kept in `routing.json` in the data directory:
 //! like `hardware.json`, it belongs to the rig, not to a preset, so changing
@@ -44,35 +43,6 @@ pub enum Source {
     Input(u8),
     /// A send bus, filled by the sends of the chain (0 = send 1)
     Send(u8),
-}
-
-/// Signal taken out of the chain or brought into it at a block, set in the
-/// Routing view and saved with the preset
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct BlockIo {
-    /// Input that replaces the signal before the block (0 = input 1)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input: Option<u8>,
-    /// Send bus the signal after the block is copied to (0 = send 1)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub send: Option<u8>,
-}
-
-impl BlockIo {
-    pub fn is_none(&self) -> bool {
-        self.input.is_none() && self.send.is_none()
-    }
-
-    /// Short mark for the rack: "IN 2", "S1", "IN 2 · S1"
-    pub fn mark(&self) -> String {
-        let input = self.input.map(|i| format!("IN {}", i + 1));
-        let send = self.send.map(|s| format!("S{}", s + 1));
-        [input, send]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" · ")
-    }
 }
 
 /// How a stereo source plays on a single output
@@ -812,16 +782,6 @@ mod tests {
         // A missing bus is silent
         router.render(3, &[[&main, &main]], |_| None, &mut out);
         assert_eq!(out, [0.0; 4]);
-    }
-
-    #[test]
-    fn block_marks_name_the_input_and_the_send() {
-        let io = BlockIo {
-            input: Some(1),
-            send: Some(0),
-        };
-        assert_eq!(io.mark(), "IN 2 · S1");
-        assert_eq!(BlockIo::default().mark(), "");
     }
 
     #[test]

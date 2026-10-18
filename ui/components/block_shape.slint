@@ -4,12 +4,13 @@ import { T3kMark } from "tone3000_brand.slint";
 // Rack block drawn after the gear it stands for, so the chain reads at a
 // glance: an amp head is a flat box with its control panel, a combo adds a
 // grille, a cabinet shows its speakers, a pedal has its footswitch, a space
-// is a rounded box. Other blocks are plain cards.
+// is a rounded box, a send or a return is a jack plate. Other blocks are
+// plain cards.
 // Faces are dark (black tolex, grilles, graphite enclosures): the block's
 // colour (its family's, or the user's) is only its frame and trim, plus a
 // faint glow while it plays. A bypassed block loses its colour and its LED.
 export component BlockShape {
-    in property <string> kind;          // "amp" | "combo" | "cab" | "pedal" | "space" | ""
+    in property <string> kind;          // "amp" | "combo" | "cab" | "pedal" | "space" | "send" | "return" | ""
     in property <string> name;
     in property <color> tint;           // the user's colour, else the family's
     in property <bool> tinted: false;   // tint chosen by the user
@@ -20,9 +21,10 @@ export component BlockShape {
 
     // Size of the gear (the rack keeps the same cells for every kind)
     out property <length> shape-width: root.kind == "amp" ? 90px : root.kind == "combo" ? 82px
-        : root.kind == "cab" ? 68px : root.kind == "pedal" ? 62px : 84px;
+        : root.kind == "cab" ? 68px : root.kind == "pedal" ? 62px : root.jack ? 66px : 84px;
     out property <length> shape-height: root.kind == "amp" ? 46px : root.kind == "combo" ? 58px
-        : root.kind == "cab" ? 58px : root.kind == "pedal" ? 60px : root.kind == "space" ? 46px : 52px;
+        : root.kind == "cab" ? 58px : root.kind == "pedal" ? 60px : root.kind == "space" ? 46px
+        : root.jack ? 40px : 52px;
 
     private property <bool> gear: root.kind != "";
     // Frame and trim colour
@@ -33,6 +35,9 @@ export component BlockShape {
     // Amp control panel strip
     private property <bool> has-panel: root.kind == "amp" || root.kind == "combo";
     private property <length> panel-h: 12px;
+    // Send or return: a jack socket on the side the signal leaves or enters by
+    private property <bool> jack: root.kind == "send" || root.kind == "return";
+    private property <length> socket: 14px;
 
     width: root.shape-width;
     height: root.shape-height;
@@ -139,14 +144,31 @@ export component BlockShape {
             }
         }
 
+        if root.jack: Rectangle {
+            x: root.kind == "return" ? 6px : parent.width - 6px - root.socket;
+            y: (parent.height - root.socket) / 2;
+            width: root.socket;
+            height: root.socket;
+            border-radius: root.socket / 2;
+            background: #0b0b0c;
+            border-width: 2px;
+            border-color: root.bypassed ? #5a5f68 : #b9bcc2;
+            Rectangle {
+                width: 4px;
+                height: 4px;
+                border-radius: 2px;
+                background: #000000;
+            }
+        }
+
         Text {
-            x: 3px;
+            x: root.kind == "return" ? root.socket + 8px : 3px;
             y: root.has-panel ? root.panel-h : root.kind == "pedal" ? 15px : 3px;
-            width: parent.width - 6px;
+            width: parent.width - 6px - (root.jack ? root.socket + 5px : 0px);
             height: parent.height - self.y - (root.kind == "pedal" ? 17px : 2px);
             text: root.name;
             color: root.bypassed ? Theme.text-muted : #ffffff;
-            font-size: root.kind == "pedal" || root.kind == "cab" ? 10px : Theme.font-caption;
+            font-size: root.kind == "pedal" || root.kind == "cab" || root.jack ? 10px : Theme.font-caption;
             font-weight: Theme.weight-semibold;
             horizontal-alignment: center;
             vertical-alignment: center;

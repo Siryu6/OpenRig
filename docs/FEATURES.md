@@ -55,10 +55,9 @@ What OpenRig does, in more technical detail than the
   16 each). One input feeds the effects; each output or stereo pair plays
   the main mix, one of 4 sends, or an input passed straight through, with
   level, balance, mute, solo and polarity (kept for the rig in
-  `routing.json`). A preset can put a return before any block (an input
-  replaces the signal) and a send after it (the signal is copied to a send
-  bus); the rack only marks those blocks, everything is set on the Routing
-  page. See [ROUTING.md](ROUTING.md).
+  `routing.json`). Send and Return blocks, placed anywhere in the rack,
+  copy the signal at their place to a send bus or bring an input in, with
+  level, mix and bypass per scene. See [ROUTING.md](ROUTING.md).
 - **Stereo**: two outputs. The guitar comes in mono and becomes stereo where
   something makes it so: an L/R split (top branch to the left output, bottom
   branch to the right one — e.g. front of house with a cabinet IR on one

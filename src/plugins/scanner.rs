@@ -138,6 +138,7 @@ pub enum PluginCategory {
     Simulator,  // Amp sim, Cabinet sim
     Utility,    // Tuner, Analyzer, Mixer
     Generator,  // Oscillator, Noise
+    Routing,    // Sends and returns (built in)
     Unknown,
 }
 
@@ -237,6 +238,32 @@ pub const IR_URI: &str = "urn:pedalboard:ir";
 /// URI of the built-in space block (room / reverb impulse response)
 pub const IR_SPACE_URI: &str = "urn:pedalboard:ir-space";
 
+/// URI of the built-in send block: copies the signal at that point to a
+/// send bus, which an output of the Routing page can play
+pub const SEND_URI: &str = "urn:pedalboard:send";
+
+/// URI of the built-in return block: brings an input of the interface into
+/// the chain at that point
+pub const RETURN_URI: &str = "urn:pedalboard:return";
+
+/// Parameters of the send block
+pub mod send {
+    pub const BUS: usize = 0;
+    pub const LEVEL: usize = 1;
+}
+
+/// Parameters of the return block
+pub mod ret {
+    pub const INPUT: usize = 0;
+    pub const LEVEL: usize = 1;
+    pub const MIX: usize = 2;
+}
+
+/// True for the send and return blocks, run by the chain itself
+pub fn is_routing(uri: &str) -> bool {
+    uri == SEND_URI || uri == RETURN_URI
+}
+
 /// Engine of a block that loads a file
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileKind {
@@ -329,6 +356,25 @@ pub const FILE_BLOCKS: [FileBlock; 5] = [
 /// The file block `uri`, if it is one
 pub fn file_block(uri: &str) -> Option<&'static FileBlock> {
     FILE_BLOCKS.iter().find(|b| b.uri == uri)
+}
+
+/// How the rack draws block `uri`: "amp", "combo", "cab", "pedal", "space",
+/// "send", "return", or "" for a plain card
+pub fn shape(uri: &str) -> &'static str {
+    match uri {
+        SEND_URI => "send",
+        RETURN_URI => "return",
+        _ => file_block(uri).map_or("", |b| b.shape),
+    }
+}
+
+/// What a built-in block is for, shown in the plugin browser
+pub fn hint(uri: &str) -> &'static str {
+    match uri {
+        SEND_URI => "Copies the signal here to an output of the Routing page",
+        RETURN_URI => "Brings an input of the interface in here",
+        _ => file_block(uri).map_or("", |b| b.hint),
+    }
 }
 
 /// Extensions of the files a block loads; empty for blocks without a file
@@ -450,7 +496,55 @@ pub fn builtin_plugins() -> Vec<PluginInfo> {
         };
         plugins.push(plugin);
     }
+    plugins.extend(routing_plugins());
     plugins
+}
+
+/// The send and return blocks
+fn routing_plugins() -> Vec<PluginInfo> {
+    use crate::audio::routing::{GAIN_RANGE_DB, MAX_PORTS, MAX_SENDS};
+    let (low, high) = GAIN_RANGE_DB;
+    let choices = |label: &str, count: usize| -> Vec<(String, f32)> {
+        (0..count)
+            .map(|i| (format!("{} {}", label, i + 1), i as f32))
+            .collect()
+    };
+
+    let mut send = demo_plugin(
+        SEND_URI,
+        "Send",
+        "OpenRig",
+        PluginCategory::Routing,
+        false,
+        &[
+            ("Send", 0.0, (MAX_SENDS - 1) as f32, 0.0),
+            ("Level", low, high, 0.0),
+        ],
+    );
+    let mut ret = demo_plugin(
+        RETURN_URI,
+        "Return",
+        "OpenRig",
+        PluginCategory::Routing,
+        false,
+        &[
+            // Input 1 is usually the guitar itself
+            ("Input", 0.0, (MAX_PORTS - 1) as f32, 1.0),
+            ("Level", low, high, 0.0),
+            ("Mix", 0.0, 100.0, 100.0),
+        ],
+    );
+    // Controls come after the two audio ports
+    let bus = &mut send.ports[2 + send::BUS];
+    bus.enumeration = true;
+    bus.scale_points = choices("Send", MAX_SENDS);
+    send.ports[2 + send::LEVEL].unit = Some("dB".to_string());
+    let input = &mut ret.ports[2 + ret::INPUT];
+    input.enumeration = true;
+    input.scale_points = choices("Input", MAX_PORTS);
+    ret.ports[2 + ret::LEVEL].unit = Some("dB".to_string());
+    ret.ports[2 + ret::MIX].unit = Some("%".to_string());
+    vec![send, ret]
 }
 
 fn demo_plugin(
@@ -603,6 +697,19 @@ mod tests {
         assert!(accepts_file(NAM_AMP_CAB_URI, Path::new("combo.nam")));
         assert!(accepts_file(IR_SPACE_URI, Path::new("hall.wav")));
         assert!(!uses_file("urn:pedalboard:demo:delay"));
+    }
+
+    #[test]
+    fn routing_blocks_are_built_in() {
+        let plugins = builtin_plugins();
+        let find = |uri| plugins.iter().find(|p| p.uri == uri).unwrap();
+        let send = find(SEND_URI);
+        let options = &send.control_inputs().nth(send::BUS).unwrap().scale_points;
+        assert_eq!(options[0], ("Send 1".to_string(), 0.0));
+        let ret = find(RETURN_URI);
+        assert_eq!(ret.default_parameters()[ret::INPUT], 1.0);
+        assert_eq!(ret.audio_ports(), (1, 1));
+        assert!(is_routing(SEND_URI) && !is_routing(IR_URI));
     }
 
     #[test]

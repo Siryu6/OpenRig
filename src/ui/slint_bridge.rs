@@ -159,24 +159,20 @@ pub fn plugin_views(state: &AppState) -> Vec<PluginView> {
             name: info.name.clone(),
             author: info.author.clone(),
             category: format!("{:?}", info.category),
-            kind: scanner::file_block(&info.uri)
-                .map_or("", |b| b.shape)
-                .to_string(),
-            hint: scanner::file_block(&info.uri)
-                .map_or("", |b| b.hint)
-                .to_string(),
-            color: default_block_color(
-                scanner::file_block(&info.uri).map_or("", |b| b.shape),
-                Some(&info.category),
-            ),
+            kind: scanner::shape(&info.uri).to_string(),
+            hint: scanner::hint(&info.uri).to_string(),
+            color: default_block_color(scanner::shape(&info.uri), Some(&info.category)),
         })
         .collect();
-    // Built-in blocks first: they are what the pedalboard is made for
+    // Built-in blocks first: they are what the pedalboard is made for; the
+    // send and return blocks last, few rigs need them
     let builtin = |uri: &str| {
-        scanner::FILE_BLOCKS
-            .iter()
-            .position(|b| b.uri == uri)
-            .unwrap_or(scanner::FILE_BLOCKS.len())
+        let others = scanner::FILE_BLOCKS.len();
+        match scanner::FILE_BLOCKS.iter().position(|b| b.uri == uri) {
+            Some(i) => i,
+            None if scanner::is_routing(uri) => others + 1,
+            None => others,
+        }
     };
     plugins.sort_by(|a, b| {
         (builtin(&a.uri), &a.category, a.name.to_lowercase()).cmp(&(
@@ -262,10 +258,7 @@ pub fn selected_node_view(state: &AppState, instance_id: usize) -> Option<Select
                     .map(|e| format!(".{e}"))
                     .collect::<Vec<_>>()
                     .join(", "),
-                auto_color: default_block_color(
-                    scanner::file_block(uri).map_or("", |b| b.shape),
-                    info.map(|i| &i.category),
-                ),
+                auto_color: default_block_color(scanner::shape(uri), info.map(|i| &i.category)),
             })
         }
         ChainNode::Split {

@@ -133,18 +133,12 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
             mix_ratio: n.mix_ratio,
             pan_a: n.pan[0],
             pan_b: n.pan[1],
-            kind: scanner::file_block(&n.uri).map_or("", |b| b.shape).into(),
+            kind: scanner::shape(&n.uri).into(),
             tint: rgb(block_tint(state, &chain, n.instance_id, &n.uri)),
             tinted: chain
                 .colors
                 .get(&n.instance_id)
                 .is_some_and(|c| views::block_color(c).is_some()),
-            io: chain
-                .io
-                .get(&n.instance_id)
-                .map(|io| io.mark())
-                .unwrap_or_default()
-                .into(),
             t3k: !n.is_split
                 && chain
                     .files
@@ -196,6 +190,9 @@ pub(crate) fn block_name(
     instance_id: usize,
     uri: &str,
 ) -> String {
+    if let Some(name) = routing_ui::routing_block_name(uri, chain.params.get(&instance_id)) {
+        return name;
+    }
     match chain.files.get(&instance_id) {
         Some(file) => state
             .model_pack(uri, file)
@@ -216,10 +213,7 @@ pub(crate) fn block_tint(
         .get(&instance_id)
         .and_then(|c| views::block_color(c))
         .unwrap_or_else(|| {
-            views::default_block_color(
-                scanner::file_block(uri).map_or("", |b| b.shape),
-                state.plugin_category(uri).as_ref(),
-            )
+            views::default_block_color(scanner::shape(uri), state.plugin_category(uri).as_ref())
         })
 }
 

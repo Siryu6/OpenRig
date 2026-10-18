@@ -1,8 +1,8 @@
 //! Routing view: the input feeding the effects, what each output of the
-//! interface plays, and the sends and returns of the preset's blocks.
+//! interface plays, and the send and return blocks of the preset.
 //! Output changes are heard at once and saved to routing.json a moment after
-//! the last one, so a knob drag writes the file once; sends and returns are
-//! part of the preset, and rebuild the chain.
+//! the last one, so a knob drag writes the file once; the send and return
+//! blocks are set in the rack, like any block.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -12,14 +12,14 @@ use std::time::Duration;
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel, Weak};
 use tracing::warn;
 
-use pedalboard::audio::routing::{
-    BlockIo, Fold, PortMeter, Routing, RoutingControl, Source, MAX_PORTS, MAX_SENDS,
-};
+use pedalboard::audio::routing::{Fold, PortMeter, Routing, RoutingControl, Source, MAX_PORTS};
 use pedalboard::audio::{AudioEngine, ChainNode};
 use pedalboard::state::{AppState, EffectChainState};
 use pedalboard::ui::slint_bridge::{meter_position, METER_FLOOR_DB};
 
-use crate::{block_name, model, refresh_chain, report, App, RoutingBlock, RoutingOutput};
+use pedalboard::plugins::scanner::{self, ret, send};
+
+use crate::{block_name, model, App, RoutingBlock, RoutingOutput};
 
 /// The routing view, as `current-view` in ui/app.slint
 const VIEW: i32 = 10;
@@ -140,22 +140,6 @@ pub fn setup(app: &App, state: &Arc<AppState>, engine: Option<&AudioEngine>) -> 
         })
     });
 
-    // Sends and returns of the blocks
-    let step = move |io: &mut Option<u8>, delta: i32, count: usize| {
-        let index = io.map_or(-1, i32::from) + delta.signum();
-        *io = (0..count as i32).contains(&index).then_some(index as u8);
-    };
-    let (weak, st) = (app.as_weak(), state.clone());
-    app.on_routing_block_input(move |id, delta| {
-        let Some(app) = weak.upgrade() else { return };
-        edit_block(&app, &st, id, |io| step(&mut io.input, delta, inputs));
-    });
-    let (weak, st) = (app.as_weak(), state.clone());
-    app.on_routing_block_send(move |id, delta| {
-        let Some(app) = weak.upgrade() else { return };
-        edit_block(&app, &st, id, |io| step(&mut io.send, delta, MAX_SENDS));
-    });
-
     Some(start_meters(
         app,
         state.clone(),
@@ -163,15 +147,6 @@ pub fn setup(app: &App, state: &Arc<AppState>, engine: Option<&AudioEngine>) -> 
         inputs,
         outputs,
     ))
-}
-
-/// Change the send or return of block `id`, then show it here and in the rack
-fn edit_block(app: &App, state: &AppState, id: i32, change: impl FnOnce(&mut BlockIo)) {
-    let Ok(id) = usize::try_from(id) else { return };
-    let mut io = state.chain().io.get(&id).copied().unwrap_or_default();
-    change(&mut io);
-    report(app, state.set_block_io(id, io));
-    refresh_chain(app, state);
 }
 
 /// The chain changed (edit, preset, scene, undo): list its blocks again if
@@ -182,7 +157,7 @@ pub(crate) fn chain_changed(app: &App, state: &AppState) {
     }
 }
 
-/// The blocks of the current preset, in signal order
+/// The send and return blocks of the current preset, in signal order
 fn show_blocks(app: &App, state: &AppState) {
     let chain = state.chain();
     let mut rows = Vec::new();
@@ -197,38 +172,64 @@ fn collect_blocks(
     place: &str,
     rows: &mut Vec<RoutingBlock>,
 ) {
+    let mut before = None;
     for node in nodes {
-        let (id, name) = match node {
+        match node {
             ChainNode::Plugin {
-                instance_id, uri, ..
-            } => (*instance_id, block_name(state, chain, *instance_id, uri)),
-            ChainNode::Split {
                 instance_id,
-                split_type,
+                uri,
+                enabled,
                 ..
-            } => (*instance_id, split_type.label().to_string()),
-        };
-        let io = chain.io.get(&id).copied().unwrap_or_default();
-        rows.push(RoutingBlock {
-            instance_id: id as i32,
-            name: name.clone().into(),
-            place: place.into(),
-            input: io.input.map_or(-1, i32::from),
-            send: io.send.map_or(-1, i32::from),
-        });
-        if let ChainNode::Split {
-            top_chain,
-            bottom_chain,
-            ..
-        } = node
-        {
-            let inner = |branch: &str| match place {
-                "" => format!("{name} · {branch}"),
-                outer => format!("{outer} › {name} · {branch}"),
-            };
-            collect_blocks(state, chain, top_chain, &inner("A"), rows);
-            collect_blocks(state, chain, bottom_chain, &inner("B"), rows);
+            } => {
+                let name = block_name(state, chain, *instance_id, uri);
+                if scanner::is_routing(uri) {
+                    let after = match &before {
+                        Some(block) => format!("after {block}"),
+                        None => "at the start".to_string(),
+                    };
+                    rows.push(RoutingBlock {
+                        instance_id: *instance_id as i32,
+                        name: match uri.as_str() {
+                            scanner::RETURN_URI => format!("Return · {name}"),
+                            _ => name.clone(),
+                        }
+                        .into(),
+                        place: match place {
+                            "" => after,
+                            branch => format!("{branch}, {after}"),
+                        }
+                        .into(),
+                        bypassed: !enabled,
+                    });
+                }
+                before = Some(name);
+            }
+            ChainNode::Split {
+                split_type,
+                top_chain,
+                bottom_chain,
+                ..
+            } => {
+                let name = split_type.label();
+                let inner = |branch: &str| match place {
+                    "" => format!("{name} · {branch}"),
+                    outer => format!("{outer} › {name} · {branch}"),
+                };
+                collect_blocks(state, chain, top_chain, &inner("A"), rows);
+                collect_blocks(state, chain, bottom_chain, &inner("B"), rows);
+                before = Some(name.to_string());
+            }
         }
+    }
+}
+
+/// Name of a send or return block in the rack: "Send 1", "Input 2"
+pub(crate) fn routing_block_name(uri: &str, params: Option<&Vec<f32>>) -> Option<String> {
+    let value = |index: usize| params.and_then(|p| p.get(index)).map_or(0.0, |v| *v);
+    match uri {
+        scanner::SEND_URI => Some(format!("Send {}", value(send::BUS).round() as i32 + 1)),
+        scanner::RETURN_URI => Some(format!("Input {}", value(ret::INPUT).round() as i32 + 1)),
+        _ => None,
     }
 }
 

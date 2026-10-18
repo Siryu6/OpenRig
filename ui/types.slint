@@ -24,7 +24,6 @@ export struct PositionedNode {
     tint: color,         // colour chosen in the editor (when tinted)
     tinted: bool,
     t3k: bool,           // loads a TONE3000 download: shows the T3K mark
-    io: string,          // return and send set in the Routing view: "IN 2 · S1" ("" = none)
 }
 
 // Where a dragged block can be dropped (layout units)
@@ -219,8 +218,7 @@ export struct RoutingOutput {
 // A block of the preset, with its return and send (Routing view)
 export struct RoutingBlock {
     instance-id: int,
-    name: string,
-    place: string,       // "" in the main chain, else the split branch: "A/B split · B"
-    input: int,          // return: input replacing the signal before the block (-1 = none)
-    send: int,           // send the signal after the block goes to (-1 = none)
+    name: string,        // "Send 1", "Input 2"
+    place: string,       // where it is: "A/B split · B, after Cabinet"
+    bypassed: bool,
 }

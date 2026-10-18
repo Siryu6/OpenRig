@@ -18,11 +18,11 @@ In the JACK callback, for each period:
 
 1. The **effects input** (input 1 by default) goes to the tuner, which may
    mute it.
-2. The **chain** processes it. A block with a **return** has its input
-   replaced by an interface input just before it; a block with a **send**
-   adds its output to one of 4 **send buses** just after it, while the
-   signal carries on. Returns are mono or stereo like the path at that
-   point, and so are sends.
+2. The **chain** processes it. A **Return** block mixes an interface input
+   into the signal at its place (at 100% mix, the default, the input
+   replaces it); a **Send** block adds the signal at its place to one of 4
+   **send buses**, while the signal carries on. Both are mono or stereo like
+   the path at that point.
 3. The **looper** plays and records on the main mix only.
 4. The **output router** fills each output from the main mix, a send bus
    or an input passed straight through, with level, balance, mute, solo and
@@ -32,7 +32,9 @@ In the JACK callback, for each period:
 While the tuner mutes, the returns and the inputs passed straight through
 are silent too. During a preset crossfade, the old chain's sends fade out
 with its sound and the new chain's sends fade in. A send in the unselected
-branch of an A/B split is silent, as that branch is not processed.
+branch of an A/B split is silent, as that branch is not processed. Level,
+mix and bypass changes of a send or return are ramped over 10 ms; a change
+of bus or input fades out, switches, then fades in.
 
 All of this runs without allocation or locks: the inputs and buses are
 arrays on the stack or buffers sized when JACK's buffer size changes, and
@@ -78,28 +80,29 @@ An output in no strip is silent. A file with two strips on the same output,
 an input or send that cannot exist, or a level that is not a number is
 ignored with a warning, and the default routing is used.
 
-## Sends and returns in a preset
+## Send and return blocks
 
-Sends and returns are part of the preset (and of the session), keyed by the
-block's instance id, in `chain.io`:
+Sends and returns are built-in blocks, added from **+** like any other
+(family **Routing**), saved with the preset and its scenes:
 
-```json
-"io": {
-  "0": { "send": 0 },
-  "3": { "input": 1 }
-}
-```
+| Block | URI | Parameters, in order |
+|---|---|---|
+| Send | `urn:pedalboard:send` | Send bus (0 to 3), Level (−60 to +12 dB) |
+| Return | `urn:pedalboard:return` | Input (0 to 15, default 1), Level (dB), Mix (0 to 100 %, default 100) |
 
-`input` is the return before the block, `send` the send after it, both from
-0; either can be left out. Removing a block removes its entry. A return on
-an input the interface does not have plays silence, so a preset made on a
-larger interface still loads.
+A bypassed send stops adding to its bus; a bypassed return lets the signal
+through. Scenes can switch them like any block, so a song part can send to
+another output or bring another instrument in. A return on an input the
+interface does not have plays silence (scaled by its mix), so a preset made
+on a larger interface still loads.
 
 ## Code
 
-- `src/audio/routing.rs`: `Routing`, `Strip`, `BlockIo`, and `OutputRouter`
-  (the audio-thread side).
-- `src/plugins/chain.rs`: `ChainIo`, and the `Return` / `Send` nodes built
-  around the blocks that have them.
+- `src/audio/routing.rs`: `Routing`, `Strip`, and `OutputRouter` (the
+  audio-thread side).
+- `src/plugins/scanner.rs`: the Send and Return blocks (`SEND_URI`,
+  `RETURN_URI`, their parameters).
+- `src/plugins/chain.rs`: `ChainIo`, and `RouteProc` that runs those
+  blocks.
 - `src/audio/jack_client.rs`: the ports and the callback.
 - `src/routing_ui.rs` and `ui/pages/routing_view.slint`: the Routing page.

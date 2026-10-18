@@ -70,8 +70,8 @@ Last update: 2026-10-15.
   plugin), not yet on a stereo interface.
 - Inputs and outputs (see `docs/ROUTING.md`): every port of the interface,
   output router (main mix, 4 sends, inputs passed through; level, balance,
-  mute, solo, polarity, 10 ms ramps), sends and returns on the blocks of a
-  preset, Routing page with meters. Tested with unit tests and a 4 x 4
+  mute, solo, polarity, 10 ms ramps), Send and Return blocks in the rack,
+  Routing page with meters. Tested with unit tests and a 4 x 4
   dummy JACK server under Xvfb, not yet on a real multi-channel interface.
 - MIDI (see `docs/MIDI.md`): all inputs heard and hot-plugged (250 ms scan),
   Helix-style map (PC / CC0 banks, setlist slots and CC32 setlists, scenes,

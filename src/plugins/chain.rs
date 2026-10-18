@@ -13,9 +13,9 @@
 //! mix of both sides on both. In mono mode everything stays mono and L/R
 //! splits are summed.
 //!
-//! Sends and returns (see `audio::routing::BlockIo`) are extra nodes around
-//! a block: a return replaces the signal before it with an input of the
-//! interface, a send adds the signal after it to a send bus (`ChainIo`).
+//! Send and return blocks (`scanner::SEND_URI`, `RETURN_URI`) are run by
+//! the chain itself: a return brings an input of the interface into the
+//! signal, a send adds the signal to a send bus (`ChainIo`).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -27,7 +27,6 @@ use tracing::warn;
 use super::instance::PluginInstance;
 use super::lv2_host::Lv2Host;
 use super::scanner::{self, FileKind};
-use crate::audio::routing::{BlockIo, MAX_PORTS, MAX_SENDS};
 use crate::audio::split_chain::{ChainNode, SplitType};
 use crate::midi::RawMidi;
 use crate::monitor::BlockMeter;
@@ -51,8 +50,6 @@ pub struct ChainSpec {
     pub stereo: bool,
     /// Tempo sent to plugins taking the transport (0: none)
     pub bpm: f32,
-    /// Sends and returns per block instance_id
-    pub io: HashMap<usize, BlockIo>,
 }
 
 /// What the chain reads and writes besides its own signal, for one audio
@@ -480,19 +477,132 @@ impl SplitProc {
     }
 }
 
+/// A send or return block
+struct RouteProc {
+    instance_id: usize,
+    send: bool,
+    /// Send bus or input (0 = the first)
+    port: usize,
+    /// Port chosen while the old one fades out
+    next_port: Option<usize>,
+    enabled: bool,
+    /// Level (linear) and return mix (0..1), with their ramped values
+    level: f32,
+    mix: f32,
+    level_now: f32,
+    mix_now: f32,
+    step: f32,
+    stereo: bool,
+}
+
+impl RouteProc {
+    fn new(
+        instance_id: usize,
+        send: bool,
+        values: &[f32],
+        enabled: bool,
+        stereo: bool,
+        sample_rate: f32,
+    ) -> Self {
+        let mut route = Self {
+            instance_id,
+            send,
+            port: 0,
+            next_port: None,
+            enabled,
+            level: 1.0,
+            mix: 1.0,
+            level_now: 0.0,
+            mix_now: 0.0,
+            step: 1.0 / (sample_rate * SPLIT_RAMP_SECONDS).max(1.0),
+            stereo,
+        };
+        for (index, value) in values.iter().enumerate() {
+            route.set_parameter(index, *value);
+        }
+        if let Some(port) = route.next_port.take() {
+            route.port = port;
+        }
+        (route.level_now, route.mix_now) = route.targets();
+        route
+    }
+
+    fn set_parameter(&mut self, index: usize, value: f32) {
+        use scanner::{ret, send};
+        if !value.is_finite() {
+            return;
+        }
+        match (self.send, index) {
+            (true, send::BUS) | (false, ret::INPUT) => {
+                let port = value.round().max(0.0) as usize;
+                self.next_port = (port != self.port).then_some(port);
+            }
+            (true, send::LEVEL) | (false, ret::LEVEL) => self.level = 10f32.powf(value / 20.0),
+            (false, ret::MIX) => self.mix = (value / 100.0).clamp(0.0, 1.0),
+            _ => {}
+        }
+    }
+
+    /// Ramp targets of the level and of the return mix: a bypassed send
+    /// stops adding to its bus, a bypassed return lets the signal through,
+    /// and both fade out before changing port
+    fn targets(&self) -> (f32, f32) {
+        let on = self.enabled && self.next_port.is_none();
+        let mix = if on { self.mix } else { 0.0 };
+        let level = if self.send && !on { 0.0 } else { self.level };
+        (level, mix)
+    }
+
+    fn process(&mut self, l: &mut [f32], r: &mut [f32], io: &mut ChainIo) {
+        let range = io.offset..io.offset + l.len();
+        let (level, mix) = self.targets();
+        if self.send {
+            let mut bus = io
+                .sends
+                .get_mut(self.port)
+                .and_then(|[sl, sr]| Some((sl.get_mut(range.clone())?, sr.get_mut(range)?)));
+            let right: &[f32] = if self.stereo { r } else { l };
+            for i in 0..l.len() {
+                ramp(&mut self.level_now, level, self.step);
+                if let Some((sl, sr)) = &mut bus {
+                    let g = self.level_now * (io.gain + io.gain_step * i as f32);
+                    sl[i] += l[i] * g;
+                    sr[i] += right[i] * g;
+                }
+            }
+        } else {
+            // An input the interface lacks (a preset made on a bigger one,
+            // or the tuner muting) plays silence
+            let input = io.inputs.get(self.port).and_then(|b| b.get(range));
+            for i in 0..l.len() {
+                ramp(&mut self.level_now, level, self.step);
+                ramp(&mut self.mix_now, mix, self.step);
+                let wet = input.map_or(0.0, |b| b[i]) * self.level_now * self.mix_now;
+                let dry = 1.0 - self.mix_now;
+                l[i] = l[i] * dry + wet;
+                if self.stereo {
+                    r[i] = r[i] * dry + wet;
+                }
+            }
+        }
+        // Faded out: switch to the new port, then fade in
+        let out = if self.send {
+            self.level_now
+        } else {
+            self.mix_now
+        };
+        if out == 0.0 {
+            if let Some(port) = self.next_port.take() {
+                self.port = port;
+            }
+        }
+    }
+}
+
 enum ProcNode {
     Plugin(Box<PluginProc>),
     Split(Box<SplitProc>),
-    /// An input of the interface replaces the signal
-    Return {
-        input: u8,
-        stereo: bool,
-    },
-    /// The signal is added to a send bus
-    Send {
-        send: u8,
-        stereo: bool,
-    },
+    Route(Box<RouteProc>),
 }
 
 /// Process `l` (and `r` where the signal is stereo) through `nodes`
@@ -501,32 +611,7 @@ fn process_nodes(nodes: &mut [ProcNode], l: &mut [f32], r: &mut [f32], io: &mut 
         match node {
             ProcNode::Plugin(plugin) => plugin.process(l, r),
             ProcNode::Split(split) => split.process(l, r, io),
-            ProcNode::Return { input, stereo } => {
-                let range = io.offset..io.offset + l.len();
-                match io.inputs.get(*input as usize).and_then(|b| b.get(range)) {
-                    Some(buffer) => l.copy_from_slice(buffer),
-                    // An input this interface does not have
-                    None => l.fill(0.0),
-                }
-                if *stereo {
-                    r.copy_from_slice(l);
-                }
-            }
-            ProcNode::Send { send, stereo } => {
-                let range = io.offset..io.offset + l.len();
-                let Some([sl, sr]) = io.sends.get_mut(*send as usize) else {
-                    continue;
-                };
-                let (Some(sl), Some(sr)) = (sl.get_mut(range.clone()), sr.get_mut(range)) else {
-                    continue;
-                };
-                let right: &[f32] = if *stereo { r } else { l };
-                for i in 0..l.len() {
-                    let g = io.gain + io.gain_step * i as f32;
-                    sl[i] += l[i] * g;
-                    sr[i] += right[i] * g;
-                }
-            }
+            ProcNode::Route(route) => route.process(l, r, io),
         }
     }
 }
@@ -539,7 +624,7 @@ fn for_each_instance(nodes: &mut [ProcNode], f: &mut impl FnMut(&mut PluginInsta
                 for_each_instance(&mut split.top, f);
                 for_each_instance(&mut split.bottom, f);
             }
-            ProcNode::Return { .. } | ProcNode::Send { .. } => {}
+            ProcNode::Route(_) => {}
         }
     }
 }
@@ -560,6 +645,16 @@ fn apply_to(nodes: &mut [ProcNode], command: &ChainCommand) -> bool {
                         ChainCommand::SetEnabled { enabled, .. } => instance.set_bypass(!enabled),
                         _ => {}
                     }
+                }
+                return true;
+            }
+            ProcNode::Route(route) if route.instance_id == target => {
+                match *command {
+                    ChainCommand::SetParameter { index, value, .. } => {
+                        route.set_parameter(index, value)
+                    }
+                    ChainCommand::SetEnabled { enabled, .. } => route.enabled = enabled,
+                    _ => {}
                 }
                 return true;
             }
@@ -641,18 +736,20 @@ impl EffectChain {
     ) -> (Vec<ProcNode>, bool) {
         let mut built = Vec::with_capacity(nodes.len());
         for node in nodes {
-            let id = match node {
-                ChainNode::Plugin { instance_id, .. } | ChainNode::Split { instance_id, .. } => {
-                    *instance_id
-                }
-            };
-            let io = spec.io.get(&id).copied().unwrap_or_default();
-            // A return on an input the interface lacks (a preset made on a
-            // bigger one) plays silence
-            if let Some(input) = io.input.filter(|&i| (i as usize) < MAX_PORTS) {
-                built.push(ProcNode::Return { input, stereo });
-            }
             match node {
+                ChainNode::Plugin {
+                    instance_id,
+                    uri,
+                    enabled,
+                    ..
+                } if scanner::is_routing(uri) => {
+                    let values = spec.params.get(instance_id).map_or(&[][..], Vec::as_slice);
+                    let send = uri == scanner::SEND_URI;
+                    let route =
+                        RouteProc::new(*instance_id, send, values, *enabled, stereo, sample_rate);
+                    self.plugin_count += 1;
+                    built.push(ProcNode::Route(Box::new(route)));
+                }
                 ChainNode::Plugin {
                     instance_id,
                     uri,
@@ -761,9 +858,6 @@ impl EffectChain {
                     stereo = stereo_out;
                 }
             }
-            if let Some(send) = io.send.filter(|&s| (s as usize) < MAX_SENDS) {
-                built.push(ProcNode::Send { send, stereo });
-            }
         }
         (built, stereo)
     }
@@ -824,6 +918,7 @@ impl EffectChain {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::routing::MAX_SENDS;
 
     fn plugin(id: usize) -> ChainNode {
         ChainNode::Plugin {
@@ -915,34 +1010,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn returns_replace_the_signal_and_sends_copy_it() {
-        let host = Lv2Host::demo();
-        // Cabinet 10 at -6 dB, its output sent to send 2; input 2 replaces
-        // the signal before cabinet 20
-        let spec = ChainSpec {
-            nodes: vec![cab(10), cab(20)],
-            params: HashMap::from([(10, vec![20.0 * 0.5f32.log10()])]),
-            io: HashMap::from([
-                (
-                    10,
-                    BlockIo {
-                        input: None,
-                        send: Some(1),
-                    },
-                ),
-                (
-                    20,
-                    BlockIo {
-                        input: Some(1),
-                        send: None,
-                    },
-                ),
-            ]),
-            ..Default::default()
-        };
-        let (mut chain, errors) = EffectChain::build(&spec, &host, 48000.0, 64);
-        assert!(errors.is_empty(), "{errors:?}");
+    fn route(id: usize, uri: &str) -> ChainNode {
+        ChainNode::Plugin {
+            instance_id: id,
+            uri: uri.to_string(),
+            enabled: true,
+            num_inputs: 1,
+            num_outputs: 1,
+        }
+    }
+
+    /// Run `chain` on input 1 at 1.0 and input 2 at 0.25; returns the
+    /// outputs and the send buses
+    fn run_io(chain: &mut EffectChain) -> (Vec<f32>, Vec<f32>, Vec<[Vec<f32>; 2]>) {
         let (guitar, bass) = (vec![1.0f32; 300], vec![0.25f32; 300]);
         let inputs: [&[f32]; 2] = [&guitar, &bass];
         let mut sends: Vec<[Vec<f32>; 2]> = (0..MAX_SENDS)
@@ -954,6 +1034,31 @@ mod tests {
             io.part(k * 64, l.len(), 1.0, 1.0);
             chain.process_io(l, r, &mut io);
         }
+        (left, right, sends)
+    }
+
+    #[test]
+    fn returns_replace_the_signal_and_sends_copy_it() {
+        let host = Lv2Host::demo();
+        // Cabinet 10 at -6 dB, sent to send 2 by block 11; input 2 brought
+        // in by block 12 before cabinet 20
+        let spec = ChainSpec {
+            nodes: vec![
+                cab(10),
+                route(11, scanner::SEND_URI),
+                route(12, scanner::RETURN_URI),
+                cab(20),
+            ],
+            params: HashMap::from([
+                (10, vec![20.0 * 0.5f32.log10()]),
+                (11, vec![1.0, 0.0]),
+                (12, vec![1.0, 0.0, 100.0]),
+            ]),
+            ..Default::default()
+        };
+        let (mut chain, errors) = EffectChain::build(&spec, &host, 48000.0, 64);
+        assert!(errors.is_empty(), "{errors:?}");
+        let (left, right, sends) = run_io(&mut chain);
         assert!(
             settles_at(&left, 0.25) && settles_at(&right, 0.25),
             "{}",
@@ -968,9 +1073,60 @@ mod tests {
         assert!(sends[0].iter().flatten().all(|&s| s == 0.0));
 
         // Without the inputs (tuner muting), a return is silent
-        let (mut left, mut right) = (guitar.clone(), vec![0.0; 300]);
+        let (mut left, mut right) = (vec![1.0; 300], vec![0.0; 300]);
         chain.process(&mut left, &mut right);
         assert!(settles_at(&left, 0.0));
+
+        // Half mix blends the input in; a bypassed return lets the signal
+        // through and a bypassed send stops sending
+        chain.apply(&ChainCommand::SetParameter {
+            instance_id: 12,
+            index: scanner::ret::MIX,
+            value: 50.0,
+        });
+        chain.apply(&ChainCommand::SetEnabled {
+            instance_id: 11,
+            enabled: false,
+        });
+        // 10 ms ramps: settled by the second run
+        run_io(&mut chain);
+        let (left, _, sends) = run_io(&mut chain);
+        assert!(settles_at(&left, 0.375), "{}", left[299]);
+        assert!(sends[1][0][299] == 0.0);
+        chain.apply(&ChainCommand::SetEnabled {
+            instance_id: 12,
+            enabled: false,
+        });
+        run_io(&mut chain);
+        let (left, _, _) = run_io(&mut chain);
+        assert!(settles_at(&left, 0.5), "{}", left[299]);
+    }
+
+    #[test]
+    fn a_send_fades_out_before_changing_bus() {
+        let host = Lv2Host::demo();
+        let spec = ChainSpec {
+            nodes: vec![route(1, scanner::SEND_URI)],
+            ..Default::default()
+        };
+        let (mut chain, _) = EffectChain::build(&spec, &host, 48000.0, 64);
+        let (_, _, sends) = run_io(&mut chain);
+        assert!(settles_at(&sends[0][0], 1.0));
+        chain.apply(&ChainCommand::SetParameter {
+            instance_id: 1,
+            index: scanner::send::BUS,
+            value: 2.0,
+        });
+        // 10 ms at 48 kHz: the old bus fades out over the first 480
+        // samples, then the new one fades in
+        let mut faded = Vec::new();
+        for _ in 0..6 {
+            let (_, _, sends) = run_io(&mut chain);
+            faded.push((sends[0][0][299], sends[2][0][299]));
+        }
+        assert!(faded[0].0 < 1.0 && faded[0].1 == 0.0, "{faded:?}");
+        assert_eq!(*faded.last().unwrap(), (0.0, 1.0));
+        assert_eq!(MAX_SENDS, sends.len());
     }
 
     #[test]
