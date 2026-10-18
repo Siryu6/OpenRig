@@ -43,6 +43,9 @@ real time with JACK, and updates itself without risking the board.
   captures right on the pedalboard, with credits and licenses kept.
 - **[Live](https://openrig.eu/docs/using/live/)**: 8 scenes per preset, setlists, stomp mode,
   tap tempo, [tuner and looper](https://openrig.eu/docs/using/tuner-looper/).
+- **[Inputs and outputs](https://openrig.eu/docs/setup/routing/)**: every input and output of
+  the interface, with sends and returns on any block: a dry signal for reamping, a bass DI, a
+  separate monitor mix.
 - **[MIDI](https://openrig.eu/docs/using/midi/)**: Helix-style map for presets, scenes and
   stomps, clock and CC learn.
 - **[Updates](https://openrig.eu/docs/setup/updates/)**: a read-only system with signed A/B
@@ -76,7 +79,7 @@ lilv (`apt install jackd2 liblilv-0-0`); start JACK, then `./pedalboard`.
 |---|---|
 | **Getting started** | [Hardware](https://openrig.eu/docs/getting-started/hardware/) · [Raspberry Pi 5](https://openrig.eu/docs/getting-started/raspberry-pi/) · [Mini PC](https://openrig.eu/docs/getting-started/mini-pc/) · [First start](https://openrig.eu/docs/getting-started/first-start/) |
 | **Playing** | [Tour](https://openrig.eu/docs/using/tour/) · [Rack](https://openrig.eu/docs/using/rack/) · [Block editor](https://openrig.eu/docs/using/editor/) · [Neural blocks](https://openrig.eu/docs/using/neural-blocks/) · [TONE3000](https://openrig.eu/docs/using/tone3000/) · [Presets, scenes and setlists](https://openrig.eu/docs/using/presets/) · [Live](https://openrig.eu/docs/using/live/) · [Tuner and looper](https://openrig.eu/docs/using/tuner-looper/) · [MIDI](https://openrig.eu/docs/using/midi/) |
-| **Setting up** | [Settings](https://openrig.eu/docs/setup/settings/) · [Updates](https://openrig.eu/docs/setup/updates/) · [Footswitches](https://openrig.eu/docs/setup/footswitches/) · [LV2 plugins](https://openrig.eu/docs/setup/lv2/) · [pedalboard.txt](https://openrig.eu/docs/setup/pedalboard-txt/) · [Performance](https://openrig.eu/docs/setup/performance/) |
+| **Setting up** | [Settings](https://openrig.eu/docs/setup/settings/) · [Inputs and outputs](https://openrig.eu/docs/setup/routing/) · [Updates](https://openrig.eu/docs/setup/updates/) · [Footswitches](https://openrig.eu/docs/setup/footswitches/) · [LV2 plugins](https://openrig.eu/docs/setup/lv2/) · [pedalboard.txt](https://openrig.eu/docs/setup/pedalboard-txt/) · [Performance](https://openrig.eu/docs/setup/performance/) |
 | **Help** | [Troubleshooting](https://openrig.eu/docs/help/troubleshooting/) · [SSH access](https://openrig.eu/docs/help/ssh/) · [FAQ](https://openrig.eu/docs/help/faq/) |
 
 The guide is built from [Siryu6/openrig-site](https://github.com/Siryu6/openrig-site):
@@ -141,7 +144,7 @@ source plays on a single output). With a single playback port, both sides
 are summed on it. Presets can also attach a return (an input replacing the
 signal before a block) and a send (the signal after a block, copied to a
 send) to any block. All of it is set in Settings → Inputs and outputs →
-Routing.
+Routing; see [docs/ROUTING.md](docs/ROUTING.md).
 `in_1`, `out_1` and `out_2` keep their former names as aliases
 (`guitar_in`, `out_left`, `out_right`). Without JACK, the UI still starts
 with audio disabled.
@@ -242,7 +245,7 @@ third_party/NeuralAudio  Submodule: NAM Core + RTNeural
 third_party/lilv, i-slint-backend-linuxkms   Patched crates (see their PATCHED.md)
 ui/                      Slint UI (app.slint, types.slint, pages/, components/, theme.slint)
 os/                      Buildroot external tree: Pi 5 / x86_64 images, RAUC updates, init scripts
-docs/                    Features, OS image, live (scenes, setlists, tempo), MIDI, neural amp models (NAM)
+docs/                    Features, OS image, live (scenes, setlists, tempo), MIDI, routing, neural amp models (NAM)
 ```
 
 ## Architecture
@@ -257,7 +260,8 @@ Three threads share the chain:
 - **Chain builder thread**: instantiates the plugins of a `ChainSpec` and
   hands the finished chain to the audio thread, with the live commands
   received meanwhile replayed on it.
-- **JACK callback**: tuner → effects → looper, with preallocated buffers,
+- **JACK callback**: tuner → effects (with their returns and sends) →
+  looper → output router, with preallocated buffers,
   `try_lock` only, and atomics for the DSP meter. A new chain is crossfaded in;
   the old one is dropped off the audio thread.
 
@@ -268,6 +272,7 @@ Three threads share the chain:
   settings, SSH, storage, boot logo, A/B updates
 - [docs/SCENES.md](docs/SCENES.md): scenes, setlists, footswitch modes, tempo and tails
 - [docs/MIDI.md](docs/MIDI.md): the MIDI map, learn and ranges, clock, MIDI to plugins
+- [docs/ROUTING.md](docs/ROUTING.md): inputs, outputs, sends and returns, `routing.json`
 - [docs/NEURAL_MODELS.md](docs/NEURAL_MODELS.md): the Amp / Amp + Cab / Pedal / Cabinet /
   Space blocks, TONE3000, roadmap
 - [PROJECT_STATUS.md](PROJECT_STATUS.md): what works, what is left
