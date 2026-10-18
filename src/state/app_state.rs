@@ -7,6 +7,7 @@ use std::time::Duration;
 use tracing::{info, warn};
 
 use super::tempo::TapTempo;
+use crate::audio::routing::BlockIo;
 use crate::audio::{ChainControl, ChainNode, Looper, SplitType, Tuner};
 use crate::midi::{MidiAssign, MidiSettings, MidiTarget, Step};
 use crate::plugins::{ChainCommand, ChainSpec, Lv2Host, SignalMap};
@@ -324,6 +325,8 @@ pub struct EffectChainState {
     pub files: HashMap<usize, String>,
     /// Colour name per block instance_id (rack drawing only)
     pub colors: HashMap<usize, String>,
+    /// Sends and returns per block instance_id (Routing view)
+    pub io: HashMap<usize, BlockIo>,
     pub next_instance_id: usize,
     pub stereo_mode: bool,
     /// Scenes of the preset (see `state::scenes`); the chain above is the
@@ -345,6 +348,7 @@ impl Default for EffectChainState {
             params: HashMap::new(),
             files: HashMap::new(),
             colors: HashMap::new(),
+            io: HashMap::new(),
             next_instance_id: 0,
             stereo_mode: false,
             scenes: Vec::new(),
@@ -458,6 +462,7 @@ impl EffectChainState {
             self.params.remove(&id);
             self.files.remove(&id);
             self.colors.remove(&id);
+            self.io.remove(&id);
         }
         Ok(())
     }
@@ -588,6 +593,7 @@ impl EffectChainState {
             params: self.params.clone(),
             files: self.files.clone(),
             colors: self.colors.clone(),
+            io: self.io.clone(),
             scenes: self.saved_scenes(),
             scene: self.scene,
             bpm: self.bpm,
@@ -604,6 +610,7 @@ impl EffectChainState {
             params: HashMap::new(),
             files: HashMap::new(),
             colors: HashMap::new(),
+            io: HashMap::new(),
             next_instance_id: 0,
             stereo_mode,
             scenes: chain.scenes.clone(),
@@ -653,6 +660,12 @@ impl EffectChainState {
             .iter()
             .filter(|(id, _)| keep(id))
             .map(|(id, c)| (*id, c.clone()))
+            .collect();
+        state.io = chain
+            .io
+            .iter()
+            .filter(|(id, io)| keep(id) && !io.is_none())
+            .map(|(id, io)| (*id, *io))
             .collect();
         state
     }
@@ -1114,6 +1127,7 @@ impl AppState {
                 .collect(),
             stereo: chain.stereo_mode,
             bpm: chain.bpm,
+            io: chain.io.clone(),
         }
     }
 
@@ -1251,6 +1265,21 @@ impl AppState {
             None => chain.colors.remove(&instance_id),
         };
         self.mark_dirty();
+    }
+
+    /// Send and return of a block (Routing view); rebuilds the chain
+    pub fn set_block_io(&self, instance_id: usize, io: BlockIo) -> Result<()> {
+        self.edit(|c| {
+            if c.find(instance_id).is_none() {
+                return Err(anyhow!("Block {} not found", instance_id));
+            }
+            if io.is_none() {
+                c.io.remove(&instance_id);
+            } else {
+                c.io.insert(instance_id, io);
+            }
+            Ok(())
+        })
     }
 
     pub fn clear_chain(&self) {
@@ -2167,6 +2196,32 @@ mod tests {
         state.remove_node(amp).unwrap();
         assert!(state.chain().files.is_empty());
         assert!(state.set_plugin_file(amp, None).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn sends_and_returns_are_saved_with_the_preset() {
+        let (state, dir) = state();
+        let amp = state.add_plugin(OD).unwrap();
+        let io = BlockIo {
+            input: Some(1),
+            send: Some(0),
+        };
+        state.set_block_io(amp, io).unwrap();
+        let id = state.save_preset("Bass".into()).unwrap();
+
+        state.clear_chain();
+        assert!(state.chain().io.is_empty());
+        state.load_preset(&id).unwrap();
+        assert_eq!(state.chain().io.get(&amp), Some(&io));
+
+        // Cleared, and forgotten with the block
+        state.set_block_io(amp, BlockIo::default()).unwrap();
+        assert!(state.chain().io.is_empty());
+        state.set_block_io(amp, io).unwrap();
+        state.remove_node(amp).unwrap();
+        assert!(state.chain().io.is_empty());
+        assert!(state.set_block_io(amp, io).is_err());
         let _ = std::fs::remove_dir_all(dir);
     }
 

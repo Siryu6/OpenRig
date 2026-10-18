@@ -1,7 +1,12 @@
 //! Inputs and outputs beyond the guitar input and one stereo pair: which
 //! physical input feeds the chain, and what each physical output plays (the
-//! chain's main mix, or an input passed straight through), with its level,
-//! balance, mute, solo and polarity.
+//! chain's main mix, a send, or an input passed straight through), with its
+//! level, balance, mute, solo and polarity.
+//!
+//! Sends and returns are points of the chain, attached to a block of a
+//! preset ([`BlockIo`]): a send copies the signal after the block to a send
+//! bus, which outputs can play; a return replaces the signal before the
+//! block with an input of the interface.
 //!
 //! Set in the Routing view and kept in `routing.json` in the data directory:
 //! like `hardware.json`, it belongs to the rig, not to a preset, so changing
@@ -21,6 +26,8 @@ use crate::plugins::chain::{pan_gains, ramp};
 const FILE: &str = "routing.json";
 /// Inputs and outputs the pedalboard registers at most
 pub const MAX_PORTS: usize = 16;
+/// Send buses
+pub const MAX_SENDS: usize = 4;
 /// Level range of an output, in dB
 pub const GAIN_RANGE_DB: (f32, f32) = (-60.0, 12.0);
 /// Gain changes, mute, solo and source changes are ramped over this time
@@ -35,6 +42,37 @@ pub enum Source {
     Main,
     /// A physical input as it comes in, without effects (0 = input 1)
     Input(u8),
+    /// A send bus, filled by the sends of the chain (0 = send 1)
+    Send(u8),
+}
+
+/// Signal taken out of the chain or brought into it at a block, set in the
+/// Routing view and saved with the preset
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct BlockIo {
+    /// Input that replaces the signal before the block (0 = input 1)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<u8>,
+    /// Send bus the signal after the block is copied to (0 = send 1)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub send: Option<u8>,
+}
+
+impl BlockIo {
+    pub fn is_none(&self) -> bool {
+        self.input.is_none() && self.send.is_none()
+    }
+
+    /// Short mark for the rack: "IN 2", "S1", "IN 2 · S1"
+    pub fn mark(&self) -> String {
+        let input = self.input.map(|i| format!("IN {}", i + 1));
+        let send = self.send.map(|s| format!("S{}", s + 1));
+        [input, send]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
 }
 
 /// How a stereo source plays on a single output
@@ -194,11 +232,13 @@ impl Routing {
             } else {
                 0.0
             };
-            let input = match strip.source {
-                Source::Main => None,
-                Source::Input(i) if (i as usize) < inputs => Some(i),
+            // A stereo bus (0 = main mix, then the sends), or an input
+            let (bus, input) = match strip.source {
+                Source::Main => (0, None),
+                Source::Send(s) if (s as usize) < MAX_SENDS => (s + 1, None),
+                Source::Input(i) if (i as usize) < inputs => (0, Some(i)),
                 // An input this interface does not have
-                Source::Input(_) => continue,
+                Source::Input(_) | Source::Send(_) => continue,
             };
             if strip.stereo && first + 1 < outputs {
                 let (left, right) = pan_gains(strip.pan);
@@ -206,20 +246,23 @@ impl Routing {
                     let g = gain * side_gain;
                     mix.ports[port] = match input {
                         None => {
-                            let mut main = [0.0; 2];
-                            main[side] = g;
-                            PortMix::main(main)
+                            let mut gains = [0.0; 2];
+                            gains[side] = g;
+                            PortMix::bus(bus, gains)
                         }
                         Some(i) => PortMix::input(i, g),
                     };
                 }
             } else {
                 mix.ports[first] = match input {
-                    None => PortMix::main(match strip.fold {
-                        Fold::Sum => [gain * 0.5, gain * 0.5],
-                        Fold::Left => [gain, 0.0],
-                        Fold::Right => [0.0, gain],
-                    }),
+                    None => PortMix::bus(
+                        bus,
+                        match strip.fold {
+                            Fold::Sum => [gain * 0.5, gain * 0.5],
+                            Fold::Left => [gain, 0.0],
+                            Fold::Right => [0.0, gain],
+                        },
+                    ),
                     Some(i) => PortMix::input(i, gain),
                 };
             }
@@ -254,18 +297,20 @@ impl Routing {
     }
 
     /// Next or previous source of the output (or pair) starting on `port`:
-    /// off, the main mix, then each input. Off removes the strip.
+    /// off, the main mix, each send, then each input. Off removes the strip.
     pub fn step_source(&mut self, port: u8, delta: i32, inputs: usize, outputs: usize) {
         if port as usize >= outputs.min(MAX_PORTS) {
             return;
         }
-        // Off, Main, Input 1..n
-        let count = 2 + inputs.min(MAX_PORTS) as i32;
+        // Off, Main, Send 1..4, Input 1..n
+        let sends = MAX_SENDS as i32;
+        let count = 2 + sends + inputs.min(MAX_PORTS) as i32;
         let index = match self.strip(port).map(|s| s.source) {
             None if self.covering(port).is_some() => return,
             None => 0,
             Some(Source::Main) => 1,
-            Some(Source::Input(i)) => 2 + i as i32,
+            Some(Source::Send(s)) => 2 + s as i32,
+            Some(Source::Input(i)) => 2 + sends + i as i32,
         };
         let next = (index + delta).clamp(0, count - 1);
         let source = match next {
@@ -274,7 +319,8 @@ impl Routing {
                 return;
             }
             1 => Source::Main,
-            n => Source::Input((n - 2) as u8),
+            n if n < 2 + sends => Source::Send((n - 2) as u8),
+            n => Source::Input((n - 2 - sends) as u8),
         };
         match self.strip_mut(port) {
             Some(strip) => strip.source = source,
@@ -312,8 +358,8 @@ impl Routing {
             }
         } else if let Some(strip) = self.strip_mut(port).filter(|s| s.stereo) {
             // Two outputs playing the same source: the left and right sides
-            // of the main mix, or the same input on both
-            let main = strip.source == Source::Main;
+            // of the main mix or a send, or the same input on both
+            let main = !matches!(strip.source, Source::Input(_));
             strip.stereo = false;
             strip.fold = if main { Fold::Left } else { Fold::Sum };
             let second = Strip {
@@ -339,8 +385,10 @@ impl Routing {
 /// What one output plays, as gains
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PortMix {
-    /// Gains of the left and right main mix
-    pub main: [f32; 2],
+    /// Stereo bus played: 0 = the main mix, then the sends
+    pub bus: u8,
+    /// Gains of its left and right sides
+    pub gains: [f32; 2],
     /// Input passed through, and its gain
     pub input: Option<u8>,
     pub input_gain: f32,
@@ -348,14 +396,16 @@ pub struct PortMix {
 
 impl PortMix {
     pub const SILENT: Self = Self {
-        main: [0.0; 2],
+        bus: 0,
+        gains: [0.0; 2],
         input: None,
         input_gain: 0.0,
     };
 
-    fn main(main: [f32; 2]) -> Self {
+    fn bus(bus: u8, gains: [f32; 2]) -> Self {
         Self {
-            main,
+            bus,
+            gains,
             ..Self::SILENT
         }
     }
@@ -369,7 +419,7 @@ impl PortMix {
     }
 
     fn is_silent(&self) -> bool {
-        self.main == [0.0; 2] && self.input_gain == 0.0
+        self.gains == [0.0; 2] && self.input_gain == 0.0
     }
 }
 
@@ -490,12 +540,13 @@ impl OutputRouter {
         self.target.input as usize
     }
 
-    /// Fill output `port` from the main mix and the inputs (`input(i)` is
-    /// the buffer of input i)
+    /// Fill output `port` from the stereo buses (`buses[0]` is the main
+    /// mix, then the sends) and the inputs (`input(i)` is the buffer of
+    /// input i)
     pub fn render<'a>(
         &mut self,
         port: usize,
-        main: [&[f32]; 2],
+        buses: &[[&[f32]; 2]],
         input: impl Fn(u8) -> Option<&'a [f32]>,
         out: &mut [f32],
     ) {
@@ -504,33 +555,49 @@ impl OutputRouter {
             return;
         };
         let target = self.target.ports[port];
+        let stereo = |bus: u8| buses.get(bus as usize).copied();
         if *current == target {
             // Steady: no ramp
             if target.is_silent() {
                 out.fill(0.0);
                 return;
             }
+            let bus = stereo(target.bus);
             let buffer = target.input.and_then(&input);
             for (i, o) in out.iter_mut().enumerate() {
+                let played = bus.map_or(0.0, |[l, r]| {
+                    target.gains[0] * l[i] + target.gains[1] * r[i]
+                });
                 let passed = buffer.map_or(0.0, |b| b[i] * target.input_gain);
-                *o = target.main[0] * main[0][i] + target.main[1] * main[1][i] + passed;
+                *o = played + passed;
             }
             return;
         }
-        // Another input: fade the current one out, then the new one in
+        // Another bus or input: fade the current one out, then the new one in
+        let mut bus = stereo(current.bus);
         let mut buffer = current.input.and_then(&input);
         for (i, o) in out.iter_mut().enumerate() {
-            ramp(&mut current.main[0], target.main[0], self.step);
-            ramp(&mut current.main[1], target.main[1], self.step);
-            let switching = current.input != target.input;
-            let gain = if switching { 0.0 } else { target.input_gain };
+            let other_bus = current.bus != target.bus;
+            for side in 0..2 {
+                let gain = if other_bus { 0.0 } else { target.gains[side] };
+                ramp(&mut current.gains[side], gain, self.step);
+            }
+            if other_bus && current.gains == [0.0; 2] {
+                current.bus = target.bus;
+                bus = stereo(current.bus);
+            }
+            let other_input = current.input != target.input;
+            let gain = if other_input { 0.0 } else { target.input_gain };
             ramp(&mut current.input_gain, gain, self.step);
-            if switching && current.input_gain == 0.0 {
+            if other_input && current.input_gain == 0.0 {
                 current.input = target.input;
                 buffer = current.input.and_then(&input);
             }
+            let played = bus.map_or(0.0, |[l, r]| {
+                current.gains[0] * l[i] + current.gains[1] * r[i]
+            });
             let passed = buffer.map_or(0.0, |b| b[i] * current.input_gain);
-            *o = current.main[0] * main[0][i] + current.main[1] * main[1][i] + passed;
+            *o = played + passed;
         }
     }
 }
@@ -549,15 +616,15 @@ mod tests {
     #[test]
     fn default_plays_the_main_mix_on_outputs_1_and_2() {
         let mix = Routing::default().mix(1, 4);
-        assert_eq!(mix.ports[0].main, [1.0, 0.0]);
-        assert_eq!(mix.ports[1].main, [0.0, 1.0]);
+        assert_eq!(mix.ports[0].gains, [1.0, 0.0]);
+        assert_eq!(mix.ports[1].gains, [0.0, 1.0]);
         assert!(mix.ports[2].is_silent() && mix.ports[3].is_silent());
     }
 
     #[test]
     fn a_pair_on_the_last_output_folds_to_mono() {
         let mix = Routing::default().mix(1, 1);
-        assert_eq!(mix.ports[0].main, [0.5, 0.5]);
+        assert_eq!(mix.ports[0].gains, [0.5, 0.5]);
     }
 
     #[test]
@@ -576,8 +643,8 @@ mod tests {
             ],
         };
         let mix = routing.mix(2, 4);
-        assert_eq!(mix.ports[2].main, [1.0, 0.0]);
-        assert_eq!(mix.ports[3].main, [0.0, 1.0]);
+        assert_eq!(mix.ports[2].gains, [1.0, 0.0]);
+        assert_eq!(mix.ports[3].gains, [0.0, 1.0]);
     }
 
     #[test]
@@ -647,7 +714,7 @@ mod tests {
         let guitar = [0.5f32; 8];
         let input = |i: u8| (i == 1).then_some(&guitar[..]);
         let mut out = [0.0f32; 8];
-        router.render(0, [&main, &main], input, &mut out);
+        router.render(0, &[[&main, &main]], input, &mut out);
         assert_eq!(out, [1.0; 8]);
 
         // Output 1 switches to input 2: the main mix fades out over 10 ms
@@ -661,7 +728,7 @@ mod tests {
         let main = [1.0f32; 16];
         let guitar = [0.5f32; 16];
         let input = |i: u8| (i == 1).then_some(&guitar[..]);
-        router.render(0, [&main, &main], input, &mut out);
+        router.render(0, &[[&main, &main]], input, &mut out);
         assert!(out[0] > 0.5 && out[0] < 1.0, "ramping: {}", out[0]);
         assert!((out[15] - 0.5).abs() < 1e-6, "input alone: {}", out[15]);
     }
@@ -671,7 +738,9 @@ mod tests {
         let mut routing = Routing::default();
         routing.step_source(2, 1, 2, 4);
         assert_eq!(routing.strip(2).map(|s| s.source), Some(Source::Main));
-        routing.step_source(2, 2, 2, 4);
+        routing.step_source(2, 1, 2, 4);
+        assert_eq!(routing.strip(2).map(|s| s.source), Some(Source::Send(0)));
+        routing.step_source(2, MAX_SENDS as i32 + 1, 2, 4);
         assert_eq!(routing.strip(2).map(|s| s.source), Some(Source::Input(1)));
         // No input 3 on this interface
         routing.step_source(2, 1, 2, 4);
@@ -682,6 +751,47 @@ mod tests {
         routing.step_source(1, 1, 2, 4);
         routing.step_source(4, 1, 2, 4);
         assert_eq!(routing, Routing::default());
+    }
+
+    #[test]
+    fn a_send_plays_on_its_outputs() {
+        let routing = Routing {
+            input: 0,
+            strips: vec![
+                Strip::main(0, true),
+                strip(2, true, Source::Send(1)),
+                strip(4, false, Source::Send(MAX_SENDS as u8)),
+            ],
+        };
+        let mix = routing.mix(1, 6);
+        assert_eq!((mix.ports[2].bus, mix.ports[2].gains), (2, [1.0, 0.0]));
+        assert_eq!((mix.ports[3].bus, mix.ports[3].gains), (2, [0.0, 1.0]));
+        // No such send
+        assert!(mix.ports[4].is_silent());
+
+        let (mut router, _) = OutputRouter::new(&routing, 1, 6, 48000.0);
+        let (main, send) = ([1.0f32; 4], [0.25f32; 4]);
+        let mut out = [0.0f32; 4];
+        router.render(
+            3,
+            &[[&main, &main], [&send, &send], [&send, &send]],
+            |_| None,
+            &mut out,
+        );
+        assert_eq!(out, [0.25; 4]);
+        // A missing bus is silent
+        router.render(3, &[[&main, &main]], |_| None, &mut out);
+        assert_eq!(out, [0.0; 4]);
+    }
+
+    #[test]
+    fn block_marks_name_the_input_and_the_send() {
+        let io = BlockIo {
+            input: Some(1),
+            send: Some(0),
+        };
+        assert_eq!(io.mark(), "IN 2 · S1");
+        assert_eq!(BlockIo::default().mark(), "");
     }
 
     #[test]

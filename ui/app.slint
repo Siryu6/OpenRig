@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
 import {
     PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus,
-    T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile, RoutingOutput
+    T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile, RoutingOutput, RoutingBlock
 } from "types.slint";
 // Pages
 import { PluginRack } from "pages/rack.slint";
@@ -202,6 +202,7 @@ export component App inherits Window {
     in-out property <[RoutingOutput]> routing-outputs: [];
     in-out property <[float]> routing-input-levels: [];
     in-out property <[float]> routing-output-levels: [];
+    in-out property <[RoutingBlock]> routing-blocks: [];
 
     // TONE3000 library (view 8)
     in-out property <int> t3k-tab: 0;
@@ -314,6 +315,8 @@ export component App inherits Window {
     callback routing-set-pan(int, float);
     callback routing-set-fold(int, int);             // 0 = L+R, 1 = L, 2 = R
     callback routing-toggle(int, string);            // "mute" | "solo" | "invert"
+    callback routing-block-input(int, int);          // instance-id, delta
+    callback routing-block-send(int, int);
     callback power(string);                          // "poweroff" | "reboot" | "restart" (the app)
     in-out property <bool> power-dialog: false;
     in-out property <string> power-action: "";       // set once chosen
@@ -838,6 +841,14 @@ export component App inherits Window {
                 outputs: root.routing-outputs;
                 input-levels: root.routing-input-levels;
                 output-levels: root.routing-output-levels;
+                preset-name: root.current-preset-name;
+                blocks: root.routing-blocks;
+                step-block-input(id, delta) => {
+                    root.routing-block-input(id, delta);
+                }
+                step-block-send(id, delta) => {
+                    root.routing-block-send(id, delta);
+                }
                 step-input(delta) => {
                     root.routing-step-input(delta);
                 }

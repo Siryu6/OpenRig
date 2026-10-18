@@ -1,7 +1,7 @@
 import { Theme } from "../theme.slint";
 import { Button, Card, EmptyState, Icon, Knob, Segmented, Stepper } from "../components/controls.slint";
 import { LedBar } from "../components/level_meter.slint";
-import { RoutingOutput } from "../types.slint";
+import { RoutingBlock, RoutingOutput } from "../types.slint";
 
 // Title and explanation of a card
 component CardTitle inherits HorizontalLayout {
@@ -232,8 +232,62 @@ component OutputStrip inherits Rectangle {
     }
 }
 
-// Routing: the input feeding the effects, and what each output of the interface plays.
-// Kept apart from the rack: with a 2 x 2 interface there is nothing to change here.
+// A block of the preset: the input replacing the signal before it, the send taking it after it
+component BlockRow inherits HorizontalLayout {
+    in property <RoutingBlock> block;
+    in property <int> inputs;
+    callback step-input(int, int);
+    callback step-send(int, int);
+    spacing: Theme.space-sm;
+
+    VerticalLayout {
+        horizontal-stretch: 1;
+        alignment: center;
+        spacing: 2px;
+        Text {
+            text: root.block.name;
+            color: root.block.input >= 0 || root.block.send >= 0 ? Theme.text-primary : Theme.text-secondary;
+            font-size: Theme.font-body;
+            font-weight: Theme.weight-semibold;
+            overflow: elide;
+        }
+        if root.block.place != "": Text {
+            text: root.block.place;
+            color: Theme.text-muted;
+            font-size: Theme.font-caption;
+            overflow: elide;
+        }
+    }
+    Stepper {
+        width: 150px;
+        text: root.block.input < 0 ? "Off" : "Input " + (root.block.input + 1);
+        can-decrement: root.block.input >= 0;
+        can-increment: root.block.input < root.inputs - 1;
+        decrement => {
+            root.step-input(root.block.instance-id, -1);
+        }
+        increment => {
+            root.step-input(root.block.instance-id, 1);
+        }
+    }
+    Stepper {
+        width: 150px;
+        text: root.block.send < 0 ? "Off" : "Send " + (root.block.send + 1);
+        can-decrement: root.block.send >= 0;
+        can-increment: root.block.send < 3;
+        decrement => {
+            root.step-send(root.block.instance-id, -1);
+        }
+        increment => {
+            root.step-send(root.block.instance-id, 1);
+        }
+    }
+}
+
+// Routing: the input feeding the effects, what each output of the interface plays, and
+// the sends and returns of the preset's blocks.
+// Kept apart from the rack: with a 2 x 2 interface there is nothing to change here, and
+// a block with a send or a return only gets a small mark in the rack.
 export component RoutingView inherits Rectangle {
     in property <bool> available: false;     // audio running
     in property <int> inputs: 1;
@@ -241,6 +295,8 @@ export component RoutingView inherits Rectangle {
     in property <[RoutingOutput]> outputs: [];
     in property <[float]> input-levels: [];  // meter positions, per input
     in property <[float]> output-levels: []; // and per output
+    in property <string> preset-name;
+    in property <[RoutingBlock]> blocks: [];  // of the current preset, in signal order
 
     callback step-input(int);
     callback step-source(int, int);          // first output, delta
@@ -249,6 +305,8 @@ export component RoutingView inherits Rectangle {
     callback set-pan(int, float);
     callback set-fold(int, int);
     callback toggle(int, string);            // "mute" | "solo" | "invert"
+    callback step-block-input(int, int);     // instance-id, delta
+    callback step-block-send(int, int);
 
     width: 100%;
     height: 100%;
@@ -346,7 +404,7 @@ export component RoutingView inherits Rectangle {
                     CardTitle {
                         icon: "volume";
                         title: "Outputs";
-                        text: "What each output of the interface plays: the main mix of the effects, or an input as it comes in. Kept for the whole pedalboard, whatever the preset.";
+                        text: "What each output of the interface plays: the main mix of the effects, a send, or an input as it comes in. Kept for the whole pedalboard, whatever the preset.";
                     }
 
                     Flickable {
@@ -378,6 +436,52 @@ export component RoutingView inherits Rectangle {
                                     root.toggle(port, what);
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            Card {
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    CardTitle {
+                        icon: "split";
+                        title: "Sends and returns" + (root.preset-name != "" ? " · " + root.preset-name : "");
+                        text: "A return replaces the signal before a block with an input (a bass DI before a cabinet). A send takes the signal after a block, to play it on an output above (a dry signal before the amp, a 100 % wet reverb). Saved with the preset.";
+                    }
+
+                    if root.blocks.length == 0: Text {
+                        text: "The preset has no block yet.";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-small;
+                    }
+
+                    if root.blocks.length > 0: HorizontalLayout {
+                        spacing: Theme.space-sm;
+                        Rectangle {
+                            horizontal-stretch: 1;
+                        }
+                        for title in ["RETURN BEFORE", "SEND AFTER"]: Text {
+                            width: 150px;
+                            text: title;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-caption;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: 0.8px;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    for block in root.blocks: BlockRow {
+                        block: block;
+                        inputs: root.inputs;
+                        step-input(id, delta) => {
+                            root.step-block-input(id, delta);
+                        }
+                        step-send(id, delta) => {
+                            root.step-block-send(id, delta);
                         }
                     }
                 }

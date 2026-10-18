@@ -12,6 +12,10 @@
 //! (one instance per side); neural models, too costly to double, play the
 //! mix of both sides on both. In mono mode everything stays mono and L/R
 //! splits are summed.
+//!
+//! Sends and returns (see `audio::routing::BlockIo`) are extra nodes around
+//! a block: a return replaces the signal before it with an input of the
+//! interface, a send adds the signal after it to a send bus (`ChainIo`).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -23,6 +27,7 @@ use tracing::warn;
 use super::instance::PluginInstance;
 use super::lv2_host::Lv2Host;
 use super::scanner::{self, FileKind};
+use crate::audio::routing::{BlockIo, MAX_PORTS, MAX_SENDS};
 use crate::audio::split_chain::{ChainNode, SplitType};
 use crate::midi::RawMidi;
 use crate::monitor::BlockMeter;
@@ -46,6 +51,50 @@ pub struct ChainSpec {
     pub stereo: bool,
     /// Tempo sent to plugins taking the transport (0: none)
     pub bpm: f32,
+    /// Sends and returns per block instance_id
+    pub io: HashMap<usize, BlockIo>,
+}
+
+/// What the chain reads and writes besides its own signal, for one audio
+/// period: the inputs of the interface (returns) and the send buses (sends)
+pub struct ChainIo<'a> {
+    /// Buffer of each input, for the whole period
+    pub inputs: &'a [&'a [f32]],
+    /// Send buses (left, right), for the whole period; sends add to them,
+    /// so the caller clears them every period
+    pub sends: &'a mut [[Vec<f32>; 2]],
+    /// Start of the part of the period being processed
+    offset: usize,
+    /// Level of the sends over that part (a chain fading out of a switch
+    /// fades its sends too): at its start, and its change per sample
+    gain: f32,
+    gain_step: f32,
+}
+
+impl<'a> ChainIo<'a> {
+    pub fn new(inputs: &'a [&'a [f32]], sends: &'a mut [[Vec<f32>; 2]]) -> Self {
+        Self {
+            inputs,
+            sends,
+            offset: 0,
+            gain: 1.0,
+            gain_step: 0.0,
+        }
+    }
+
+    /// The part of the period starting at `offset`, with the sends going
+    /// from `from` to `to` over its `len` samples
+    pub fn part(&mut self, offset: usize, len: usize, from: f32, to: f32) {
+        self.offset = offset;
+        self.gain = from;
+        self.gain_step = (to - from) / len.max(1) as f32;
+    }
+}
+
+/// Inputs and sends when there are none (tests, a chain without them)
+pub fn no_io<R>(f: impl FnOnce(&mut ChainIo) -> R) -> R {
+    let mut sends: [[Vec<f32>; 2]; 0] = [];
+    f(&mut ChainIo::new(&[], &mut sends))
 }
 
 /// Live change applied to the running chain without rebuilding it.
@@ -341,7 +390,7 @@ impl SplitProc {
     }
 
     /// `l.len()` must not exceed the branch buffer size
-    fn process(&mut self, l: &mut [f32], r: &mut [f32]) {
+    fn process(&mut self, l: &mut [f32], r: &mut [f32], io: &mut ChainIo) {
         if !self.enabled {
             if self.stereo_out && !self.stereo_in {
                 r.copy_from_slice(l);
@@ -355,9 +404,9 @@ impl SplitProc {
             let [bl, br] = &mut self.bottom_buf;
             let (bl, br) = (&mut bl[..n], &mut br[..n]);
             bl.copy_from_slice(if self.stereo_in { r } else { l });
-            process_nodes(&mut self.bottom, bl, br);
+            process_nodes(&mut self.bottom, bl, br, io);
             let tr = &mut self.top_buf[1][..n];
-            process_nodes(&mut self.top, l, tr);
+            process_nodes(&mut self.top, l, tr, io);
             if self.top_stereo {
                 for (l, tr) in l.iter_mut().zip(tr.iter()) {
                     *l = (*l + tr) * 0.5;
@@ -382,7 +431,7 @@ impl SplitProc {
             } else {
                 (&mut self.bottom, self.bottom_stereo, 1)
             };
-            process_nodes(branch, l, r);
+            process_nodes(branch, l, r, io);
             if self.stereo_out && !branch_stereo {
                 r.copy_from_slice(l);
             }
@@ -407,9 +456,9 @@ impl SplitProc {
         }
         {
             let [tl, tr] = &mut self.top_buf;
-            process_nodes(&mut self.top, &mut tl[..n], &mut tr[..n]);
+            process_nodes(&mut self.top, &mut tl[..n], &mut tr[..n], io);
             let [bl, br] = &mut self.bottom_buf;
-            process_nodes(&mut self.bottom, &mut bl[..n], &mut br[..n]);
+            process_nodes(&mut self.bottom, &mut bl[..n], &mut br[..n], io);
         }
 
         let ([tl, tr], [bl, br]) = (&self.top_buf, &self.bottom_buf);
@@ -434,14 +483,50 @@ impl SplitProc {
 enum ProcNode {
     Plugin(Box<PluginProc>),
     Split(Box<SplitProc>),
+    /// An input of the interface replaces the signal
+    Return {
+        input: u8,
+        stereo: bool,
+    },
+    /// The signal is added to a send bus
+    Send {
+        send: u8,
+        stereo: bool,
+    },
 }
 
 /// Process `l` (and `r` where the signal is stereo) through `nodes`
-fn process_nodes(nodes: &mut [ProcNode], l: &mut [f32], r: &mut [f32]) {
+fn process_nodes(nodes: &mut [ProcNode], l: &mut [f32], r: &mut [f32], io: &mut ChainIo) {
     for node in nodes {
         match node {
             ProcNode::Plugin(plugin) => plugin.process(l, r),
-            ProcNode::Split(split) => split.process(l, r),
+            ProcNode::Split(split) => split.process(l, r, io),
+            ProcNode::Return { input, stereo } => {
+                let range = io.offset..io.offset + l.len();
+                match io.inputs.get(*input as usize).and_then(|b| b.get(range)) {
+                    Some(buffer) => l.copy_from_slice(buffer),
+                    // An input this interface does not have
+                    None => l.fill(0.0),
+                }
+                if *stereo {
+                    r.copy_from_slice(l);
+                }
+            }
+            ProcNode::Send { send, stereo } => {
+                let range = io.offset..io.offset + l.len();
+                let Some([sl, sr]) = io.sends.get_mut(*send as usize) else {
+                    continue;
+                };
+                let (Some(sl), Some(sr)) = (sl.get_mut(range.clone()), sr.get_mut(range)) else {
+                    continue;
+                };
+                let right: &[f32] = if *stereo { r } else { l };
+                for i in 0..l.len() {
+                    let g = io.gain + io.gain_step * i as f32;
+                    sl[i] += l[i] * g;
+                    sr[i] += right[i] * g;
+                }
+            }
         }
     }
 }
@@ -454,6 +539,7 @@ fn for_each_instance(nodes: &mut [ProcNode], f: &mut impl FnMut(&mut PluginInsta
                 for_each_instance(&mut split.top, f);
                 for_each_instance(&mut split.bottom, f);
             }
+            ProcNode::Return { .. } | ProcNode::Send { .. } => {}
         }
     }
 }
@@ -555,6 +641,15 @@ impl EffectChain {
     ) -> (Vec<ProcNode>, bool) {
         let mut built = Vec::with_capacity(nodes.len());
         for node in nodes {
+            let id = match node {
+                ChainNode::Plugin { instance_id, .. } | ChainNode::Split { instance_id, .. } => {
+                    *instance_id
+                }
+            };
+            let io = spec.io.get(&id).copied().unwrap_or_default();
+            if let Some(input) = io.input.filter(|&i| (i as usize) < MAX_PORTS) {
+                built.push(ProcNode::Return { input, stereo });
+            }
             match node {
                 ChainNode::Plugin {
                     instance_id,
@@ -664,6 +759,9 @@ impl EffectChain {
                     stereo = stereo_out;
                 }
             }
+            if let Some(send) = io.send.filter(|&s| (s as usize) < MAX_SENDS) {
+                built.push(ProcNode::Send { send, stereo });
+            }
         }
         (built, stereo)
     }
@@ -671,14 +769,24 @@ impl EffectChain {
     /// Process the mono input in `left` (any length): the left and right
     /// outputs are written in place to `left` and `right` (same length)
     pub fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
-        for (l, r) in left
-            .chunks_mut(self.max_block)
-            .zip(right.chunks_mut(self.max_block))
-        {
-            process_nodes(&mut self.nodes, l, r);
-            if !self.stereo_out {
-                r.copy_from_slice(l);
+        no_io(|io| {
+            for (k, (l, r)) in left
+                .chunks_mut(self.max_block)
+                .zip(right.chunks_mut(self.max_block))
+                .enumerate()
+            {
+                io.part(k * self.max_block, l.len(), 1.0, 1.0);
+                self.process_io(l, r, io);
             }
+        })
+    }
+
+    /// Process one part of a period (at most `max_block` samples, at the
+    /// offset set in `io`), with the inputs and sends of `io`
+    pub fn process_io(&mut self, l: &mut [f32], r: &mut [f32], io: &mut ChainIo) {
+        process_nodes(&mut self.nodes, l, r, io);
+        if !self.stereo_out {
+            r.copy_from_slice(l);
         }
     }
 
@@ -803,6 +911,64 @@ mod tests {
             stereo,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn returns_replace_the_signal_and_sends_copy_it() {
+        let host = Lv2Host::demo();
+        // Cabinet 10 at -6 dB, its output sent to send 2; input 2 replaces
+        // the signal before cabinet 20
+        let spec = ChainSpec {
+            nodes: vec![cab(10), cab(20)],
+            params: HashMap::from([(10, vec![20.0 * 0.5f32.log10()])]),
+            io: HashMap::from([
+                (
+                    10,
+                    BlockIo {
+                        input: None,
+                        send: Some(1),
+                    },
+                ),
+                (
+                    20,
+                    BlockIo {
+                        input: Some(1),
+                        send: None,
+                    },
+                ),
+            ]),
+            ..Default::default()
+        };
+        let (mut chain, errors) = EffectChain::build(&spec, &host, 48000.0, 64);
+        assert!(errors.is_empty(), "{errors:?}");
+        let (guitar, bass) = (vec![1.0f32; 300], vec![0.25f32; 300]);
+        let inputs: [&[f32]; 2] = [&guitar, &bass];
+        let mut sends: Vec<[Vec<f32>; 2]> = (0..MAX_SENDS)
+            .map(|_| [vec![0.0; 300], vec![0.0; 300]])
+            .collect();
+        let (mut left, mut right) = (guitar.clone(), vec![0.0; 300]);
+        let mut io = ChainIo::new(&inputs, &mut sends);
+        for (k, (l, r)) in left.chunks_mut(64).zip(right.chunks_mut(64)).enumerate() {
+            io.part(k * 64, l.len(), 1.0, 1.0);
+            chain.process_io(l, r, &mut io);
+        }
+        assert!(
+            settles_at(&left, 0.25) && settles_at(&right, 0.25),
+            "{}",
+            left[299]
+        );
+        let [send_l, send_r] = &sends[1];
+        assert!(
+            settles_at(send_l, 0.5) && settles_at(send_r, 0.5),
+            "{}",
+            send_l[299]
+        );
+        assert!(sends[0].iter().flatten().all(|&s| s == 0.0));
+
+        // Without the inputs (tuner muting), a return is silent
+        let (mut left, mut right) = (guitar.clone(), vec![0.0; 300]);
+        chain.process(&mut left, &mut right);
+        assert!(settles_at(&left, 0.0));
     }
 
     #[test]

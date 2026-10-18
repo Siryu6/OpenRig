@@ -139,6 +139,12 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
                 .colors
                 .get(&n.instance_id)
                 .is_some_and(|c| views::block_color(c).is_some()),
+            io: chain
+                .io
+                .get(&n.instance_id)
+                .map(|io| io.mark())
+                .unwrap_or_default()
+                .into(),
             t3k: !n.is_split
                 && chain
                     .files
@@ -1184,7 +1190,7 @@ fn main() -> Result<()> {
     update_ui::setup(&app);
     live_ui::setup(&app, &state);
     midi_ui::setup(&app, &state);
-    let _routing_meters = routing_ui::setup(&app, engine.as_deref());
+    let _routing_meters = routing_ui::setup(&app, &state, engine.as_deref());
     refresh_all(&app, &state);
     let _timer = start_poll_timer(&app, &state, engine.as_deref());
     let _monitor = start_monitor_timer(&app, engine.clone());

@@ -1,6 +1,8 @@
-//! Routing view: the input feeding the effects and what each output of the
-//! interface plays. Changes are heard at once and saved to routing.json a
-//! moment after the last one, so a knob drag writes the file once.
+//! Routing view: the input feeding the effects, what each output of the
+//! interface plays, and the sends and returns of the preset's blocks.
+//! Output changes are heard at once and saved to routing.json a moment after
+//! the last one, so a knob drag writes the file once; sends and returns are
+//! part of the preset, and rebuild the chain.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -10,11 +12,14 @@ use std::time::Duration;
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel, Weak};
 use tracing::warn;
 
-use pedalboard::audio::routing::{Fold, PortMeter, Routing, RoutingControl, Source, MAX_PORTS};
-use pedalboard::audio::AudioEngine;
+use pedalboard::audio::routing::{
+    BlockIo, Fold, PortMeter, Routing, RoutingControl, Source, MAX_PORTS, MAX_SENDS,
+};
+use pedalboard::audio::{AudioEngine, ChainNode};
+use pedalboard::state::{AppState, EffectChainState};
 use pedalboard::ui::slint_bridge::{meter_position, METER_FLOOR_DB};
 
-use crate::{model, App, RoutingOutput};
+use crate::{block_name, model, refresh_chain, report, App, RoutingBlock, RoutingOutput};
 
 /// The routing view, as `current-view` in ui/app.slint
 const VIEW: i32 = 10;
@@ -66,7 +71,7 @@ impl Context {
     }
 }
 
-pub fn setup(app: &App, engine: Option<&AudioEngine>) -> Option<Timer> {
+pub fn setup(app: &App, state: &Arc<AppState>, engine: Option<&AudioEngine>) -> Option<Timer> {
     let Some(engine) = engine else {
         app.set_routing_available(false);
         app.set_routing_summary("Available once the audio interface is running.".into());
@@ -129,7 +134,89 @@ pub fn setup(app: &App, engine: Option<&AudioEngine>) -> Option<Timer> {
         })
     });
 
-    Some(start_meters(app, engine.port_levels(), inputs, outputs))
+    // Sends and returns of the blocks
+    let step = move |io: &mut Option<u8>, delta: i32, count: usize| {
+        let index = io.map_or(-1, i32::from) + delta.signum();
+        *io = (0..count as i32).contains(&index).then_some(index as u8);
+    };
+    let (weak, st) = (app.as_weak(), state.clone());
+    app.on_routing_block_input(move |id, delta| {
+        let Some(app) = weak.upgrade() else { return };
+        edit_block(&app, &st, id, |io| step(&mut io.input, delta, inputs));
+    });
+    let (weak, st) = (app.as_weak(), state.clone());
+    app.on_routing_block_send(move |id, delta| {
+        let Some(app) = weak.upgrade() else { return };
+        edit_block(&app, &st, id, |io| step(&mut io.send, delta, MAX_SENDS));
+    });
+
+    Some(start_meters(
+        app,
+        state.clone(),
+        engine.port_levels(),
+        inputs,
+        outputs,
+    ))
+}
+
+/// Change the send or return of block `id`, then show it here and in the rack
+fn edit_block(app: &App, state: &AppState, id: i32, change: impl FnOnce(&mut BlockIo)) {
+    let Ok(id) = usize::try_from(id) else { return };
+    let mut io = state.chain().io.get(&id).copied().unwrap_or_default();
+    change(&mut io);
+    report(app, state.set_block_io(id, io));
+    show_blocks(app, state);
+    refresh_chain(app, state);
+}
+
+/// The blocks of the current preset, in signal order
+fn show_blocks(app: &App, state: &AppState) {
+    let chain = state.chain();
+    let mut rows = Vec::new();
+    collect_blocks(state, &chain, &chain.nodes, "", &mut rows);
+    app.set_routing_blocks(model(rows));
+}
+
+fn collect_blocks(
+    state: &AppState,
+    chain: &EffectChainState,
+    nodes: &[ChainNode],
+    place: &str,
+    rows: &mut Vec<RoutingBlock>,
+) {
+    for node in nodes {
+        let (id, name) = match node {
+            ChainNode::Plugin {
+                instance_id, uri, ..
+            } => (*instance_id, block_name(state, chain, *instance_id, uri)),
+            ChainNode::Split {
+                instance_id,
+                split_type,
+                ..
+            } => (*instance_id, split_type.label().to_string()),
+        };
+        let io = chain.io.get(&id).copied().unwrap_or_default();
+        rows.push(RoutingBlock {
+            instance_id: id as i32,
+            name: name.clone().into(),
+            place: place.into(),
+            input: io.input.map_or(-1, i32::from),
+            send: io.send.map_or(-1, i32::from),
+        });
+        if let ChainNode::Split {
+            top_chain,
+            bottom_chain,
+            ..
+        } = node
+        {
+            let inner = |branch: &str| match place {
+                "" => format!("{name} · {branch}"),
+                outer => format!("{outer} › {name} · {branch}"),
+            };
+            collect_blocks(state, chain, top_chain, &inner("A"), rows);
+            collect_blocks(state, chain, bottom_chain, &inner("B"), rows);
+        }
+    }
 }
 
 /// The routing as the view shows it: one entry per strip, and one per
@@ -149,6 +236,7 @@ fn show(
             Some(strip) => {
                 let (source, main) = match strip.source {
                     Source::Main => ("Main mix".to_string(), true),
+                    Source::Send(s) => (format!("Send {}", s + 1), true),
                     Source::Input(i) => (format!("Input {}", i + 1), false),
                 };
                 let stereo = strip.stereo && port + 1 < outputs;
@@ -227,8 +315,15 @@ fn summary(routing: &Routing, inputs: usize, outputs: usize) -> String {
     )
 }
 
-/// Polls the port meters while the view is shown
-fn start_meters(app: &App, meter: Arc<PortMeter>, inputs: usize, outputs: usize) -> Timer {
+/// Polls the port meters while the view is shown, and lists the blocks of
+/// the preset when it opens
+fn start_meters(
+    app: &App,
+    state: Arc<AppState>,
+    meter: Arc<PortMeter>,
+    inputs: usize,
+    outputs: usize,
+) -> Timer {
     let timer = Timer::default();
     let weak = app.as_weak();
     let mut bars = ([0f32; MAX_PORTS], [0f32; MAX_PORTS]);
@@ -240,6 +335,9 @@ fn start_meters(app: &App, meter: Arc<PortMeter>, inputs: usize, outputs: usize)
         if app.get_current_view() != VIEW {
             shown = None;
             return;
+        }
+        if shown.is_none() {
+            show_blocks(&app, &state);
         }
         let fall = FALL_DB_PER_S * METER_PERIOD.as_secs_f32() / -METER_FLOOR_DB;
         let fold = |bar: &mut f32, peak: f32| *bar = meter_position(peak).max(*bar - fall);

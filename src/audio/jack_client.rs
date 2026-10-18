@@ -7,9 +7,10 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use super::chain_switcher::ChainControl;
-use super::routing::{OutputRouter, PortMeter, Routing, RoutingControl, MAX_PORTS};
+use super::routing::{OutputRouter, PortMeter, Routing, RoutingControl, MAX_PORTS, MAX_SENDS};
 use super::{ChainSwitcher, Looper, Tuner, TunerResult};
 use crate::monitor::{DspMeter, LevelMeter};
+use crate::plugins::chain::ChainIo;
 use crate::plugins::Lv2Host;
 
 /// Preset/chain switch crossfade
@@ -119,6 +120,9 @@ impl JackClientBuilder {
             tuner_tx,
             chain_switcher,
             scratch: [vec![0.0; buffer_size.max(1)], vec![0.0; buffer_size.max(1)]],
+            sends: std::array::from_fn(|_| {
+                [vec![0.0; buffer_size.max(1)], vec![0.0; buffer_size.max(1)]]
+            }),
         };
 
         let stopped = Arc::new(AtomicBool::new(false));
@@ -195,8 +199,9 @@ impl NotificationHandler for Notifications {
     }
 }
 
-/// Audio callback: input → tuner → effect chain → looper → output mixer
-/// (the main mix and the inputs on the outputs)
+/// Audio callback: input → tuner → effect chain (with its returns and
+/// sends) → looper → output mixer (the main mix, the sends and the inputs
+/// on the outputs)
 pub struct PedalboardProcessor {
     /// Time spent in the callback vs. the buffer period
     meter: Arc<DspMeter>,
@@ -214,6 +219,8 @@ pub struct PedalboardProcessor {
     /// Pre-allocated left and right buffers (no allocation in the audio
     /// callback)
     scratch: [Vec<f32>; 2],
+    /// Send buses (left, right), filled by the chain every period
+    sends: [[Vec<f32>; 2]; MAX_SENDS],
 }
 
 impl ProcessHandler for PedalboardProcessor {
@@ -230,18 +237,35 @@ impl ProcessHandler for PedalboardProcessor {
             right.resize(n, 0.0);
         }
         let (left, right) = (&mut left[..n], &mut right[..n]);
+        for bus in self.sends.iter_mut().flatten() {
+            if bus.len() < n {
+                bus.resize(n, 0.0);
+            }
+            bus[..n].fill(0.0);
+        }
 
         // Tuner (may mute the signal while tuning)
+        let mut muted = false;
         if let Ok(mut tuner) = self.tuner.try_lock() {
             if let Some(result) = tuner.process_with_mute(input, left) {
                 let _ = self.tuner_tx.try_send(result);
             }
+            muted = tuner.is_muted();
         } else {
             left.copy_from_slice(input);
         }
 
-        // Effects: mono in, left and right out
-        let switching = self.chain_switcher.process(left, right);
+        // Effects: mono in, left and right out. Returns read the inputs
+        // (silent while the tuner mutes), sends fill the send buses.
+        let mut inputs: [&[f32]; MAX_PORTS] = [&[]; MAX_PORTS];
+        for (slot, port) in inputs.iter_mut().zip(&self.in_ports) {
+            *slot = port.as_slice(ps);
+        }
+        let returned = if muted { 0 } else { self.in_ports.len() };
+        let switching = {
+            let mut io = ChainIo::new(&inputs[..returned], &mut self.sends);
+            self.chain_switcher.process_io(left, right, &mut io)
+        };
 
         // Looper sits after the effects so loops are recorded with the tone
         if let Ok(mut looper) = self.looper.try_lock() {
@@ -253,11 +277,23 @@ impl ProcessHandler for PedalboardProcessor {
             left.fill(0.0);
             right.fill(0.0);
         }
+        for bus in self.sends.iter_mut().flatten() {
+            let bus = &mut bus[..n];
+            if !bus.iter().all(|s| s.is_finite()) {
+                bus.fill(0.0);
+            }
+        }
         let in_ports = &self.in_ports;
         let passed = |i: u8| in_ports.get(i as usize).map(|p| p.as_slice(ps));
+        // The main mix, then each send
+        let mut buses: [[&[f32]; 2]; 1 + MAX_SENDS] = [[&[], &[]]; 1 + MAX_SENDS];
+        buses[0] = [left, right];
+        for (bus, [l, r]) in buses[1..].iter_mut().zip(&self.sends) {
+            *bus = [&l[..n], &r[..n]];
+        }
         for (port, out) in self.out_ports.iter_mut().enumerate() {
             let out = out.as_mut_slice(ps);
-            self.router.render(port, [left, right], passed, out);
+            self.router.render(port, &buses, passed, out);
             self.ports.record_output(port, out);
         }
         for (port, input) in in_ports.iter().enumerate() {

@@ -40,6 +40,9 @@ pub struct PresetChain {
     /// Colour name per block instance_id, for the rack drawing
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub colors: HashMap<usize, String>,
+    /// Sends and returns per block instance_id
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub io: HashMap<usize, crate::audio::routing::BlockIo>,
     /// Scenes of the preset (None: slot never used); `nodes` and `params`
     /// hold the state of the current one
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -64,6 +67,7 @@ impl Default for PresetChain {
             params: HashMap::new(),
             files: HashMap::new(),
             colors: HashMap::new(),
+            io: HashMap::new(),
             scenes: Vec::new(),
             scene: 0,
             bpm: DEFAULT_BPM,

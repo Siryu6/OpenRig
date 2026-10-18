@@ -135,9 +135,13 @@ input and two outputs, at most 16 each): `pedalboard:in_N` is connected to
 capture port N and `pedalboard:out_N` to playback port N. Input 1 feeds the
 chain and outputs 1 and 2 play its left and right sides, unless
 `routing.json` in the data directory says otherwise (which input feeds the
-chain; for each output or pair: the main mix or an input passed through,
-level, balance, mute, solo, polarity, and how a stereo source plays on a
-single output). With a single playback port, both sides are summed on it.
+chain; for each output or pair: the main mix, one of four sends or an input
+passed through, level, balance, mute, solo, polarity, and how a stereo
+source plays on a single output). With a single playback port, both sides
+are summed on it. Presets can also attach a return (an input replacing the
+signal before a block) and a send (the signal after a block, copied to a
+send) to any block. All of it is set in Settings → Inputs and outputs →
+Routing.
 `in_1`, `out_1` and `out_2` keep their former names as aliases
 (`guitar_in`, `out_left`, `out_right`). Without JACK, the UI still starts
 with audio disabled.
