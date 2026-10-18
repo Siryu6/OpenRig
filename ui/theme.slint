@@ -6,54 +6,69 @@
 // Look: a hardware unit on a dark stage, not a web page. Minimal and dark:
 // neutral blacks (no blue tint), panels with a lit top edge, keys that look
 // pressable, near-square corners. ONE accent colour (amber, like the lamps and
-// displays of amps and studio gear), used for lines,
-// LEDs and text rather than fills; family colours on the blocks, plus
-// semantic success / warning / danger.
+// displays of amps and studio gear), used for lines, LEDs and text rather
+// than fills; family colours on the blocks, plus semantic success / warning /
+// danger. A light theme, for daylight, swaps the panels and the text.
 // Target: 800x480 touchscreen, GPU or software renderer (no blur).
 
 export global Theme {
+    // Light theme (Settings → Display): light panels and text, for daylight.
+    // The gear keeps its dark look in both: rack blocks, knobs, faders,
+    // footswitches and LEDs.
+    in-out property <bool> light: false;
+
     // --- Surfaces (darkest to lightest) ---
-    out property <color> background: #050506;      // app background
-    out property <color> surface: #0f1012;         // cards, panels, bars
-    out property <color> surface-raised: #18191c;  // controls, inputs, nodes
-    out property <color> surface-hover: #242528;   // pressed / hovered controls
-    out property <color> scrim: #000000b3;         // modal backdrop
+    out property <color> background: light ? #e7e6e2 : #050506;        // app background
+    out property <color> surface: light ? #f4f3f0 : #0f1012;           // cards, panels, bars
+    out property <color> surface-raised: light ? #fbfaf8 : #18191c;    // controls, inputs, nodes
+    out property <color> surface-hover: light ? #dfded9 : #242528;     // pressed / hovered controls
+    out property <color> scrim: light ? #00000059 : #000000b3;         // modal backdrop
     // Hardware details
-    out property <color> edge-light: #ffffff14;    // lit top edge of panels and keys
-    out property <color> display: #08090a;         // inset "LCD" areas
+    out property <color> edge-light: light ? #ffffffcc : #ffffff14;    // lit top edge of panels and keys
+    out property <color> display: light ? #e0dfda : #08090a;           // inset "LCD" areas
     out property <color> led-off: #2a2b2e;
-    out property <brush> key: @linear-gradient(180deg, #232427 0%, #18191b 100%);
-    out property <brush> key-pressed: @linear-gradient(180deg, #111214 0%, #18191b 100%);
-    out property <brush> panel: @linear-gradient(180deg, #131416 0%, #0e0f10 100%);
+    out property <brush> key: light ? @linear-gradient(180deg, #ffffff 0%, #eeede9 100%)
+        : @linear-gradient(180deg, #232427 0%, #18191b 100%);
+    out property <brush> key-pressed: light ? @linear-gradient(180deg, #dcdbd6 0%, #e8e7e3 100%)
+        : @linear-gradient(180deg, #111214 0%, #18191b 100%);
+    out property <brush> panel: light ? @linear-gradient(180deg, #f7f6f3 0%, #efeeea 100%)
+        : @linear-gradient(180deg, #131416 0%, #0e0f10 100%);
+    // Dark edge of keys and panels, and its softer version
+    out property <color> edge-dark: light ? #0000002e : #000000;
+    out property <color> edge-dark-soft: light ? #0000001f : #00000080;
+    // Shadow at the top of inset areas (displays, meters)
+    out property <color> inset-shadow: light ? #00000012 : #0000008c;
+    // Grooves: slider tracks, progress bars, knob arcs
+    out property <color> track: light ? #c9c8c3 : #000000;
 
     // --- Lines ---
-    out property <color> border: #1e1f22;          // subtle 1px separators
-    out property <color> border-strong: #36383d;   // connectors, outlines
+    out property <color> border: light ? #d3d2cd : #1e1f22;            // subtle 1px separators
+    out property <color> border-strong: light ? #a6a5a0 : #36383d;     // connectors, outlines
 
     // --- Text ---
     // Keys and passwords: its zero is dotted, so 0 and O differ (the default
     // font is used where it is missing)
     out property <string> font-code: "DejaVu Sans Mono";
-    out property <color> text-primary: #ededee;
-    out property <color> text-secondary: #9c9da3;
-    out property <color> text-muted: #5f6066;
+    out property <color> text-primary: light ? #1b1c1f : #ededee;
+    out property <color> text-secondary: light ? #55565c : #9c9da3;
+    out property <color> text-muted: light ? #86878c : #5f6066;
 
     // --- Accent (the only "brand" colour) ---
-    out property <color> accent: #f0a43c;
-    out property <color> accent-soft: #f0a43c1f;   // tinted backgrounds
+    out property <color> accent: light ? #c47712 : #f0a43c;
+    out property <color> accent-soft: light ? #c4771224 : #f0a43c1f;   // tinted backgrounds
 
     // --- Semantic ---
-    out property <color> success: #7fcf72;
-    out property <color> success-soft: #7fcf7224;
-    out property <color> warning: #e3cf4a;
-    out property <color> warning-soft: #e3cf4a24;
-    out property <color> danger: #e5594f;
-    out property <color> danger-soft: #e5594f24;
+    out property <color> success: light ? #3d8f32 : #7fcf72;
+    out property <color> success-soft: light ? #3d8f3224 : #7fcf7224;
+    out property <color> warning: light ? #9a830c : #e3cf4a;
+    out property <color> warning-soft: light ? #9a830c24 : #e3cf4a24;
+    out property <color> danger: light ? #c4382e : #e5594f;
+    out property <color> danger-soft: light ? #c4382e24 : #e5594f24;
     // Status LEDs (blocks on, pedal engaged)
     out property <color> led-green: #8ee27a;
     out property <color> led-red: #ff5a4a;
-    // Outline of the selected block (white: reads on every block colour)
-    out property <color> selection: #ecebe7;
+    // Outline of the selected block (reads on every block colour)
+    out property <color> selection: light ? #1b1c1f : #ecebe7;
     out property <color> on-semantic: #0c0e13;
 
     // --- Typography scale ---

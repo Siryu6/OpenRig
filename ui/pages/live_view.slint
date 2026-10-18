@@ -34,7 +34,7 @@ component SwitchTile inherits Rectangle {
     border-radius: Theme.radius-lg;
     background: ta.pressed ? Theme.key-pressed : Theme.panel;
     border-width: 1px;
-    border-color: root.assigning ? Theme.accent.with-alpha(0.7) : #00000080;
+    border-color: root.assigning ? Theme.accent.with-alpha(0.7) : Theme.edge-dark-soft;
 
     if !ta.pressed: Rectangle {
         x: Theme.radius-lg;
@@ -69,7 +69,7 @@ component SwitchTile inherits Rectangle {
         border-radius: Theme.radius-sm;
         background: Theme.display;
         border-width: 1px;
-        border-color: #000000;
+        border-color: Theme.edge-dark;
 
         VerticalLayout {
             alignment: center;
@@ -281,7 +281,7 @@ export component LiveView inherits Rectangle {
                 border-radius: Theme.radius-lg;
                 background: tap-ta.pressed ? Theme.key-pressed : Theme.key;
                 border-width: 1px;
-                border-color: #00000080;
+                border-color: Theme.edge-dark-soft;
 
                 if !tap-ta.pressed: Rectangle {
                     x: Theme.radius-lg;

@@ -25,7 +25,7 @@ import { ResourcePanel } from "components/resource_panel.slint";
 import { PowerDialog } from "components/power_dialog.slint";
 
 // Re-export the data types used by the Rust side
-export { Features, TextEdit, TextEditing }
+export { Features, TextEdit, TextEditing, Theme }
 export { PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice }
 
 export component App inherits Window {
@@ -274,6 +274,7 @@ export component App inherits Window {
     callback hardware-set-encoder-button(bool);
     callback midi-channel-changed(int);
     callback midi-clock-changed(bool);
+    callback light-theme-changed(bool);
     callback midi-learn-toggled(bool);
     callback midi-learn-touch(int);             // target touched while learning
     callback midi-learn-clear(int);             // forget the controller of a target
@@ -901,6 +902,9 @@ export component App inherits Window {
                 }
                 midi-clock-changed(on) => {
                     root.midi-clock-changed(on);
+                }
+                light-theme-changed(on) => {
+                    root.light-theme-changed(on);
                 }
                 wifi-status: root.wifi-status;
                 wifi-networks: root.wifi-networks;

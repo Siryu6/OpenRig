@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{info, warn};
@@ -772,6 +772,7 @@ pub struct AppState {
     live: Mutex<LiveSettings>,
     midi: Mutex<MidiSettings>,
     tap: Mutex<TapTempo>,
+    light_theme: AtomicBool,
 }
 
 /// What the footswitches do
@@ -849,6 +850,9 @@ struct Session {
     live: LiveSettings,
     #[serde(default)]
     midi: MidiSettings,
+    /// Light theme instead of the dark one
+    #[serde(default)]
+    light_theme: bool,
 }
 
 impl AppState {
@@ -879,6 +883,7 @@ impl AppState {
             live: Mutex::default(),
             midi: Mutex::default(),
             tap: Mutex::default(),
+            light_theme: AtomicBool::new(false),
         })
     }
 
@@ -1008,6 +1013,7 @@ impl AppState {
             scene_id: self.current_scene_id(),
             live: self.live_settings(),
             midi: self.midi_settings(),
+            light_theme: self.light_theme(),
         };
         std::fs::create_dir_all(&self.data_dir)?;
         Ok(serde_json::to_vec_pretty(&session)?)
@@ -1049,6 +1055,8 @@ impl AppState {
         }
         let session: Session = serde_json::from_str(&std::fs::read_to_string(path)?)?;
         *self.live.lock().unwrap() = session.live;
+        self.light_theme
+            .store(session.light_theme, Ordering::Relaxed);
         let mut midi = session.midi;
         if midi.channel > 16 {
             midi.channel = crate::midi::OMNI;
@@ -1459,6 +1467,15 @@ impl AppState {
 
     pub fn set_footswitch_mode(&self, mode: FootswitchMode) {
         self.live.lock().unwrap().mode = mode;
+        self.mark_dirty();
+    }
+
+    pub fn light_theme(&self) -> bool {
+        self.light_theme.load(Ordering::Relaxed)
+    }
+
+    pub fn set_light_theme(&self, on: bool) {
+        self.light_theme.store(on, Ordering::Relaxed);
         self.mark_dirty();
     }
 

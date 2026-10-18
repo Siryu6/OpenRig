@@ -1177,6 +1177,12 @@ fn main() -> Result<()> {
     }
     app.set_looper_level(state.looper.lock().unwrap().level());
 
+    app.global::<Theme>().set_light(state.light_theme());
+    {
+        let st = state.clone();
+        app.on_light_theme_changed(move |on| st.set_light_theme(on));
+    }
+
     setup_callbacks(&app, &state);
     #[cfg(feature = "tone3000")]
     tone3000_ui::setup(&app, &state);

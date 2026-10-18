@@ -127,7 +127,7 @@ export component PresetManager inherits Rectangle {
                             border-radius: Theme.radius-sm;
                             background: Theme.display;
                             border-width: 1px;
-                            border-color: row.is-current ? Theme.accent : #000000;
+                            border-color: row.is-current ? Theme.accent : Theme.edge-dark;
                             Text {
                                 text: (i < 9 ? "0" : "") + (i + 1);
                                 color: row.is-current ? Theme.accent : Theme.text-secondary;
