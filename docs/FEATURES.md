@@ -29,6 +29,10 @@ What OpenRig does, in more technical detail than the
   password), disconnect, forget, radio on/off. It drives NetworkManager
   through `nmcli` (as on Raspberry Pi OS); elsewhere (macOS, Windows, Linux
   without NetworkManager) Settings says Wi-Fi is managed by the system.
+- **Light theme**: Settings → Display switches the screen to light panels
+  and dark text, for daylight; dark stays the default. The rack blocks,
+  knobs, faders, footswitches and LEDs keep their dark hardware look. Kept
+  in the session (`light_theme`).
 - **Power off / restart** from the menu ⋮ on the OS image (the launcher sets
   `PEDALBOARD_POWER_REQUEST`; the app saves the session and quits, the
   launcher switches the board off). Hidden on a desktop.

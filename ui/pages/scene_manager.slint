@@ -211,7 +211,7 @@ export component SceneManager inherits Rectangle {
                 border-radius: Theme.radius-lg;
                 background: Theme.panel;
                 border-width: 1px;
-                border-color: slot.active ? Theme.accent : #00000080;
+                border-color: slot.active ? Theme.accent : Theme.edge-dark-soft;
 
                 slot-ta := TouchArea {
                     clicked => {
@@ -232,7 +232,7 @@ export component SceneManager inherits Rectangle {
                     border-radius: Theme.radius-sm;
                     background: Theme.display;
                     border-width: 1px;
-                    border-color: #000000;
+                    border-color: Theme.edge-dark;
 
                     Text {
                         x: Theme.space-sm;

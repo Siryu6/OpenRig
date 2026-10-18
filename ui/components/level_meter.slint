@@ -35,7 +35,7 @@ export component LevelMeter inherits Rectangle {
     border-radius: Theme.radius-sm;
     background: Theme.display;
     border-width: 1px;
-    border-color: #000000;
+    border-color: Theme.edge-dark;
 
     // Inset shadow
     Rectangle {
@@ -43,7 +43,7 @@ export component LevelMeter inherits Rectangle {
         y: 1px;
         width: parent.width - 2px;
         height: 2px;
-        background: #0000008c;
+        background: Theme.inset-shadow;
     }
 
     // IN

@@ -49,7 +49,7 @@ export component Button inherits Rectangle {
         : root.variant == "danger" ? Theme.danger.with-alpha(0.45)
         : root.variant == "success" ? Theme.success.with-alpha(0.45)
         : root.variant == "warning" ? Theme.warning.with-alpha(0.45)
-        : #00000080;
+        : Theme.edge-dark-soft;
     background:
         root.variant == "solid-danger" ? (root.down ? Theme.danger.darker(0.2) : Theme.danger) :
         root.variant == "ghost" ? (root.down ? Theme.surface-hover : transparent) :
@@ -144,7 +144,7 @@ export component Display inherits Rectangle {
     border-radius: Theme.radius-lg;
     background: Theme.display;
     border-width: Theme.border-width;
-    border-color: #000000;
+    border-color: Theme.edge-dark;
 
     // Inset shadow
     Rectangle {
@@ -152,7 +152,7 @@ export component Display inherits Rectangle {
         y: 1px;
         width: parent.width - 2px;
         height: 3px;
-        background: #0000008c;
+        background: Theme.inset-shadow;
     }
 }
 
@@ -210,7 +210,7 @@ export component Chip inherits Rectangle {
     border-radius: Theme.radius-md;
     background: ta.pressed ? Theme.key-pressed : Theme.key;
     border-width: Theme.border-width;
-    border-color: root.selected ? Theme.accent : #00000080;
+    border-color: root.selected ? Theme.accent : Theme.edge-dark-soft;
 
     HorizontalLayout {
         padding-left: Theme.space-lg;
@@ -253,7 +253,7 @@ export component Toggle inherits Rectangle {
         border-radius: Theme.radius-sm;
         background: Theme.display;
         border-width: Theme.border-width;
-        border-color: #000000;
+        border-color: Theme.edge-dark;
 
         // Lit slot behind the cap
         Rectangle {
@@ -325,7 +325,7 @@ export component Slider inherits Rectangle {
         y: (parent.height - self.height) / 2;
         width: parent.width - root.thumb;
         height: 4px;
-        background: #000000;
+        background: Theme.track;
 
         Rectangle {
             x: root.centered ? parent.width * min(0.5, root.norm) : 0;
@@ -415,7 +415,7 @@ export component Knob inherits Rectangle {
         height: 100%;
         viewbox-width: 100;
         viewbox-height: 100;
-        stroke: #000000a0;
+        stroke: Theme.track;
         stroke-width: 6px;
         fill: transparent;
         commands: "M 18.89 81.11 A 44 44 0 1 1 81.11 81.11";
@@ -522,7 +522,7 @@ export component Segmented inherits Rectangle {
             border-radius: Theme.radius-sm;
             background: i == root.current-index ? Theme.key : (seg-ta.pressed ? Theme.surface-hover : transparent);
             border-width: i == root.current-index ? 1px : 0px;
-            border-color: #00000080;
+            border-color: Theme.edge-dark-soft;
 
             if i == root.current-index: Rectangle {
                 x: (parent.width - self.width) / 2;

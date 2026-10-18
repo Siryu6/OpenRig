@@ -118,7 +118,7 @@ export component TopBar inherits Rectangle {
             border-radius: Theme.radius-md;
             background: preset-ta.pressed ? Theme.surface-hover : Theme.display;
             border-width: 1px;
-            border-color: #000000;
+            border-color: Theme.edge-dark;
 
             // Inset: shadow on top, light at the bottom
             Rectangle {
@@ -126,7 +126,7 @@ export component TopBar inherits Rectangle {
                 y: 1px;
                 width: parent.width - 2px;
                 height: 2px;
-                background: #00000099;
+                background: Theme.inset-shadow;
             }
             Rectangle {
                 x: Theme.radius-md;

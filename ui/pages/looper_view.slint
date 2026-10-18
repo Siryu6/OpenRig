@@ -17,7 +17,7 @@ component TransportButton inherits Rectangle {
     border-radius: Theme.radius-lg;
     background: ta.pressed ? Theme.key-pressed : Theme.key;
     border-width: 1px;
-    border-color: root.active ? root.tone : #00000080;
+    border-color: root.active ? root.tone : Theme.edge-dark-soft;
 
     if !ta.pressed: Rectangle {
         x: Theme.radius-lg;
@@ -113,7 +113,7 @@ export component LooperView inherits Rectangle {
         // ---------------- Status ----------------
         Display {
             vertical-stretch: 1;
-            border-color: root.state == LooperState.Stopped ? #000000 : root.state-color.with-alpha(0.6);
+            border-color: root.state == LooperState.Stopped ? Theme.edge-dark : root.state-color.with-alpha(0.6);
 
             VerticalLayout {
                 padding: Theme.space-xl;
@@ -177,7 +177,7 @@ export component LooperView inherits Rectangle {
                 // Progress bar
                 Rectangle {
                     height: 6px;
-                    background: #000000;
+                    background: Theme.track;
                     Rectangle {
                         x: 0;
                         width: parent.width * root.progress;

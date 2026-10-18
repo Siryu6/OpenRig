@@ -81,6 +81,7 @@ export component SettingsView inherits Rectangle {
     in property <bool> midi-activity: false;
     callback midi-channel-changed(int);
     callback midi-clock-changed(bool);
+    callback light-theme-changed(bool);
 
     // TONE3000 Connect
     in property <bool> t3k-available: true;          // built with the tone3000 feature
@@ -373,6 +374,64 @@ export component SettingsView inherits Rectangle {
                                 clicked => {
                                     root.open-routing();
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // -------------------------------------------------- Display
+            Card {
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    HorizontalLayout {
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                name: "sun";
+                                color: Theme.accent;
+                            }
+                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: "Display";
+                                color: Theme.text-primary;
+                                font-size: Theme.font-title;
+                                font-weight: Theme.weight-semibold;
+                            }
+                            Text {
+                                text: "A light theme reads better in daylight";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-small;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            Text {
+                                text: "LIGHT THEME";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-caption;
+                                font-weight: Theme.weight-bold;
+                                letter-spacing: 0.8px;
+                            }
+                        }
+                        Toggle {
+                            checked: Theme.light;
+                            toggled(on) => {
+                                Theme.light = on;
+                                root.light-theme-changed(on);
                             }
                         }
                     }
