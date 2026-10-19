@@ -27,6 +27,7 @@ use tracing::warn;
 use super::instance::PluginInstance;
 use super::lv2_host::Lv2Host;
 use super::scanner::{self, FileKind};
+use crate::audio::spectrum::BlockTap;
 use crate::audio::split_chain::{ChainNode, SplitType};
 use crate::midi::RawMidi;
 use crate::monitor::BlockMeter;
@@ -302,12 +303,21 @@ struct PluginProc {
     stereo_out: bool,
     /// Nanoseconds spent processing (see `BlockMeter`)
     spent: Arc<AtomicU64>,
+    /// Records the sound in and out while the block's view is shown
+    tap: &'static BlockTap,
 }
 
 impl PluginProc {
     fn process(&mut self, l: &mut [f32], r: &mut [f32]) {
         let start = Instant::now();
-        self.run(l, r);
+        if self.tap.watches(self.left.instance_id) {
+            self.tap.record_input(l, r, self.stereo_in);
+            self.run(l, r);
+            self.tap.record_output(l, r, self.stereo_out);
+            self.tap.record_controls(self.left.controls());
+        } else {
+            self.run(l, r);
+        }
         self.spent
             .fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
     }
@@ -714,6 +724,7 @@ impl EffectChain {
     ) -> (Self, Vec<String>) {
         let mut chain = Self::empty(max_block);
         let mut errors = Vec::new();
+        BlockTap::global().set_rate(sample_rate);
         let (nodes, stereo_out) =
             chain.build_nodes(&spec.nodes, false, spec, host, sample_rate, &mut errors);
         chain.nodes = nodes;
@@ -804,6 +815,7 @@ impl EffectChain {
                                 stereo_in: stereo,
                                 stereo_out,
                                 spent: BlockMeter::global().counter(*instance_id),
+                                tap: BlockTap::global(),
                             })));
                             stereo = stereo_out;
                         }

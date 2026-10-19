@@ -1,13 +1,19 @@
+mod block_sound;
 #[cfg(feature = "store")]
 mod catalog_ui;
+mod dynamics_ui;
+mod eq_ui;
 #[cfg(feature = "gpio")]
 mod gpio;
 mod hardware_ui;
+mod level_history;
 mod live_ui;
 #[cfg(feature = "midi")]
 mod midi_io;
 mod midi_ui;
+mod plugin_view;
 mod routing_ui;
+mod scope_ui;
 #[cfg(feature = "tone3000")]
 mod tone3000_ui;
 #[cfg(feature = "update")]
@@ -66,7 +72,7 @@ pub(crate) fn model<T: Clone + 'static>(items: Vec<T>) -> ModelRc<T> {
     ModelRc::new(VecModel::from(items))
 }
 
-fn id(value: i32) -> Option<usize> {
+pub(crate) fn id(value: i32) -> Option<usize> {
     usize::try_from(value).ok()
 }
 
@@ -263,6 +269,9 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
     let Some(view) = selected else {
         app.set_selected_instance_id(-1);
         app.set_selected_parameters(model(Vec::new()));
+        app.set_selected_eq(EqView::default());
+        app.set_selected_dyn(DynView::default());
+        app.set_selected_scope(ScopeView::default());
         if app.get_current_view() == 1 {
             app.set_current_view(0);
         }
@@ -300,6 +309,7 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
     app.set_selected_plugin_bypassed(view.bypassed);
     app.set_selected_bypass_midi(midi_label(chain, view.instance_id, MidiTarget::Bypass));
     app.set_selected_parameters(model(parameters));
+    plugin_view::refresh(app, state);
     app.set_selected_uses_file(view.uses_file);
     let pack = match chain.find(view.instance_id) {
         Some(ChainNode::Plugin { uri, .. }) if !view.file.is_empty() => {
@@ -689,6 +699,7 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
             warn_if_loaded(&app);
         }
     });
+    plugin_view::setup(app, state);
     on!(app, state, on_select_node, |app, state, instance_id| {
         app.set_selected_instance_id(instance_id);
         refresh_editor(&app, state, &state.chain());
@@ -714,6 +725,7 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
                         params.set_row_data(index, param);
                     }
                 }
+                plugin_view::refresh(&app, state);
             }
         }
     );
@@ -1201,6 +1213,7 @@ fn main() -> Result<()> {
     live_ui::setup(&app, &state);
     midi_ui::setup(&app, &state);
     let _routing_meters = routing_ui::setup(&app, &state, engine.as_deref());
+    let _block_sound = block_sound::start(&app, &state);
     refresh_all(&app, &state);
     let _timer = start_poll_timer(&app, &state, engine.as_deref());
     let _monitor = start_monitor_timer(&app, engine.clone());

@@ -3,6 +3,7 @@ pub mod engine;
 pub mod jack_client;
 pub mod looper;
 pub mod routing;
+pub mod spectrum;
 pub mod split_chain;
 pub mod tuner;
 
