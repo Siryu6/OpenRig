@@ -1,3 +1,5 @@
+#[cfg(feature = "store")]
+mod catalog_ui;
 #[cfg(feature = "gpio")]
 mod gpio;
 mod hardware_ui;
@@ -223,6 +225,24 @@ pub(crate) fn block_uri(chain: &EffectChainState, instance_id: usize) -> Option<
         ChainNode::Plugin { uri, .. } => Some(uri.clone()),
         ChainNode::Split { .. } => None,
     }
+}
+
+/// The plugins of the Add effect page, from the latest LV2 scan
+pub(crate) fn set_available_plugins(app: &App, state: &AppState) {
+    let plugins: Vec<PluginItem> = views::plugin_views(state)
+        .into_iter()
+        .map(|p| PluginItem {
+            uri: p.uri.into(),
+            name: p.name.into(),
+            author: p.author.into(),
+            category: p.category.into(),
+            kind: p.kind.into(),
+            hint: p.hint.into(),
+            color: rgb(p.color),
+        })
+        .collect();
+    app.set_available_plugins(model(plugins));
+    app.set_demo_plugins(state.lv2_host.is_demo());
 }
 
 pub(crate) fn rgb(value: u32) -> slint::Color {
@@ -1152,21 +1172,8 @@ fn main() -> Result<()> {
     }
 
     let app = App::new()?;
-    let plugins: Vec<PluginItem> = views::plugin_views(&state)
-        .into_iter()
-        .map(|p| PluginItem {
-            uri: p.uri.into(),
-            name: p.name.into(),
-            author: p.author.into(),
-            category: p.category.into(),
-            kind: p.kind.into(),
-            hint: p.hint.into(),
-            color: rgb(p.color),
-        })
-        .collect();
-    app.set_available_plugins(model(plugins));
+    set_available_plugins(&app, &state);
     app.set_audio_running(engine.is_some());
-    app.set_demo_plugins(demo);
     if engine.is_none() {
         show_status(&app, "Audio disabled: JACK is not running".into());
     }
@@ -1189,6 +1196,8 @@ fn main() -> Result<()> {
     wifi_ui::setup(&app);
     #[cfg(feature = "update")]
     update_ui::setup(&app);
+    #[cfg(feature = "store")]
+    catalog_ui::setup(&app, &state);
     live_ui::setup(&app, &state);
     midi_ui::setup(&app, &state);
     let _routing_meters = routing_ui::setup(&app, &state, engine.as_deref());

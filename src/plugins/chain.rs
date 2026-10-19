@@ -172,7 +172,8 @@ fn plugin_routing(
     stereo_in: bool,
 ) -> (bool, bool) {
     let file = spec.files.get(&instance_id).map(PathBuf::as_path);
-    let info = host.scanner().find_by_uri(uri);
+    let scanner = host.scanner();
+    let info = scanner.find_by_uri(uri);
     // Impulse responses run once per side on a stereo signal or with a
     // stereo file; mono LV2 plugins on a stereo signal. Neural models
     // never (too costly).

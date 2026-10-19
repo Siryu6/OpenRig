@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
 import {
     PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus,
-    T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile, RoutingOutput, RoutingBlock
+    T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile, RoutingOutput, RoutingBlock, CatalogItem, CatalogFamily
 } from "types.slint";
 // Pages
 import { PluginRack } from "pages/rack.slint";
@@ -12,6 +12,7 @@ import { PresetManager } from "pages/preset_manager.slint";
 import { SceneManager } from "pages/scene_manager.slint";
 import { LooperView } from "pages/looper_view.slint";
 import { LiveView } from "pages/live_view.slint";
+import { CatalogView } from "pages/catalog_view.slint";
 import { SettingsView } from "pages/settings_view.slint";
 import { Tone3000View } from "pages/tone3000_view.slint";
 import { RoutingView } from "pages/routing_view.slint";
@@ -26,7 +27,7 @@ import { PowerDialog } from "components/power_dialog.slint";
 
 // Re-export the data types used by the Rust side
 export { Features, TextEdit, TextEditing, Theme }
-export { PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice }
+export { PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, CatalogItem, CatalogFamily }
 
 export component App inherits Window {
     title: "OpenRig";
@@ -224,11 +225,28 @@ export component App inherits Window {
     // Setlists page: 0 = list, 1 = footswitch slots
     private property <int> setlist-view-mode: 0;
 
+    // Plugin store
+    in property <[CatalogItem]> catalog-items: [];
+    in property <[CatalogFamily]> catalog-families: [];
+    in property <string> catalog-query: "";
+    in property <string> catalog-family: "All";
+    in property <int> catalog-total: 0;
+    in property <string> catalog-status: "";
+    in property <bool> catalog-busy: false;
+    in-out property <int> catalog-open: -1;
+
     // Transient toast text set by Rust; empty = hidden
     in-out property <string> status-message: "";
 
     // ------------------------------------------------------------ callbacks
     callback add-plugin-to-chain(string);
+    callback catalog-search(string);
+    callback catalog-pick-family(string);
+    callback catalog-install(string);
+    callback catalog-remove(string);
+    callback catalog-refresh();
+    callback catalog-opened();                        // the Store page is shown
+    pure callback catalog-uri(string) -> string;     // entry id: the plugin to add to the chain
     callback remove-node-by-id(int);                 // instance-id
     callback drag-started(int);                      // instance-id
     callback node-dropped(int, float, float);        // instance-id, layout x, y
@@ -404,7 +422,7 @@ export component App inherits Window {
     // ------------------------------------------------------------------ UI
     VerticalLayout {
         TopBar {
-            active-tab: root.current-view <= 2 ? "rack" :
+            active-tab: root.current-view <= 2 || root.current-view == 11 ? "rack" :
                 root.current-view == 3 ? "tuner" :
                 root.current-view == 4 || root.current-view == 6 ? "presets" :
                 root.current-view == 5 ? "looper" :
@@ -412,12 +430,13 @@ export component App inherits Window {
             current-view-name: root.current-view == 1 ? root.selected-plugin-name :
                 root.current-view == 7 ? "Settings" :
                 root.current-view == 8 ? "TONE3000" :
-                root.current-view == 10 ? "Routing" : "Add effect";
+                root.current-view == 10 ? "Routing" :
+                root.current-view == 11 ? (root.catalog-open >= 0 ? "Plugin" : "Store") : "Add effect";
             preset-name: root.current-preset-name;
             scene-name: root.live-scene-name;
             tempo: root.tempo;
-            back-label: root.current-view == 10 ? "Settings" : "Rack";
-            show-back-button: root.current-view == 1 || root.current-view == 2 || root.current-view == 7 || root.current-view == 8 || root.current-view == 10;
+            back-label: root.current-view == 10 ? "Settings" : root.current-view == 11 ? (root.catalog-open >= 0 ? "Store" : "Effects") : "Rack";
+            show-back-button: root.current-view == 1 || root.current-view == 2 || root.current-view == 7 || root.current-view == 8 || root.current-view == 10 || root.current-view == 11;
             audio-running: root.audio-running;
             resources: root.resources;
 
@@ -425,7 +444,12 @@ export component App inherits Window {
                 root.show-resources = true;
             }
             back-clicked => {
-                root.current-view = root.current-view == 8 ? root.t3k-return-view : root.current-view == 10 ? 7 : 0;
+                if (root.current-view == 11 && root.catalog-open >= 0) {
+                    root.catalog-open = -1;
+                } else {
+                    root.current-view = root.current-view == 8 ? root.t3k-return-view : root.current-view == 10 ? 7
+                        : root.current-view == 11 ? 2 : 0;
+                }
             }
             rack-clicked => {
                 root.current-view = 0;
@@ -643,6 +667,41 @@ export component App inherits Window {
 
                 plugin-selected(idx, uri) => {
                     root.add-plugin(uri);
+                }
+                open-store => {
+                    root.catalog-open = -1;
+                    root.current-view = 11;
+                    root.catalog-opened();
+                }
+            }
+
+            if root.current-view == 11: CatalogView {
+                items: root.catalog-items;
+                families: root.catalog-families;
+                query: root.catalog-query;
+                family: root.catalog-family;
+                total: root.catalog-total;
+                status: root.catalog-status;
+                busy: root.catalog-busy;
+                open <=> root.catalog-open;
+                search(q) => {
+                    root.catalog-search(q);
+                }
+                pick-family(f) => {
+                    root.catalog-pick-family(f);
+                }
+                install(id) => {
+                    root.catalog-install(id);
+                }
+                remove(id) => {
+                    root.catalog-remove(id);
+                }
+                refresh => {
+                    root.catalog-refresh();
+                }
+                add-to-chain(id) => {
+                    root.catalog-open = -1;
+                    root.add-plugin(root.catalog-uri(id));
                 }
             }
 

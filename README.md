@@ -39,6 +39,8 @@ real time with JACK, and updates itself without risking the board.
 - **[Neural amps, pedals and cabinets](https://openrig.eu/docs/using/neural-blocks/)**: Neural
   Amp Modeler captures and impulse responses as built-in blocks, next to any
   compatible [LV2 plugin](https://openrig.eu/docs/setup/lv2/).
+- **[Plugin store](https://openrig.eu/docs/setup/store/)**: free LV2 plugins built for the
+  board, installed in one tap from a signed catalog; your own bundles still load.
 - **[TONE3000](https://openrig.eu/docs/using/tone3000/)**: link your account and download
   captures right on the pedalboard, with credits and licenses kept.
 - **[Live](https://openrig.eu/docs/using/live/)**: 8 scenes per preset, setlists, stomp mode,
@@ -109,7 +111,7 @@ cargo build --no-default-features --features winit,lv2,midi   # without NAM nor 
 cargo build --no-default-features --features winit,lv2,nam,midi   # without TONE3000 Connect (no HTTPS client)
 cargo build --no-default-features        # no liblilv, NAM, MIDI nor display: demo plugins, tests
 cargo build --release --features kms     # + full screen without X11 / Wayland (libinput, libgbm, EGL)
-cargo build --release --no-default-features --features kms,lv2,nam,tone3000,midi,gpio,splash,update   # as in the Pi image
+cargo build --release --no-default-features --features kms,lv2,nam,tone3000,midi,gpio,splash,update,store   # as in the Pi image
 cargo test
 ```
 
@@ -215,6 +217,8 @@ src/
 ├── wifi_ui.rs           Settings → Wi-Fi (worker thread running nmcli)
 ├── update.rs            Updates: latest GitHub release, app or system, download, request to the OS updater
 ├── update_ui.rs         Settings → Updates (worker thread: check, download, install)
+├── store/               Plugin store: signed index, downloads, safe unpacking, receipts (feature store)
+├── catalog_ui.rs        Store page (worker threads: index, pictures, install, removal)
 ├── monitor.rs           DSP meter, xruns, CPU / RAM / temperature / throttling
 ├── hardware.rs          What is wired (footswitch / encoder GPIOs): hardware.json, environment defaults
 ├── audio/
@@ -224,7 +228,7 @@ src/
 │   ├── split_chain.rs   ChainNode / SplitType (chain description)
 │   ├── tuner.rs, looper.rs
 ├── plugins/
-│   ├── lv2_host.rs      lilv discovery and instantiation
+│   ├── lv2_host.rs      lilv discovery (rescanned live) and instantiation
 │   ├── lv2_features.rs  URID map/unmap, options
 │   ├── atom.rs          Atom input events: transport (time:Position) and MIDI
 │   ├── instance.rs      Running plugin with pre-connected buffers
@@ -244,7 +248,7 @@ third_party/NeuralAudio  Submodule: NAM Core + RTNeural
 third_party/lilv, i-slint-backend-linuxkms   Patched crates (see their PATCHED.md)
 ui/                      Slint UI (app.slint, types.slint, pages/, components/, theme.slint)
 os/                      Buildroot external tree: Pi 5 / x86_64 images, RAUC updates, init scripts
-docs/                    Features, OS image, live (scenes, setlists, tempo), MIDI, routing, neural amp models (NAM)
+docs/                    Features, OS image, live (scenes, setlists, tempo), MIDI, routing, store, neural amp models (NAM)
 ```
 
 ## Architecture
@@ -272,6 +276,7 @@ Three threads share the chain:
 - [docs/SCENES.md](docs/SCENES.md): scenes, setlists, footswitch modes, tempo and tails
 - [docs/MIDI.md](docs/MIDI.md): the MIDI map, learn and ranges, clock, MIDI to plugins
 - [docs/ROUTING.md](docs/ROUTING.md): inputs, outputs, sends and returns, `routing.json`
+- [docs/STORE.md](docs/STORE.md): the plugin store: charter, signed index, install and removal
 - [docs/NEURAL_MODELS.md](docs/NEURAL_MODELS.md): the Amp / Amp + Cab / Pedal / Cabinet /
   Space blocks, TONE3000, roadmap
 - [PROJECT_STATUS.md](PROJECT_STATUS.md): what works, what is left

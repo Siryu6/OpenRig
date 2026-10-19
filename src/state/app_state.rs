@@ -595,13 +595,16 @@ impl EffectChainState {
     }
 
     /// Plugin of each block of the chain that the host knows
-    fn plugin_infos<'a>(&self, host: &'a Lv2Host) -> HashMap<usize, &'a PluginInfo> {
+    fn plugin_infos<'a>(
+        &self,
+        scanner: &'a crate::plugins::scanner::PluginScanner,
+    ) -> HashMap<usize, &'a PluginInfo> {
         self.plugins()
             .into_iter()
             .filter_map(|n| match n {
                 ChainNode::Plugin {
                     instance_id, uri, ..
-                } => Some((*instance_id, host.scanner().find_by_uri(uri)?)),
+                } => Some((*instance_id, scanner.find_by_uri(uri)?)),
                 _ => None,
             })
             .collect()
@@ -610,7 +613,8 @@ impl EffectChainState {
     /// The chain as saved. Parameters are saved by port symbol, and by
     /// position for older versions of the app.
     pub fn to_preset_chain(&self, host: &Lv2Host) -> PresetChain {
-        let infos = self.plugin_infos(host);
+        let scanner = host.scanner();
+        let infos = self.plugin_infos(&scanner);
         let by_symbol = |params: &HashMap<usize, Vec<f32>>| -> HashMap<usize, SymbolValues> {
             params
                 .iter()
@@ -676,7 +680,8 @@ impl EffectChainState {
         collect_ids(&state.nodes, &mut ids);
         state.next_instance_id = ids.iter().max().map_or(0, |m| m + 1);
 
-        let infos = state.plugin_infos(host);
+        let scanner = host.scanner();
+        let infos = state.plugin_infos(&scanner);
         let plugins: Vec<usize> = state.plugins().into_iter().map(node_id).collect();
         for id in plugins {
             let saved = chain.params.get(&id).map(Vec::as_slice);
@@ -1265,9 +1270,8 @@ impl AppState {
 
     /// Parameter values of a new block: its defaults, at the current tempo
     fn defaults_for(&self, uri: &str) -> Result<Vec<f32>> {
-        let info = self
-            .lv2_host
-            .scanner()
+        let scanner = self.lv2_host.scanner();
+        let info = scanner
             .find_by_uri(uri)
             .ok_or_else(|| anyhow!("Plugin not found: {}", uri))?;
         let mut values = info.default_parameters();
@@ -1465,7 +1469,7 @@ impl AppState {
                         .lv2_host
                         .scanner()
                         .find_by_uri(uri)
-                        .and_then(|info| info.control_inputs().nth(index));
+                        .and_then(|info| info.control_inputs().nth(index).cloned());
                     match port {
                         Some(p) => value.clamp(p.min.min(p.max), p.max.max(p.min)),
                         None => value,
