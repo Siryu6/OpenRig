@@ -1,5 +1,8 @@
 import { Theme } from "../theme.slint";
-import { ParameterInfo, ModelChoice, ColorChoice } from "../types.slint";
+import { ParameterInfo, ModelChoice, ColorChoice, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive } from "../types.slint";
+import { EqGraph } from "../components/eq_graph.slint";
+import { DynamicsGraph } from "../components/dynamics_graph.slint";
+import { ScopeGraph } from "../components/scope_graph.slint";
 import { Button, Badge, Card, EmptyState, Icon, Knob, Stepper, Toggle } from "../components/controls.slint";
 import { Features } from "../features.slint";
 import { T3kBrand, T3kMark, T3kPicture } from "../components/tone3000_brand.slint";
@@ -197,6 +200,13 @@ export component PluginEditor {
     in property <string> category: "";
     in property <bool> bypassed: false;
     in property <[ParameterInfo]> parameters: [];
+    in property <EqView> eq;                        // its curve, when its ports describe one
+    in property <[PlotHandle]> eq-points;
+    in property <DynView> dyn;                      // its level curve, for a compressor, limiter or gate
+    in property <DynLive> dyn-live;
+    in property <ScopeView> scope;                  // what a delay, reverb, drive… does to the sound
+    in property <ScopeLive> scope-live;
+    in property <Spectrum> spectrum;                // the sound through it, for the EQ and scope
     in property <int> focused-param: 0;
     // Blocks loading a model file (NAM, IR): current file, relative to models-dir
     in property <bool> uses-file: false;
@@ -588,6 +598,36 @@ export component PluginEditor {
                     }
                 }
             }
+        }
+
+        // ---------------- EQ curve, level curve or scope ----------------
+        if root.scope.shown: ScopeGraph {
+            height: min(240px, root.height * 0.36);
+            vertical-stretch: 0;
+            scope: root.scope;
+            live: root.scope-live;
+            spectrum: root.spectrum;
+            accent: root.color-value;
+            bypassed: root.bypassed;
+        }
+
+        if root.dyn.shown: DynamicsGraph {
+            height: min(240px, root.height * 0.36);
+            vertical-stretch: 0;
+            dyn: root.dyn;
+            live: root.dyn-live;
+            accent: root.color-value;
+            bypassed: root.bypassed;
+        }
+
+        if root.eq.shown: EqGraph {
+            height: min(240px, root.height * 0.36);
+            vertical-stretch: 0;
+            eq: root.eq;
+            points: root.eq-points;
+            spectrum: root.spectrum;
+            accent: root.color-value;
+            bypassed: root.bypassed;
         }
 
         // ---------------- Parameter grid ----------------

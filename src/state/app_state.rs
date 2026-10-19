@@ -2419,6 +2419,7 @@ mod tests {
             name: "Fx".to_string(),
             author: String::new(),
             category: PluginCategory::Unknown,
+            class: String::new(),
             num_audio_inputs: 1,
             num_audio_outputs: 1,
             num_control_ports: controls.len(),

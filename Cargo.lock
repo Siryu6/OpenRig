@@ -3599,6 +3599,7 @@ dependencies = [
  "minisign-verify",
  "png 0.18.0",
  "qrcodegen",
+ "realfft",
  "ring",
  "rppal",
  "serde",

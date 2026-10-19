@@ -257,3 +257,94 @@ export struct CatalogFamily {
     name: string,
     count: int,
 }
+
+// A handle on a view's plot, which the finger drags: the UI gives where to
+// (PlotEvents), Rust sets the controls it stands for
+export struct PlotHandle {
+    shown: bool,
+    name: string,           // what it sets: "band 2", "threshold", "time"…
+    label: string,          // "1", "LS", "T"…
+    on: bool,               // filled, else hollow (an EQ band switched off)
+    x: float,               // 0..1 from the left of the plot
+    y: float,               // 0..1 from its bottom
+}
+
+// Plots draw path commands VIEW (1000) high and as wide as their box is for
+// that height (1000 wide for a square)
+
+// EQ curve of the selected block, drawn from its parameters
+export struct EqView {
+    shown: bool,
+    enabled: bool,          // the plugin's own on/off
+    curve: string,          // path commands
+    fill: string,           // the same, closed on the 0 dB line
+    range: float,           // the gain axis spans ± this many dB
+}
+
+// Sound going through the selected block, as areas under its spectrum in
+// and out (empty when silent)
+export struct Spectrum {
+    input: string,
+    output: string,
+}
+
+// Level curve of a compressor, limiter or gate: output level for each input
+// level, both from -60 dB (left, bottom) to 0 dB (right, top)
+export struct DynView {
+    shown: bool,
+    enabled: bool,
+    kind: string,           // "Compressor", "Limiter", "Gate"
+    summary: string,        // "4:1 · knee 6 dB"
+    curve: string,          // path commands in the square
+    threshold: PlotHandle,  // where the curve bends
+    ratio: PlotHandle,      // the 0 dB end of a compressor's curve
+}
+
+// What the block does right now
+export struct DynLive {
+    active: bool,           // sound is going through
+    input: float,           // level in and out, 0..1 across and up the square
+    output: float,
+    reduction: float,       // dB, 0 or less
+    reduction-text: string,
+    // Last seconds, path commands
+    history-in: string,
+    history-out: string,
+    history-reduction: string,
+}
+
+// A line of a delay's echoes: where across, how high, 0 to 1
+export struct EchoTap {
+    x: float,
+    height: float,
+}
+
+// What a delay, reverb, drive, modulation or cabinet block does to the sound
+// (see plugins::scope)
+
+export struct ScopeView {
+    shown: bool,
+    kind: string,           // "Delay", "Reverb"…
+    summary: string,        // "250 ms · 6 echoes"
+    // Square on the left: "history", "wave" (the waves in and out) or ""
+    left: string,
+    // Wide plot: "history" (levels over the last seconds), "spectrum" or
+    // "echoes"
+    right: string,
+    // The dry sound and the echoes, as lines up from the bottom
+    echo-taps: [EchoTap],
+    echo-span: string,      // time across the box, "1.2 s"
+    echo-time: PlotHandle,  // the first echo
+    echo-feedback: PlotHandle, // the second
+}
+
+// What it does right now
+export struct ScopeLive {
+    // Last seconds, path commands
+    history-in: string,
+    history-out: string,
+    // The waves in and out, in the square, empty in silence
+    wave-in: string,
+    wave-out: string,
+    gain: string,           // output against input, "+12.5 dB"
+}

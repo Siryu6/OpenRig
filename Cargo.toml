@@ -88,6 +88,8 @@ chrono = "0.4"
 # GPIO (for Raspberry Pi hardware)
 rppal = { version = "0.19", optional = true }
 fft-convolver = "0.4"
+# Spectrum of the EQ view (already used by fft-convolver)
+realfft = "3.5"
 hound = "3"
 ureq = { version = "3.4", features = ["json"], optional = true }
 ring = { version = "0.17", optional = true }  # SHA-256 of the updates (already in ureq's TLS)

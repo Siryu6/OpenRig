@@ -95,6 +95,9 @@ pub struct PluginInfo {
     pub name: String,
     pub author: String,
     pub category: PluginCategory,
+    /// LV2 class, by its local name ("ParaEQPlugin", "CompressorPlugin"…)
+    #[serde(default)]
+    pub class: String,
     pub num_audio_inputs: usize,
     pub num_audio_outputs: usize,
     pub num_control_ports: usize,
@@ -625,6 +628,7 @@ fn demo_plugin(
         name: name.to_string(),
         author: author.to_string(),
         category,
+        class: String::new(),
         num_audio_inputs: channels,
         num_audio_outputs: channels,
         num_control_ports: controls.len(),

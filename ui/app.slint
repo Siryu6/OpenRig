@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
 import {
     PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus,
-    T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile, RoutingOutput, RoutingBlock, CatalogItem, CatalogFamily
+    T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile, RoutingOutput, RoutingBlock, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap
 } from "types.slint";
 // Pages
 import { PluginRack } from "pages/rack.slint";
@@ -24,10 +24,11 @@ import { ContextMenuOverlay } from "components/context_menu.slint";
 import { Icon } from "components/controls.slint";
 import { ResourcePanel } from "components/resource_panel.slint";
 import { PowerDialog } from "components/power_dialog.slint";
+import { PlotEvents } from "components/plot.slint";
 
 // Re-export the data types used by the Rust side
-export { Features, TextEdit, TextEditing, Theme }
-export { PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, CatalogItem, CatalogFamily }
+export { Features, PlotEvents, TextEdit, TextEditing, Theme }
+export { PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap }
 
 export component App inherits Window {
     title: "OpenRig";
@@ -91,6 +92,13 @@ export component App inherits Window {
     in-out property <string> selected-plugin-category: "";
     in-out property <bool> selected-plugin-bypassed: false;
     in-out property <[ParameterInfo]> selected-parameters: [];
+    in property <EqView> selected-eq;
+    in property <[PlotHandle]> selected-eq-points;
+    in property <DynView> selected-dyn;
+    in property <DynLive> selected-dyn-live;
+    in property <ScopeView> selected-scope;
+    in property <ScopeLive> selected-scope-live;
+    in property <Spectrum> selected-spectrum;
     in-out property <bool> selected-uses-file: false;  // block loads a model (NAM)
     in-out property <string> selected-file: "";
     in-out property <string> selected-file-label: "Model";   // "Model", "Impulse response"
@@ -597,6 +605,13 @@ export component App inherits Window {
                 category: root.selected-plugin-category;
                 bypassed: root.selected-plugin-bypassed;
                 parameters: root.selected-parameters;
+                eq: root.selected-eq;
+                eq-points: root.selected-eq-points;
+                dyn: root.selected-dyn;
+                dyn-live: root.selected-dyn-live;
+                scope: root.selected-scope;
+                scope-live: root.selected-scope-live;
+                spectrum: root.selected-spectrum;
                 focused-param: root.focused-parameter;
                 uses-file: root.selected-uses-file;
                 file: root.selected-file;

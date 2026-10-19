@@ -1,0 +1,2109 @@
+{
+ "schema": 1,
+ "serial": 2026101913,
+ "generated": "2026-10-19T14:31:15Z",
+ "expires": "2027-01-17T14:31:15Z",
+ "packages": [
+  {
+   "id": "airwindows-lv2",
+   "name": "airwindows-lv2",
+   "version": "20.0",
+   "license": "MIT",
+   "homepage": "https://github.com/hannesbraun/airwindows-lv2",
+   "origin": "openrig-build",
+   "source": {
+    "url": "https://github.com/hannesbraun/airwindows-lv2/archive/refs/tags/v20.0.tar.gz",
+    "sha256": null
+   },
+   "artifacts": {},
+   "plugins": [
+    {
+     "id": "airwindows-totape",
+     "uri": "https://hannesbraun.net/ns/lv2/airwindows/totape6",
+     "bundle": "Airwindows.lv2",
+     "name": "ToTape6",
+     "author": "Airwindows",
+     "license": "MIT",
+     "family": "Distortion",
+     "subcategory": "Saturation",
+     "kind": "pedal",
+     "tags": [
+      "tape",
+      "warm",
+      "subtle"
+     ],
+     "inspired_by": "",
+     "summary": "Tape saturation and flutter, from subtle to smeared.",
+     "description": "Analog tape emulation: soft saturation, head bump and a touch of flutter. Put it last in the chain to glue everything together.",
+     "classes": [],
+     "audio": {
+      "inputs": 2,
+      "outputs": 2
+     },
+     "required_features": [],
+     "ports_hash": "312d6e1458ad0dbd1131b9fa3d179a503602c931ba3ab42f18c178165ac79224",
+     "controls": [
+      {
+       "index": 4,
+       "symbol": "input",
+       "name": "Input",
+       "min": -12,
+       "max": 12,
+       "default": 0,
+       "unit": "db"
+      },
+      {
+       "index": 5,
+       "symbol": "soften",
+       "name": "Soften",
+       "min": 0,
+       "max": 1,
+       "default": 0.5
+      },
+      {
+       "index": 6,
+       "symbol": "headbump",
+       "name": "Head Bump",
+       "min": 0,
+       "max": 1,
+       "default": 0.5
+      },
+      {
+       "index": 7,
+       "symbol": "flutter",
+       "name": "Flutter",
+       "min": 0,
+       "max": 1,
+       "default": 0.5
+      },
+      {
+       "index": 8,
+       "symbol": "output",
+       "name": "Output",
+       "min": -12,
+       "max": 12,
+       "default": 0,
+       "unit": "db"
+      },
+      {
+       "index": 9,
+       "symbol": "drywet",
+       "name": "Dry/Wet",
+       "min": 0,
+       "max": 1,
+       "default": 1
+      }
+     ],
+     "media": {}
+    }
+   ]
+  },
+  {
+   "id": "caps-lv2",
+   "name": "CAPS LV2",
+   "version": "0.9.26",
+   "license": "GPL-3.0-or-later",
+   "homepage": "https://github.com/moddevices/caps-lv2",
+   "origin": "openrig-build",
+   "source": {
+    "url": "https://github.com/moddevices/caps-lv2/archive/5d52a0c6e8863c058c2aab2dea9f901a90d96eb9.tar.gz",
+    "sha256": null
+   },
+   "artifacts": {},
+   "plugins": [
+    {
+     "id": "caps-ampvts",
+     "uri": "http://moddevices.com/plugins/caps/AmpVTS",
+     "bundle": "mod-caps-AmpVTS.lv2",
+     "name": "AmpVTS",
+     "author": "Tim Goetze (CAPS)",
+     "license": "GPL-3.0-or-later",
+     "family": "Simulator",
+     "subcategory": "Amp",
+     "kind": "amp",
+     "tags": [
+      "tube",
+      "tone",
+      "stack"
+     ],
+     "inspired_by": "",
+     "summary": "Tube preamp and power amp with a choice of tone stacks.",
+     "description": "A lightweight tube amp model with switchable tone stacks modelled on classic American and British amps. Pair it with a cabinet block or CabinetIV.",
+     "classes": [
+      "SimulatorPlugin"
+     ],
+     "audio": {
+      "inputs": 1,
+      "outputs": 1
+     },
+     "required_features": [],
+     "ports_hash": "0bd89eb286146f722d4fe3a9f965eb7e57f87f62969a6e1b67e590bf2c414cca",
+     "controls": [
+      {
+       "index": 0,
+       "symbol": "over",
+       "name": "Over",
+       "min": 0,
+       "max": 2,
+       "default": 1,
+       "properties": [
+        "enumeration",
+        "integer"
+       ],
+       "scale_points": [
+        {
+         "value": 0,
+         "label": "2x"
+        },
+        {
+         "value": 1,
+         "label": "4x"
+        },
+        {
+         "value": 2,
+         "label": "8x"
+        }
+       ]
+      },
+      {
+       "index": 1,
+       "symbol": "gain",
+       "name": "Gain",
+       "min": 0,
+       "max": 1,
+       "default": 0.25
+      },
+      {
+       "index": 2,
+       "symbol": "bright",
+       "name": "Bright",
+       "min": 0,
+       "max": 1,
+       "default": 0.75
+      },
+      {
+       "index": 3,
+       "symbol": "power",
+       "name": "Power",
+       "min": 0,
+       "max": 1,
+       "default": 0.5
+      },
+      {
+       "index": 4,
+       "symbol": "tonestack",
+       "name": "Tonestack",
+       "min": 0,
+       "max": 8,
+       "default": 0,
+       "properties": [
+        "enumeration",
+        "integer"
+       ],
+       "scale_points": [
+        {
+         "value": 0,
+         "label": "Basswoman"
+        },
+        {
+         "value": 1,
+         "label": "Stanford"
+        },
+        {
+         "value": 2,
+         "label": "Wookie"
+        },
+        {
+         "value": 3,
+         "label": "DC 30"
+        },
+        {
+         "value": 4,
+         "label": "Juice 800"
+        },
+        {
+         "value": 5,
+         "label": "Twin"
+        },
+        {
+         "value": 6,
+         "label": "AK 20"
+        },
+        {
+         "value": 7,
+         "label": "Nihon Ace"
+        },
+        {
+         "value": 8,
+         "label": "Porky"
+        }
+       ]
+      },
+      {
+       "index": 5,
+       "symbol": "bass",
+       "name": "Bass",
+       "min": 0,
+       "max": 1,
+       "default": 0.25
+      },
+      {
+       "index": 6,
+       "symbol": "mid",
+       "name": "Mid",
+       "min": 0,
+       "max": 1,
+       "default": 0.75
+      },
+      {
+       "index": 7,
+       "symbol": "treble",
+       "name": "Treble",
+       "min": 0,
+       "max": 1,
+       "default": 1
+      },
+      {
+       "index": 8,
+       "symbol": "attack",
+       "name": "Attack",
+       "min": 0,
+       "max": 1,
+       "default": 0.25
+      },
+      {
+       "index": 9,
+       "symbol": "squash",
+       "name": "Squash",
+       "min": 0,
+       "max": 1,
+       "default": 0.75
+      },
+      {
+       "index": 10,
+       "symbol": "low_cut",
+       "name": "Low Cut",
+       "min": 0.1,
+       "max": 1,
+       "default": 0.75
+      }
+     ],
+     "media": {}
+    },
+    {
+     "id": "caps-cabinet4",
+     "uri": "http://moddevices.com/plugins/caps/CabinetIV",
+     "bundle": "mod-caps-CabinetIV.lv2",
+     "name": "CabinetIV",
+     "author": "Tim Goetze (CAPS)",
+     "license": "GPL-3.0-or-later",
+     "family": "Simulator",
+     "subcategory": "Cabinet",
+     "kind": "cab",
+     "tags": [
+      "speaker"
+     ],
+     "inspired_by": "",
+     "summary": "Speaker cabinet emulation without impulse files.",
+     "description": "Filter-based models of common guitar cabinets. Lighter than an impulse response, for when the CPU budget is tight.",
+     "classes": [
+      "SimulatorPlugin"
+     ],
+     "audio": {
+      "inputs": 1,
+      "outputs": 1
+     },
+     "required_features": [],
+     "ports_hash": "eceb5f717c0a1a9717806f7029b554725a870efc8d6631a310a00ec76c2a2538",
+     "controls": [
+      {
+       "index": 0,
+       "symbol": "model",
+       "name": "Model",
+       "min": 0,
+       "max": 24,
+       "default": 12,
+       "properties": [
+        "enumeration",
+        "integer"
+       ],
+       "scale_points": [
+        {
+         "value": 0,
+         "label": "Mega Wookie 800"
+        },
+        {
+         "value": 1,
+         "label": "Mega Wookie 812"
+        },
+        {
+         "value": 2,
+         "label": "Mega Wookie 828"
+        },
+        {
+         "value": 3,
+         "label": "Mega Wookie 868"
+        },
+        {
+         "value": 4,
+         "label": "Mega Wookie 908"
+        },
+        {
+         "value": 5,
+         "label": "Mega Wookie 912"
+        },
+        {
+         "value": 6,
+         "label": "Mega Wookie 936"
+        },
+        {
+         "value": 7,
+         "label": "Mega Wookie 968"
+        },
+        {
+         "value": 8,
+         "label": "Mega Wookie 992"
+        },
+        {
+         "value": 9,
+         "label": "Unmatched"
+        },
+        {
+         "value": 10,
+         "label": "Twin A"
+        },
+        {
+         "value": 11,
+         "label": "Twin B"
+        },
+        {
+         "value": 12,
+         "label": "Twin C"
+        },
+        {
+         "value": 13,
+         "label": "Blue A"
+        },
+        {
+         "value": 14,
+         "label": "Blue B"
+        },
+        {
+         "value": 15,
+         "label": "Tweedie A"
+        },
+        {
+         "value": 16,
+         "label": "Tweedie B"
+        },
+        {
+         "value": 17,
+         "label": "Miniwookie A"
+        },
+        {
+         "value": 18,
+         "label": "Miniwookie B"
+        },
+        {
+         "value": 19,
+         "label": "Rosie A"
+        },
+        {
+         "value": 20,
+         "label": "Rosie B"
+        },
+        {
+         "value": 21,
+         "label": "Indigo"
+        },
+        {
+         "value": 22,
+         "label": "Angel"
+        },
+        {
+         "value": 23,
+         "label": "Sixty-one"
+        },
+        {
+         "value": 24,
+         "label": "Sixty-two"
+        }
+       ]
+      },
+      {
+       "index": 1,
+       "symbol": "gain",
+       "name": "Gain",
+       "min": -24,
+       "max": 24,
+       "default": 0,
+       "unit": "db"
+      }
+     ],
+     "media": {}
+    },
+    {
+     "id": "caps-phaser2",
+     "uri": "http://moddevices.com/plugins/caps/PhaserII",
+     "bundle": "mod-caps-PhaserII.lv2",
+     "name": "PhaserII",
+     "author": "Tim Goetze (CAPS)",
+     "license": "GPL-3.0-or-later",
+     "family": "Modulation",
+     "subcategory": "Phaser",
+     "kind": "pedal",
+     "tags": [
+      "swirl"
+     ],
+     "inspired_by": "",
+     "summary": "Classic phaser, from slow swirl to fast warble.",
+     "description": "Allpass phaser with rate, depth, spread and resonance. Slow and deep for seventies rhythm parts.",
+     "classes": [
+      "PhaserPlugin"
+     ],
+     "audio": {
+      "inputs": 1,
+      "outputs": 1
+     },
+     "required_features": [],
+     "ports_hash": "19bb92f465be5031b42799e84c0b2b0a508856f7b16f8ad364656e8e82069b9c",
+     "controls": [
+      {
+       "index": 0,
+       "symbol": "rate",
+       "name": "Rate",
+       "min": 0,
+       "max": 1,
+       "default": 0.25
+      },
+      {
+       "index": 1,
+       "symbol": "lfo",
+       "name": "LFO",
+       "min": 0,
+       "max": 1,
+       "default": 0,
+       "properties": [
+        "enumeration",
+        "integer"
+       ],
+       "scale_points": [
+        {
+         "value": 0,
+         "label": "Sine"
+        },
+        {
+         "value": 1,
+         "label": "Fractal"
+        }
+       ]
+      },
+      {
+       "index": 2,
+       "symbol": "depth",
+       "name": "Depth",
+       "min": 0,
+       "max": 1,
+       "default": 0.75
+      },
+      {
+       "index": 3,
+       "symbol": "spread",
+       "name": "Spread",
+       "min": 0,
+       "max": 1,
+       "default": 0.75
+      },
+      {
+       "index": 4,
+       "symbol": "resonance",
+       "name": "Resonance",
+       "min": 0,
+       "max": 1,
+       "default": 0.25
+      }
+     ],
+     "media": {}
+    }
+   ]
+  },
+  {
+   "id": "dpf-plugins",
+   "name": "DPF-Plugins",
+   "version": "1.7",
+   "license": "ISC AND GPL-2.0-or-later AND GPL-3.0-or-later AND LGPL-3.0-only AND MIT",
+   "homepage": "https://github.com/DISTRHO/DPF-Plugins",
+   "origin": "upstream",
+   "source": {
+    "url": "https://github.com/DISTRHO/DPF-Plugins/archive/refs/tags/v1.7.tar.gz",
+    "sha256": null
+   },
+   "artifacts": {
+    "aarch64": {
+     "url": "https://github.com/DISTRHO/DPF-Plugins/releases/download/v1.7/DPF-Plugins-v1.7-linux-arm64.tar.xz",
+     "sha256": "f3251277b3083c363c84908656b24e213b65468ee24e85f5a10bad406b78f877",
+     "size": 9063488,
+     "format": "tar.xz",
+     "root": "DPF-Plugins-v1.7"
+    },
+    "x86_64": {
+     "url": "https://github.com/DISTRHO/DPF-Plugins/releases/download/v1.7/DPF-Plugins-v1.7-linux-x86_64.tar.xz",
+     "sha256": "8088e362f9f68fea179abe9f96b83fca07693224ffcf46837c24ff8b59b119cb",
+     "size": 9827340,
+     "format": "tar.xz",
+     "root": "DPF-Plugins-v1.7"
+    }
+   },
+   "plugins": [
+    {
+     "id": "mverb",
+     "uri": "http://distrho.sf.net/plugins/MVerb",
+     "bundle": "MVerb.lv2",
+     "name": "MVerb",
+     "author": "Martin Eastwood (DISTRHO)",
+     "license": "GPL-3.0-or-later",
+     "family": "Reverb",
+     "subcategory": "Hall",
+     "kind": "space",
+     "tags": [
+      "hall",
+      "plate",
+      "lush"
+     ],
+     "inspired_by": "",
+     "summary": "Lush studio reverb, from room to large hall.",
+     "description": "A dense algorithmic reverb with predelay, size, damping and early/late mix. A big, smooth tail for ambient leads.",
+     "classes": [
+      "ReverbPlugin"
+     ],
+     "audio": {
+      "inputs": 2,
+      "outputs": 2
+     },
+     "required_features": [
+      "http://lv2plug.in/ns/ext/options#options",
+      "http://lv2plug.in/ns/ext/urid#map"
+     ],
+     "ports_hash": "29807a1821080eaf38587df62ba90bbafcff0e0244ff83a8a8c3d18ee4f0197f",
+     "controls": [
+      {
+       "index": 4,
+       "symbol": "damping",
+       "name": "Damping",
+       "min": 0,
+       "max": 100,
+       "default": 50,
+       "unit": "pc"
+      },
+      {
+       "index": 5,
+       "symbol": "density",
+       "name": "Density",
+       "min": 0,
+       "max": 100,
+       "default": 50,
+       "unit": "pc"
+      },
+      {
+       "index": 6,
+       "symbol": "bandwidth",
+       "name": "Bandwidth",
+       "min": 0,
+       "max": 100,
+       "default": 50,
+       "unit": "pc"
+      },
+      {
+       "index": 7,
+       "symbol": "decay",
+       "name": "Decay",
+       "min": 0,
+       "max": 100,
+       "default": 50,
+       "unit": "pc"
+      },
+      {
+       "index": 8,
+       "symbol": "predelay",
+       "name": "Predelay",
+       "min": 0,
+       "max": 100,
+       "default": 50,
+       "unit": "pc"
+      },
+      {
+       "index": 9,
+       "symbol": "size",
+       "name": "Size",
+       "min": 5,
+       "max": 100,
+       "default": 75,
+       "unit": "pc"
+      },
+      {
+       "index": 10,
+       "symbol": "gain",
+       "name": "Gain",
+       "min": 0,
+       "max": 100,
+       "default": 100,
+       "unit": "pc"
+      },
+      {
+       "index": 11,
+       "symbol": "mix",
+       "name": "Mix",
+       "min": 0,
+       "max": 100,
+       "default": 50,
+       "unit": "pc"
+      },
+      {
+       "index": 12,
+       "symbol": "earlymix",
+       "name": "Early/Late Mix",
+       "min": 0,
+       "max": 100,
+       "default": 50,
+       "unit": "pc"
+      }
+     ],
+     "media": {
+      "picture": {
+       "url": "https://raw.githubusercontent.com/Siryu6/openrig-catalog/main/media/mverb.png",
+       "sha256": "8ab09361989ede064e24200951f7bac8adbd10a310f45691a862a122c0789d62",
+       "w": 456,
+       "h": 108,
+       "source": "https://github.com/DISTRHO/DPF-Plugins/blob/df5cb658a2d8dc6e944d8c26a53853a7c0c6c2b2/plugins/MVerb/Screenshot.png",
+       "license": "GPL-3.0-or-later",
+       "credit": "Martin Eastwood, DISTRHO"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "dragonfly-reverb",
+   "name": "Dragonfly Reverb",
+   "version": "3.2.10",
+   "license": "GPL-3.0-or-later",
+   "homepage": "https://michaelwillis.github.io/dragonfly-reverb/",
+   "origin": "upstream",
+   "source": {
+    "url": "https://github.com/michaelwillis/dragonfly-reverb/releases/download/3.2.10/dragonfly-reverb-3.2.10-src.tar.xz",
+    "sha256": null
+   },
+   "artifacts": {
+    "aarch64": {
+     "url": "https://github.com/michaelwillis/dragonfly-reverb/releases/download/3.2.10/dragonfly-reverb-3.2.10-linux-arm64.tar.xz",
+     "sha256": "6c830ad1b1cc028b0f3c4f4c0a4b073d7193ba1c8783528ed9365df1fc9b23c2",
+     "size": 2058296,
+     "format": "tar.xz",
+     "root": "dragonfly-reverb-3.2.10"
+    },
+    "x86_64": {
+     "url": "https://github.com/michaelwillis/dragonfly-reverb/releases/download/3.2.10/dragonfly-reverb-3.2.10-linux-x86_64.tar.xz",
+     "sha256": "59f1593120de82e31dd194e2ab1536af14fec2b3ec6ec45abf6d9c8ac02ef430",
+     "size": 2267368,
+     "format": "tar.xz",
+     "root": "dragonfly-reverb-3.2.10"
+    }
+   },
+   "plugins": [
+    {
+     "id": "dragonfly-er",
+     "uri": "urn:dragonfly:early",
+     "bundle": "DragonflyEarlyReflections.lv2",
+     "name": "Dragonfly Early Reflections",
+     "author": "Michael Willis",
+     "license": "GPL-3.0-or-later",
+     "family": "Reverb",
+     "subcategory": "Room",
+     "kind": "space",
+     "tags": [
+      "room",
+      "ambience"
+     ],
+     "inspired_by": "",
+     "summary": "Short room ambience that adds space without a tail.",
+     "description": "The early reflections of a room, without the long tail: makes a dry amp sound like it is in a real room. Stays clear under fast playing.",
+     "classes": [
+      "ReverbPlugin"
+     ],
+     "audio": {
+      "inputs": 2,
+      "outputs": 2
+     },
+     "required_features": [
+      "http://lv2plug.in/ns/ext/options#options",
+      "http://lv2plug.in/ns/ext/urid#map"
+     ],
+     "ports_hash": "357f5e6f4300fb7c85fdea549e0c3d1a5e61801cf33d4993918da3dd7cf8c043",
+     "controls": [
+      {
+       "index": 4,
+       "symbol": "dry_level",
+       "name": "Dry Level",
+       "min": 0,
+       "max": 100,
+       "default": 80,
+       "unit": "pc"
+      },
+      {
+       "index": 5,
+       "symbol": "early_level",
+       "name": "Wet Level",
+       "min": 0,
+       "max": 100,
+       "default": 20,
+       "unit": "pc"
+      },
+      {
+       "index": 6,
+       "symbol": "program",
+       "name": "Program",
+       "min": 0,
+       "max": 7,
+       "default": 2,
+       "properties": [
+        "enumeration",
+        "integer"
+       ],
+       "scale_points": [
+        {
+         "value": 0,
+         "label": "Abrupt Echo"
+        },
+        {
+         "value": 1,
+         "label": "Backstage Pass"
+        },
+        {
+         "value": 2,
+         "label": "Concert Venue"
+        },
+        {
+         "value": 3,
+         "label": "Damaged Goods"
+        },
+        {
+         "value": 4,
+         "label": "Elevator Pitch"
+        },
+        {
+         "value": 5,
+         "label": "Floor Thirteen"
+        },
+        {
+         "value": 6,
+         "label": "Garage Band"
+        },
+        {
+         "value": 7,
+         "label": "Home Studio"
+        }
+       ]
+      },
+      {
+       "index": 7,
+       "symbol": "size",
+       "name": "Size",
+       "min": 10,
+       "max": 60,
+       "default": 20,
+       "unit": "m"
+      },
+      {
+       "index": 8,
+       "symbol": "width",
+       "name": "Width",
+       "min": 50,
+       "max": 150,
+       "default": 100,
+       "unit": "pc"
+      },
+      {
+       "index": 9,
+       "symbol": "low_cut",
+       "name": "Low Cut",
+       "min": 0,
+       "max": 200,
+       "default": 50,
+       "unit": "hz"
+      },
+      {
+       "index": 10,
+       "symbol": "high_cut",
+       "name": "High Cut",
+       "min": 1000,
+       "max": 16000,
+       "default": 10000,
+       "unit": "hz"
+      }
+     ],
+     "media": {
+      "picture": {
+       "url": "https://raw.githubusercontent.com/Siryu6/openrig-catalog/main/media/dragonfly-er.png",
+       "sha256": "a10de8b495828468af9ba783ae82a2fdf453ee5778c9b2e7d8cf62116de90b7c",
+       "w": 450,
+       "h": 340,
+       "source": "https://github.com/michaelwillis/dragonfly-reverb/blob/440ec7b3b3db2fec34b9f80cf4890102ca14d1c3/dragonfly-early-screenshot.png",
+       "license": "GPL-3.0-or-later",
+       "credit": "Michael Willis"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "guitarix",
+   "name": "Guitarix",
+   "version": "0.47.0",
+   "license": "GPL-2.0-or-later AND GPL-3.0-or-later AND LGPL-3.0-or-later",
+   "homepage": "https://guitarix.org",
+   "origin": "openrig-build",
+   "source": {
+    "url": "https://github.com/brummer10/guitarix/releases/download/V0.47.0/guitarix2-0.47.0.tar.xz",
+    "sha256": null
+   },
+   "artifacts": {},
+   "plugins": [
+    {
+     "id": "gx-fuzzface",
+     "uri": "http://guitarix.sourceforge.net/plugins/gx_fuzzfacefm_#_fuzzfacefm_",
+     "bundle": "gx_fuzzfacefm.lv2",
+     "name": "GxFuzzFaceFullerMod",
+     "author": "Hermann Meyer",
+     "license": "GPL-2.0-or-later",
+     "family": "Distortion",
+     "subcategory": "Fuzz",
+     "kind": "pedal",
+     "tags": [
+      "germanium",
+      "vintage"
+     ],
+     "inspired_by": "Fuzz Face",
+     "summary": "Germanium-style fuzz that cleans up with the volume knob.",
+     "description": "Two-transistor fuzz in the spirit of the sixties, with the Fuller mod for a tighter bottom. Roll the guitar volume back for a glassy clean.",
+     "classes": [
+      "DistortionPlugin"
+     ],
+     "audio": {
+      "inputs": 1,
+      "outputs": 1
+     },
+     "required_features": [],
+     "ports_hash": "adc269f4dbe5429427f5580fd9f1bc63466453a7ce3a23d8b7928b4ab78c35c7",
+     "controls": [
+      {
+       "index": 2,
+       "symbol": "DRIVE",
+       "name": "DRIVE",
+       "min": 0,
+       "max": 1,
+       "default": 0.5
+      },
+      {
+       "index": 3,
+       "symbol": "FUZZ",
+       "name": "FUZZ",
+       "min": 0,
+       "max": 0.99,
+       "default": 0.5
+      },
+      {
+       "index": 4,
+       "symbol": "INPUT",
+       "name": "INPUT",
+       "min": 0,
+       "max": 1,
+       "default": 0.5
+      },
+      {
+       "index": 5,
+       "symbol": "LEVEL",
+       "name": "LEVEL",
+       "min": 0,
+       "max": 1,
+       "default": 0.5
+      }
+     ],
+     "media": {}
+    },
+    {
+     "id": "gx-tubescreamer",
+     "uri": "http://guitarix.sourceforge.net/plugins/gxts9#ts9sim",
+     "bundle": "gxts9.lv2",
+     "name": "GxTubeScreamer",
+     "author": "Hermann Meyer",
+     "license": "GPL-2.0-or-later",
+     "family": "Distortion",
+     "subcategory": "Overdrive",
+     "kind": "pedal",
+     "tags": [
+      "vintage",
+      "mid",
+      "boost"
+     ],
+     "inspired_by": "TS9",
+     "summary": "Mid-hump overdrive that tightens the low end.",
+     "description": "A circuit simulation of the classic green overdrive: a mid boost that pushes an amp into breakup without muddying the bass. Drive, tone and level, like the pedal.",
+     "classes": [
+      "DistortionPlugin"
+     ],
+     "audio": {
+      "inputs": 1,
+      "outputs": 1
+     },
+     "required_features": [],
+     "ports_hash": "d93f7f679e11a2ecbb5f0ce24fb34cb71a958e1e6b77bf1ae7e382d39824229b",
+     "controls": [
+      {
+       "index": 0,
+       "symbol": "fslider0_",
+       "name": "Level",
+       "min": -20,
+       "max": 4,
+       "default": -16
+      },
+      {
+       "index": 1,
+       "symbol": "fslider1_",
+       "name": "Tone",
+       "min": 100,
+       "max": 1000,
+       "default": 400
+      },
+      {
+       "index": 2,
+       "symbol": "fslider2_",
+       "name": "Drive",
+       "min": 0,
+       "max": 1,
+       "default": 0.5
+      },
+      {
+       "index": 5,
+       "symbol": "BYPASS",
+       "name": "BYPASS",
+       "min": 0,
+       "max": 1,
+       "default": 1,
+       "properties": [
+        "toggled"
+       ],
+       "designation": "enabled"
+      }
+     ],
+     "media": {}
+    }
+   ]
+  },
+  {
+   "id": "gxplugins",
+   "name": "GxPlugins.lv2",
+   "version": "1.0",
+   "license": "GPL-3.0-or-later",
+   "homepage": "https://github.com/brummer10/GxPlugins.lv2",
+   "origin": "openrig-build",
+   "source": {
+    "url": "https://github.com/brummer10/GxPlugins.lv2/releases/download/v1.0/gxplugins_1.0_src.tar.bz2",
+    "sha256": null
+   },
+   "artifacts": {},
+   "plugins": [
+    {
+     "id": "gx-sd1",
+     "uri": "http://guitarix.sourceforge.net/plugins/gx_sd1sim_#_sd1sim_",
+     "bundle": "gx_sd1sim.lv2",
+     "name": "GxSD1",
+     "author": "Hermann Meyer",
+     "license": "GPL-3.0-or-later",
+     "family": "Distortion",
+     "subcategory": "Overdrive",
+     "kind": "pedal",
+     "tags": [
+      "asymmetric"
+     ],
+     "inspired_by": "SD-1",
+     "summary": "Asymmetric overdrive, brighter and grittier.",
+     "description": "Asymmetric clipping gives more even harmonics than a TS: brighter, with more bite. Great in front of a clean amp for rock rhythm.",
+     "classes": [
+      "DistortionPlugin"
+     ],
+     "audio": {
+      "inputs": 1,
+      "outputs": 1
+     },
+     "required_features": [],
+     "ports_hash": "1f4346f8702973ac59cd8b1fe7bb6af3e3fe3ad096a4c1aa8f8e2309d3908b61",
+     "controls": [
+      {
+       "index": 2,
+       "symbol": "BYPASS",
+       "name": "BYPASS",
+       "min": 0,
+       "max": 1,
+       "default": 1,
+       "properties": [
+        "toggled"
+       ],
+       "designation": "enabled"
+      },
+      {
+       "index": 3,
+       "symbol": "DRIVE",
+       "name": "DRIVE",
+       "min": 0,
+       "max": 1,
+       "default": 0.5
+      },
+      {
+       "index": 4,
+       "symbol": "LEVEL",
+       "name": "LEVEL",
+       "min": -20,
+       "max": 4,
+       "default": -16
+      },
+      {
+       "index": 5,
+       "symbol": "TONE",
+       "name": "TONE",
+       "min": 100,
+       "max": 1000,
+       "default": 400
+      }
+     ],
+     "media": {
+      "picture": {
+       "url": "https://raw.githubusercontent.com/Siryu6/openrig-catalog/main/media/gxsd1.png",
+       "sha256": "a210e06ebf069e460dfe6872818fbf1afb65df9aa3ca88a460ab2007ac681670",
+       "w": 261,
+       "h": 430,
+       "source": "https://github.com/brummer10/GxSD1.lv2/blob/706407c0fecb9525ec87b4f2f23a8c1870701687/MOD/modgui/screenshot-gxsd1.png",
+       "license": "GPL-3.0-or-later",
+       "credit": "Hermann Meyer",
+       "block_face": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "mda-lv2",
+   "name": "mda-lv2",
+   "version": "1.2.12",
+   "license": "GPL-3.0-or-later",
+   "homepage": "https://gitlab.com/drobilla/mda-lv2",
+   "origin": "openrig-build",
+   "source": {
+    "url": "https://download.drobilla.net/mda-lv2-1.2.12.tar.xz",
+    "sha256": null
+   },
+   "artifacts": {},
+   "plugins": [
+    {
+     "id": "mda-leslie",
+     "uri": "http://drobilla.net/plugins/mda/Leslie",
+     "bundle": "mda.lv2",
+     "name": "Leslie",
+     "author": "Paul Kellett (MDA)",
+     "license": "GPL-3.0-or-later",
+     "family": "Modulation",
+     "subcategory": "Rotary",
+     "kind": "pedal",
+     "tags": [
+      "organ",
+      "rotary"
+     ],
+     "inspired_by": "Rotary speaker",
+     "summary": "Rotating speaker with slow and fast speeds.",
+     "description": "Horn and drum rotor simulation with speed ramping between chorale and tremolo. Map the speed to a footswitch.",
+     "classes": [
+      "SimulatorPlugin"
+     ],
+     "audio": {
+      "inputs": 2,
+      "outputs": 2
+     },
+     "required_features": [],
+     "ports_hash": "d1d5a09507ba746fcff7022f319906dd2cdda2bd4d2783834c2b0a8135bbf6a4",
+     "controls": [
+      {
+       "index": 0,
+       "symbol": "mode",
+       "name": "Mode",
+       "min": 0,
+       "max": 1,
+       "default": 0.5,
+       "properties": [
+        "enumeration"
+       ],
+       "scale_points": [
+        {
+         "value": 0,
+         "label": "Stop"
+        },
+        {
+         "value": 0.5,
+         "label": "Slow"
+        },
+        {
+         "value": 1,
+         "label": "Fast"
+        }
+       ]
+      },
+      {
+       "index": 1,
+       "symbol": "lo_width",
+       "name": "Lo Width",
+       "min": 0,
+       "max": 1,
+       "default": 0.5
+      },
+      {
+       "index": 2,
+       "symbol": "lo_throb",
+       "name": "Lo Throb",
+       "min": 0,
+       "max": 1,
+       "default": 0.6
+      },
+      {
+       "index": 3,
+       "symbol": "hi_width",
+       "name": "Hi Width",
+       "min": 0,
+       "max": 1,
+       "default": 0.7
+      },
+      {
+       "index": 4,
+       "symbol": "hi_depth",
+       "name": "Hi Depth",
+       "min": 0,
+       "max": 1,
+       "default": 0.6
+      },
+      {
+       "index": 5,
+       "symbol": "hi_throb",
+       "name": "Hi Throb",
+       "min": 0,
+       "max": 1,
+       "default": 0.7
+      },
+      {
+       "index": 6,
+       "symbol": "x_over",
+       "name": "X-Over",
+       "min": 0,
+       "max": 1,
+       "default": 0.48
+      },
+      {
+       "index": 7,
+       "symbol": "output",
+       "name": "Output",
+       "min": 0,
+       "max": 1,
+       "default": 0.5
+      },
+      {
+       "index": 8,
+       "symbol": "speed",
+       "name": "Speed",
+       "min": 0,
+       "max": 1,
+       "default": 0.5
+      }
+     ],
+     "media": {}
+    }
+   ]
+  },
+  {
+   "id": "x42-plugins",
+   "name": "x42-plugins",
+   "version": "20260908",
+   "license": "GPL-2.0-or-later AND GPL-3.0-or-later",
+   "homepage": "https://x42-plugins.com/x42/",
+   "origin": "openrig-build",
+   "source": {
+    "url": "https://gareus.org/misc/x42-plugins/x42-plugins-20260908.tar.xz",
+    "sha256": null
+   },
+   "artifacts": {},
+   "plugins": [
+    {
+     "id": "x42-dpl",
+     "uri": "http://gareus.org/oss/lv2/dpl#mono",
+     "bundle": "dpl.lv2",
+     "name": "Digital Peak Limiter",
+     "author": "Robin Gareus (x42)",
+     "license": "GPL-3.0-or-later",
+     "family": "Dynamics",
+     "subcategory": "Limiter",
+     "kind": "pedal",
+     "tags": [
+      "safety",
+      "output"
+     ],
+     "inspired_by": "",
+     "summary": "Look-ahead limiter to keep the output safe.",
+     "description": "A brickwall limiter with look-ahead: nothing goes over the threshold, so a sudden feedback never reaches the front of house at full level.",
+     "classes": [
+      "LimiterPlugin"
+     ],
+     "audio": {
+      "inputs": 1,
+      "outputs": 1
+     },
+     "required_features": [
+      "http://lv2plug.in/ns/ext/urid#map"
+     ],
+     "ports_hash": "09b3eeea354c02ea9f20003d1b6c83fa918b47e5eefbca6707deef422696c63e",
+     "controls": [
+      {
+       "index": 2,
+       "symbol": "enable",
+       "name": "Enable",
+       "min": 0,
+       "max": 1,
+       "default": 1,
+       "properties": [
+        "integer",
+        "toggled"
+       ],
+       "designation": "enabled"
+      },
+      {
+       "index": 3,
+       "symbol": "gain",
+       "name": "Input Gain",
+       "min": -10,
+       "max": 30,
+       "default": 0,
+       "unit": "db"
+      },
+      {
+       "index": 4,
+       "symbol": "threshold",
+       "name": "Threshold",
+       "min": -10,
+       "max": 0,
+       "default": -1,
+       "unit": "db"
+      },
+      {
+       "index": 5,
+       "symbol": "release",
+       "name": "Release Time",
+       "min": 0.001,
+       "max": 1,
+       "default": 0.01,
+       "properties": [
+        "logarithmic"
+       ]
+      },
+      {
+       "index": 6,
+       "symbol": "truepeak",
+       "name": "True Peak",
+       "min": 0,
+       "max": 1,
+       "default": 0,
+       "properties": [
+        "integer",
+        "toggled"
+       ]
+      }
+     ],
+     "media": {}
+    },
+    {
+     "id": "x42-fil4",
+     "uri": "http://gareus.org/oss/lv2/fil4#mono",
+     "bundle": "fil4.lv2",
+     "name": "fil4 Parametric EQ",
+     "author": "Robin Gareus (x42)",
+     "license": "GPL-2.0-or-later",
+     "family": "Filter",
+     "subcategory": "Parametric EQ",
+     "kind": "pedal",
+     "tags": [
+      "eq",
+      "shelf",
+      "high-pass"
+     ],
+     "inspired_by": "",
+     "summary": "Six-band parametric EQ with high and low cuts.",
+     "description": "Four parametric bands, two shelves and high- and low-pass filters. Shape a cabinet, cut mud before the amp, or notch a feedback frequency.",
+     "classes": [
+      "ParaEQPlugin"
+     ],
+     "audio": {
+      "inputs": 1,
+      "outputs": 1
+     },
+     "required_features": [
+      "http://lv2plug.in/ns/ext/urid#map"
+     ],
+     "ports_hash": "c269f7467b237605a9621a307e5e42da22f39d81e84d700643731d6dcc2e709b",
+     "controls": [
+      {
+       "index": 2,
+       "symbol": "enable",
+       "name": "Enable",
+       "min": 0,
+       "max": 1,
+       "default": 1,
+       "properties": [
+        "integer",
+        "toggled"
+       ],
+       "designation": "enabled"
+      },
+      {
+       "index": 3,
+       "symbol": "gain",
+       "name": "Gain",
+       "min": -18,
+       "max": 18,
+       "default": 0,
+       "unit": "db"
+      },
+      {
+       "index": 5,
+       "symbol": "peakreset",
+       "name": "Reset Peak Hold",
+       "min": 0,
+       "max": 1,
+       "default": 1,
+       "properties": [
+        "integer",
+        "toggled"
+       ]
+      },
+      {
+       "index": 6,
+       "symbol": "HighPass",
+       "name": "Highpass",
+       "min": 0,
+       "max": 1,
+       "default": 0,
+       "properties": [
+        "integer",
+        "toggled"
+       ]
+      },
+      {
+       "index": 7,
+       "symbol": "HPfreq",
+       "name": "Highpass Frequency",
+       "min": 5,
+       "max": 1250,
+       "default": 20,
+       "unit": "hz",
+       "properties": [
+        "logarithmic"
+       ]
+      },
+      {
+       "index": 8,
+       "symbol": "HPQ",
+       "name": "Highpass Resonance",
+       "min": 0,
+       "max": 1.4,
+       "default": 0.7,
+       "scale_points": [
+        {
+         "value": 0,
+         "label": "-6dB @freq, no resonance"
+        },
+        {
+         "value": 0.7,
+         "label": "-3dB @freq, flat"
+        },
+        {
+         "value": 1,
+         "label": "0dB @freq, resonant"
+        }
+       ]
+      },
+      {
+       "index": 9,
+       "symbol": "LowPass",
+       "name": "Lowpass",
+       "min": 0,
+       "max": 1,
+       "default": 0,
+       "properties": [
+        "integer",
+        "toggled"
+       ]
+      },
+      {
+       "index": 10,
+       "symbol": "LPfreq",
+       "name": "Lowpass Frequency",
+       "min": 500,
+       "max": 20000,
+       "default": 20000,
+       "unit": "hz",
+       "properties": [
+        "logarithmic"
+       ]
+      },
+      {
+       "index": 11,
+       "symbol": "LPQ",
+       "name": "Lowpass Resonance",
+       "min": 0,
+       "max": 1.4,
+       "default": 1,
+       "scale_points": [
+        {
+         "value": 0,
+         "label": "-6dB @freq, no resonance"
+        },
+        {
+         "value": 0.7,
+         "label": "-3dB @freq, flat"
+        },
+        {
+         "value": 1,
+         "label": "0dB @freq, resonant"
+        }
+       ]
+      },
+      {
+       "index": 12,
+       "symbol": "LSsec",
+       "name": "Lowshelf",
+       "min": 0,
+       "max": 1,
+       "default": 1,
+       "properties": [
+        "integer",
+        "toggled"
+       ]
+      },
+      {
+       "index": 13,
+       "symbol": "LSfreq",
+       "name": "Lowshelf Frequency",
+       "min": 25,
+       "max": 400,
+       "default": 80,
+       "unit": "hz",
+       "properties": [
+        "logarithmic"
+       ]
+      },
+      {
+       "index": 14,
+       "symbol": "LSq",
+       "name": "Lowshelf Bandwidth",
+       "min": 0.0625,
+       "max": 4,
+       "default": 1
+      },
+      {
+       "index": 15,
+       "symbol": "LSgain",
+       "name": "Lowshelf Gain",
+       "min": -18,
+       "max": 18,
+       "default": 0,
+       "unit": "db"
+      },
+      {
+       "index": 16,
+       "symbol": "sec1",
+       "name": "Section 1",
+       "min": 0,
+       "max": 1,
+       "default": 1,
+       "properties": [
+        "integer",
+        "toggled"
+       ]
+      },
+      {
+       "index": 17,
+       "symbol": "freq1",
+       "name": "Frequency 1",
+       "min": 20,
+       "max": 2000,
+       "default": 160,
+       "unit": "hz",
+       "properties": [
+        "logarithmic"
+       ]
+      },
+      {
+       "index": 18,
+       "symbol": "q1",
+       "name": "Bandwidth 1",
+       "min": 0.0625,
+       "max": 4,
+       "default": 0.5
+      },
+      {
+       "index": 19,
+       "symbol": "gain1",
+       "name": "Gain 1",
+       "min": -18,
+       "max": 18,
+       "default": 0,
+       "unit": "db"
+      },
+      {
+       "index": 20,
+       "symbol": "sec2",
+       "name": "Section 2",
+       "min": 0,
+       "max": 1,
+       "default": 1,
+       "properties": [
+        "integer",
+        "toggled"
+       ]
+      },
+      {
+       "index": 21,
+       "symbol": "freq2",
+       "name": "Frequency 2",
+       "min": 40,
+       "max": 4000,
+       "default": 397,
+       "unit": "hz",
+       "properties": [
+        "logarithmic"
+       ]
+      },
+      {
+       "index": 22,
+       "symbol": "q2",
+       "name": "Bandwidth 2",
+       "min": 0.0625,
+       "max": 4,
+       "default": 0.5
+      },
+      {
+       "index": 23,
+       "symbol": "gain2",
+       "name": "Gain 2",
+       "min": -18,
+       "max": 18,
+       "default": 0,
+       "unit": "db"
+      },
+      {
+       "index": 24,
+       "symbol": "sec3",
+       "name": "Section 3",
+       "min": 0,
+       "max": 1,
+       "default": 1,
+       "properties": [
+        "integer",
+        "toggled"
+       ]
+      },
+      {
+       "index": 25,
+       "symbol": "freq3",
+       "name": "Frequency 3",
+       "min": 100,
+       "max": 10000,
+       "default": 1250,
+       "unit": "hz",
+       "properties": [
+        "logarithmic"
+       ]
+      },
+      {
+       "index": 26,
+       "symbol": "q3",
+       "name": "Bandwidth 3",
+       "min": 0.0625,
+       "max": 4,
+       "default": 0.5
+      },
+      {
+       "index": 27,
+       "symbol": "gain3",
+       "name": "Gain 3",
+       "min": -18,
+       "max": 18,
+       "default": 0,
+       "unit": "db"
+      },
+      {
+       "index": 28,
+       "symbol": "sec4",
+       "name": "Section 4",
+       "min": 0,
+       "max": 1,
+       "default": 1,
+       "properties": [
+        "integer",
+        "toggled"
+       ]
+      },
+      {
+       "index": 29,
+       "symbol": "freq4",
+       "name": "Frequency 4",
+       "min": 200,
+       "max": 20000,
+       "default": 2500,
+       "unit": "hz",
+       "properties": [
+        "logarithmic"
+       ]
+      },
+      {
+       "index": 30,
+       "symbol": "q4",
+       "name": "Bandwidth 4",
+       "min": 0.0625,
+       "max": 4,
+       "default": 0.5
+      },
+      {
+       "index": 31,
+       "symbol": "gain4",
+       "name": "Gain 4",
+       "min": -18,
+       "max": 18,
+       "default": 0,
+       "unit": "db"
+      },
+      {
+       "index": 32,
+       "symbol": "HSsec",
+       "name": "Highshelf",
+       "min": 0,
+       "max": 1,
+       "default": 1,
+       "properties": [
+        "integer",
+        "toggled"
+       ]
+      },
+      {
+       "index": 33,
+       "symbol": "HSfreq",
+       "name": "Highshelf Frequency",
+       "min": 1000,
+       "max": 16000,
+       "default": 8000,
+       "unit": "hz",
+       "properties": [
+        "logarithmic"
+       ]
+      },
+      {
+       "index": 34,
+       "symbol": "HSq",
+       "name": "Highshelf Bandwidth",
+       "min": 0.0625,
+       "max": 4,
+       "default": 1
+      },
+      {
+       "index": 35,
+       "symbol": "HSgain",
+       "name": "Highshelf Gain",
+       "min": -18,
+       "max": 18,
+       "default": 0,
+       "unit": "db"
+      }
+     ],
+     "media": {
+      "picture": {
+       "url": "https://raw.githubusercontent.com/Siryu6/openrig-catalog/main/media/fil4.png",
+       "sha256": "309f9d69b2ac642cd07425b30c1ad3ea2073447b22c9dc7bb7eeb7041b0ece92",
+       "w": 831,
+       "h": 479,
+       "source": "https://github.com/x42/fil4.lv2/blob/885edf4d4c8da3f1414462ec7b5fc1c2da0f3ac1/modgui/screenshot-x42-eq-stereo.png",
+       "license": "GPL-2.0-or-later",
+       "credit": "Robin Gareus"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "id": "zam-plugins",
+   "name": "ZAM Plugins",
+   "version": "4.5",
+   "license": "GPL-2.0-or-later",
+   "homepage": "https://github.com/zamaudio/zam-plugins",
+   "origin": "upstream",
+   "source": {
+    "url": "https://github.com/zamaudio/zam-plugins/archive/refs/tags/4.5.tar.gz",
+    "sha256": null
+   },
+   "artifacts": {
+    "aarch64": {
+     "url": "https://github.com/zamaudio/zam-plugins/releases/download/4.5/zam-plugins-4.5-linux-arm64.tar.xz",
+     "sha256": "4e02771b743afaaa2d6912eac083661c1d9ab0a92dd6787414f29e365877b4c2",
+     "size": 39549040,
+     "format": "tar.xz",
+     "root": "zam-plugins-4.5"
+    },
+    "x86_64": {
+     "url": "https://github.com/zamaudio/zam-plugins/releases/download/4.5/zam-plugins-4.5-linux-x86_64.tar.xz",
+     "sha256": "16b022cce2998d11d3dbcf15aa6fe176cd14576cad42250ae8cfc56d1b7add7a",
+     "size": 39868912,
+     "format": "tar.xz",
+     "root": "zam-plugins-4.5"
+    }
+   },
+   "plugins": [
+    {
+     "id": "zam-comp",
+     "uri": "urn:zamaudio:ZamComp",
+     "bundle": "ZamComp.lv2",
+     "name": "ZamComp",
+     "author": "Damien Zammit",
+     "license": "GPL-2.0-or-later",
+     "family": "Dynamics",
+     "subcategory": "Compressor",
+     "kind": "pedal",
+     "tags": [
+      "transparent"
+     ],
+     "inspired_by": "",
+     "summary": "Transparent compressor with sidechain.",
+     "description": "A clean feed-forward compressor: attack, release, knee, ratio, threshold and makeup. Evens out a funk rhythm or adds sustain to a clean lead.",
+     "classes": [
+      "CompressorPlugin"
+     ],
+     "audio": {
+      "inputs": 2,
+      "outputs": 1
+     },
+     "required_features": [
+      "http://lv2plug.in/ns/ext/options#options",
+      "http://lv2plug.in/ns/ext/urid#map"
+     ],
+     "ports_hash": "dbaf6510108f85689c8568a83e20f8f68808d8151b04fdaa9afe2dfcfa966f73",
+     "controls": [
+      {
+       "index": 3,
+       "symbol": "att",
+       "name": "Attack",
+       "min": 0.1,
+       "max": 100,
+       "default": 10,
+       "unit": "ms"
+      },
+      {
+       "index": 4,
+       "symbol": "rel",
+       "name": "Release",
+       "min": 1,
+       "max": 500,
+       "default": 80,
+       "unit": "ms"
+      },
+      {
+       "index": 5,
+       "symbol": "kn",
+       "name": "Knee",
+       "min": 0,
+       "max": 8,
+       "default": 0,
+       "unit": "db"
+      },
+      {
+       "index": 6,
+       "symbol": "rat",
+       "name": "Ratio",
+       "min": 1,
+       "max": 20,
+       "default": 4,
+       "properties": [
+        "logarithmic"
+       ]
+      },
+      {
+       "index": 7,
+       "symbol": "thr",
+       "name": "Threshold",
+       "min": -80,
+       "max": 0,
+       "default": 0,
+       "unit": "db"
+      },
+      {
+       "index": 8,
+       "symbol": "mak",
+       "name": "Makeup",
+       "min": 0,
+       "max": 30,
+       "default": 0,
+       "unit": "db"
+      },
+      {
+       "index": 9,
+       "symbol": "slew",
+       "name": "Slew",
+       "min": 1,
+       "max": 150,
+       "default": 1
+      },
+      {
+       "index": 10,
+       "symbol": "sidech",
+       "name": "Sidechain",
+       "min": 0,
+       "max": 1,
+       "default": 0,
+       "properties": [
+        "toggled"
+       ]
+      }
+     ],
+     "media": {
+      "picture": {
+       "url": "https://raw.githubusercontent.com/Siryu6/openrig-catalog/main/media/zamcomp.png",
+       "sha256": "8d908b944b07a6240aa05112aa7ce6ef9144ede77efb6bb3d21849f6ecd32453",
+       "w": 800,
+       "h": 107,
+       "source": "https://github.com/zamaudio/zam-plugins/blob/9c08ca8cb31ba77df13c900be77e7b79cac99ea7/plugins/ZamComp/artwork/zamcomp.png",
+       "license": "GPL-2.0-or-later",
+       "credit": "Damien Zammit"
+      }
+     }
+    },
+    {
+     "id": "zam-delay",
+     "uri": "urn:zamaudio:ZamDelay",
+     "bundle": "ZamDelay.lv2",
+     "name": "ZamDelay",
+     "author": "Damien Zammit",
+     "license": "GPL-2.0-or-later",
+     "family": "Delay",
+     "subcategory": "Digital delay",
+     "kind": "pedal",
+     "tags": [
+      "tempo",
+      "sync"
+     ],
+     "inspired_by": "",
+     "summary": "Clean delay that follows the tempo.",
+     "description": "Digital delay with feedback, low-pass on the repeats and tempo sync, so it follows tap tempo and MIDI clock.",
+     "classes": [
+      "DelayPlugin"
+     ],
+     "audio": {
+      "inputs": 1,
+      "outputs": 1
+     },
+     "required_features": [
+      "http://lv2plug.in/ns/ext/options#options",
+      "http://lv2plug.in/ns/ext/urid#map"
+     ],
+     "ports_hash": "3634b669e4d363879a2ccffa36b5cec754d25361b9c5f31478be0fa97a170cc0",
+     "controls": [
+      {
+       "index": 3,
+       "symbol": "inv",
+       "name": "Invert",
+       "min": 0,
+       "max": 1,
+       "default": 0,
+       "properties": [
+        "toggled"
+       ]
+      },
+      {
+       "index": 4,
+       "symbol": "time",
+       "name": "Time",
+       "min": 1,
+       "max": 8000,
+       "default": 160,
+       "unit": "ms"
+      },
+      {
+       "index": 5,
+       "symbol": "sync",
+       "name": "Sync BPM",
+       "min": 0,
+       "max": 1,
+       "default": 0,
+       "properties": [
+        "toggled"
+       ]
+      },
+      {
+       "index": 6,
+       "symbol": "lpf",
+       "name": "LPF",
+       "min": 20,
+       "max": 20000,
+       "default": 6000,
+       "unit": "hz"
+      },
+      {
+       "index": 7,
+       "symbol": "div",
+       "name": "Divisor",
+       "min": 1,
+       "max": 5,
+       "default": 3,
+       "properties": [
+        "integer"
+       ]
+      },
+      {
+       "index": 8,
+       "symbol": "gain",
+       "name": "Output Gain",
+       "min": -60,
+       "max": 0,
+       "default": 0,
+       "unit": "db"
+      },
+      {
+       "index": 9,
+       "symbol": "drywet",
+       "name": "Dry/Wet",
+       "min": 0,
+       "max": 1,
+       "default": 0.5
+      },
+      {
+       "index": 10,
+       "symbol": "feedb",
+       "name": "Feedback",
+       "min": 0,
+       "max": 1,
+       "default": 0
+      }
+     ],
+     "media": {
+      "picture": {
+       "url": "https://raw.githubusercontent.com/Siryu6/openrig-catalog/main/media/zamdelay.png",
+       "sha256": "7f859c5c08cadd840d7451209b815c9e2c4ff6d9e0243cc6d248ba26d0644932",
+       "w": 418,
+       "h": 290,
+       "source": "https://github.com/zamaudio/zam-plugins/blob/9c08ca8cb31ba77df13c900be77e7b79cac99ea7/plugins/ZamDelay/artwork/zamdelay.png",
+       "license": "GPL-2.0-or-later",
+       "credit": "Damien Zammit"
+      }
+     }
+    },
+    {
+     "id": "zam-gate",
+     "uri": "urn:zamaudio:ZamGate",
+     "bundle": "ZamGate.lv2",
+     "name": "ZamGate",
+     "author": "Damien Zammit",
+     "license": "GPL-2.0-or-later",
+     "family": "Dynamics",
+     "subcategory": "Gate",
+     "kind": "pedal",
+     "tags": [
+      "noise"
+     ],
+     "inspired_by": "",
+     "summary": "Noise gate for high-gain rigs.",
+     "description": "Gate with attack, release and threshold, to silence hum between riffs.",
+     "classes": [
+      "GatePlugin"
+     ],
+     "audio": {
+      "inputs": 2,
+      "outputs": 1
+     },
+     "required_features": [
+      "http://lv2plug.in/ns/ext/options#options",
+      "http://lv2plug.in/ns/ext/urid#map"
+     ],
+     "ports_hash": "038f63268f3f6b8272ad7b495a6e66f1ff0779ed8b2e3f5fd5321737fe05ceba",
+     "controls": [
+      {
+       "index": 3,
+       "symbol": "att",
+       "name": "Attack",
+       "min": 0.1,
+       "max": 500,
+       "default": 50,
+       "unit": "ms"
+      },
+      {
+       "index": 4,
+       "symbol": "rel",
+       "name": "Release",
+       "min": 0.1,
+       "max": 500,
+       "default": 100,
+       "unit": "ms"
+      },
+      {
+       "index": 5,
+       "symbol": "thr",
+       "name": "Threshold",
+       "min": -60,
+       "max": 0,
+       "default": -60,
+       "unit": "db"
+      },
+      {
+       "index": 6,
+       "symbol": "mak",
+       "name": "Makeup",
+       "min": -30,
+       "max": 30,
+       "default": 0,
+       "unit": "db"
+      },
+      {
+       "index": 7,
+       "symbol": "sidechain",
+       "name": "Sidechain",
+       "min": 0,
+       "max": 1,
+       "default": 0,
+       "properties": [
+        "toggled"
+       ]
+      },
+      {
+       "index": 8,
+       "symbol": "close",
+       "name": "Max gate close",
+       "min": -50,
+       "max": 0,
+       "default": -50,
+       "unit": "db"
+      },
+      {
+       "index": 9,
+       "symbol": "mode",
+       "name": "Mode open/shut",
+       "min": 0,
+       "max": 1,
+       "default": 0,
+       "properties": [
+        "toggled"
+       ]
+      }
+     ],
+     "media": {}
+    }
+   ]
+  }
+ ]
+}

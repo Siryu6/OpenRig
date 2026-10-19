@@ -427,11 +427,16 @@ mod discovery {
                 continue;
             }
 
-            let category = plugin
+            let class_uri = plugin
                 .class()
                 .uri()
-                .and_then(|n| n.as_uri().map(PluginCategory::from_lv2_class))
-                .unwrap_or(PluginCategory::Unknown);
+                .and_then(|n| n.as_uri().map(str::to_string))
+                .unwrap_or_default();
+            let category = match class_uri.as_str() {
+                "" => PluginCategory::Unknown,
+                uri => PluginCategory::from_lv2_class(uri),
+            };
+            let class = class_uri.rsplit('#').next().unwrap_or_default().to_string();
 
             found.push(PluginInfo {
                 name: plugin
@@ -445,6 +450,7 @@ mod discovery {
                     .unwrap_or_default(),
                 uri: plugin_uri,
                 category,
+                class,
                 num_audio_inputs: audio_in,
                 num_audio_outputs: audio_out,
                 num_control_ports: count(PortType::ControlInput),

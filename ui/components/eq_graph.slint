@@ -1,0 +1,86 @@
+import { Theme } from "../theme.slint";
+import { EqView, PlotHandle, Spectrum } from "../types.slint";
+import { FreqAxis, FreqGrid, Handle, InOut, Plot, PlotPath } from "plot.slint";
+
+// EQ curve of a block, with a point per band: drag a point to move its
+// frequency and gain, double-tap it to switch the band on or off
+export component EqGraph inherits Rectangle {
+    in property <EqView> eq;
+    // Apart from `eq`: its rows are updated in place, so a point keeps the
+    // finger while it moves
+    in property <[PlotHandle]> points;
+    // The sound in (grey) and out (in the block's colour), behind the curve
+    in property <Spectrum> spectrum;
+    in property <color> accent: Theme.accent;
+    in property <bool> bypassed: false;
+
+    private property <color> line: root.eq.enabled && !root.bypassed ? root.accent : Theme.text-muted;
+
+    border-radius: Theme.radius-lg;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    plot := Plot {
+        x: 40px;
+        y: 12px;
+        width: parent.width - 52px;
+        height: parent.height - 34px;
+        wide: true;
+        rows: [];
+
+        // Gain grid, 6 dB apart
+        for db in [18, 12, 6, 0, -6, -12, -18]: Rectangle {
+            y: (0.5 - db / (2 * root.eq.range)) * plot.height;
+            width: plot.width;
+            height: 1px;
+            background: db == 0 ? Theme.text-muted : Theme.border;
+        }
+        FreqGrid { }
+        InOut {
+            input: root.spectrum.input;
+            output: root.spectrum.output;
+            accent: root.line;
+            input-alpha: 0.30;
+        }
+        PlotPath {
+            commands: root.eq.fill;
+            fill: root.line.with-alpha(0.14);
+        }
+        PlotPath {
+            commands: root.eq.curve;
+            stroke: root.line;
+            stroke-width: 2.5px;
+        }
+    }
+
+    // Axis labels
+    for t in [{ db: 18, text: "+18" }, { db: 6, text: "+6" }, { db: -6, text: "-6" }, { db: -18, text: "-18" }]: Text {
+        x: 4px;
+        y: plot.y + (0.5 - t.db / (2 * root.eq.range)) * plot.height - 7px;
+        width: 32px;
+        text: t.text;
+        color: Theme.text-muted;
+        font-size: Theme.font-caption;
+        horizontal-alignment: right;
+    }
+    for d in FreqAxis.decades: Text {
+        x: plot.x + d.x * plot.width - 20px;
+        y: plot.y + plot.height + 3px;
+        width: 40px;
+        text: d.text;
+        color: Theme.text-muted;
+        font-size: Theme.font-caption;
+        horizontal-alignment: center;
+    }
+
+    // Band points, over the curve
+    for p in root.points: Handle {
+        handle: p;
+        accent: root.line;
+        plot-x: plot.x;
+        plot-y: plot.y;
+        plot-width: plot.width;
+        plot-height: plot.height;
+    }
+}

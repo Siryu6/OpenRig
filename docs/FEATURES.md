@@ -16,6 +16,12 @@ What OpenRig does, in more technical detail than the
   plugins are scanned again without restarting. Bundles copied by hand into
   that folder are always loaded and never touched by the store. See
   [STORE.md](STORE.md).
+- **Plugin views**: above an LV2 block's controls, the editor draws an EQ's
+  response, a compressor's level curve or a delay's echoes, with points to
+  drag, over the sound measured in and out of that block (spectrum, levels,
+  waves). They are inferred from the plugin's LV2 class and the names and
+  units of its ports, never configured per plugin; a plugin read without
+  confidence keeps its knobs alone.
 - **Amp, Amp + Cab and Pedal blocks** (feature `nam`, default): built-in neural blocks
   running Neural Amp Modeler `.nam` captures (and RTNeural `.json` /
   `.aidax` models) through [NeuralAudio](https://github.com/mikeoliphant/NeuralAudio).
