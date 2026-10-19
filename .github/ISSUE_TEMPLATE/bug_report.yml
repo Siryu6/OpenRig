@@ -1,0 +1,50 @@
+name: Bug report
+description: Something does not work as it should.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the rack
+        2. Add a Send block
+        3. …
+  - type: input
+    id: version
+    attributes:
+      label: OpenRig version
+      description: Settings → About.
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How OpenRig runs
+      options:
+        - OpenRig OS image on a Raspberry Pi 5
+        - OpenRig OS image on an x86_64 mini PC
+        - Release binary on a Linux desktop
+        - Built from source
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: interface
+    attributes:
+      label: Audio interface
+      placeholder: "Focusrite Scarlett 2i2 (3rd gen)"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The app's output on a desktop; on the OS image, the relevant lines of `/var/log/messages` (over SSH). Remove anything private (Wi-Fi names, account details).
+      render: text
