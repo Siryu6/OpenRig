@@ -220,7 +220,8 @@ pub fn selected_node_view(state: &AppState, instance_id: usize) -> Option<Select
     let chain = state.effect_chain.lock().unwrap();
     match chain.find(instance_id)? {
         ChainNode::Plugin { uri, enabled, .. } => {
-            let info = state.lv2_host.scanner().find_by_uri(uri);
+            let scanner = state.lv2_host.scanner();
+            let info = scanner.find_by_uri(uri);
             let values = chain.parameters(instance_id);
             let file = chain.files.get(&instance_id);
             // Quality only does something on a model holding several sizes

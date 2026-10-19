@@ -9,9 +9,11 @@ use tracing::{info, warn};
 use super::tempo::TapTempo;
 use crate::audio::{ChainControl, ChainNode, Looper, SplitType, Tuner};
 use crate::midi::{MidiAssign, MidiSettings, MidiTarget, Step};
+use crate::plugins::scanner::PluginInfo;
 use crate::plugins::{ChainCommand, ChainSpec, Lv2Host, SignalMap};
 use crate::presets::{
-    PluginConfig, Preset, PresetChain, PresetManager, SceneManager, SceneSnapshot, DEFAULT_BPM,
+    PluginConfig, Preset, PresetChain, PresetManager, SavedMidiAssign, SceneManager, SceneSnapshot,
+    SymbolValues, DEFAULT_BPM,
 };
 
 /// Models of one tone: the files of a folder of the models directory (a
@@ -336,6 +338,12 @@ pub struct EffectChainState {
     pub stomps: Vec<Option<usize>>,
     /// MIDI CCs learned by the blocks
     pub midi: Vec<MidiAssign>,
+    /// Values by port symbol of the blocks whose plugin is not installed,
+    /// kept as loaded so that saving again does not lose them
+    pub held_values: HashMap<usize, SymbolValues>,
+    /// Port symbol of the parameters learned on these blocks, by
+    /// (instance_id, position)
+    pub held_midi: HashMap<(usize, usize), String>,
 }
 
 impl Default for EffectChainState {
@@ -352,6 +360,8 @@ impl Default for EffectChainState {
             bpm: DEFAULT_BPM,
             stomps: Vec::new(),
             midi: Vec::new(),
+            held_values: HashMap::new(),
+            held_midi: HashMap::new(),
         }
     }
 }
@@ -454,11 +464,13 @@ impl EffectChainState {
             .ok_or_else(|| anyhow!("Node {} not found", instance_id))?;
         let mut ids = Vec::new();
         collect_ids(std::slice::from_ref(&removed), &mut ids);
-        for id in ids {
+        for &id in &ids {
             self.params.remove(&id);
             self.files.remove(&id);
             self.colors.remove(&id);
+            self.held_values.remove(&id);
         }
+        self.held_midi.retain(|(id, _), _| !ids.contains(id));
         Ok(())
     }
 
@@ -582,63 +594,141 @@ impl EffectChainState {
         Ok(())
     }
 
-    pub fn to_preset_chain(&self) -> PresetChain {
+    /// Plugin of each block of the chain that the host knows
+    fn plugin_infos<'a>(
+        &self,
+        scanner: &'a crate::plugins::scanner::PluginScanner,
+    ) -> HashMap<usize, &'a PluginInfo> {
+        self.plugins()
+            .into_iter()
+            .filter_map(|n| match n {
+                ChainNode::Plugin {
+                    instance_id, uri, ..
+                } => Some((*instance_id, scanner.find_by_uri(uri)?)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The chain as saved. Parameters are saved by port symbol, and by
+    /// position for older versions of the app.
+    pub fn to_preset_chain(&self, host: &Lv2Host) -> PresetChain {
+        let scanner = host.scanner();
+        let infos = self.plugin_infos(&scanner);
+        let by_symbol = |params: &HashMap<usize, Vec<f32>>| -> HashMap<usize, SymbolValues> {
+            params
+                .iter()
+                .filter_map(|(id, values)| Some((*id, infos.get(id)?.values_by_symbol(values))))
+                .collect()
+        };
+        let mut params_by_symbol = by_symbol(&self.params);
+        for (id, values) in &self.held_values {
+            if self.find(*id).is_some() {
+                params_by_symbol.insert(*id, values.clone());
+            }
+        }
+        // Scenes keep the symbol values of missing plugins they were loaded with
+        let mut scenes = self.saved_scenes();
+        for scene in scenes.iter_mut().flatten() {
+            scene.params_by_symbol.extend(by_symbol(&scene.params));
+        }
+        let midi = self
+            .saved_midi()
+            .into_iter()
+            .map(|assign| {
+                let symbol = match assign.target {
+                    MidiTarget::Parameter(index) => infos
+                        .get(&assign.instance_id)
+                        .and_then(|info| info.parameter_symbol(index))
+                        .map(str::to_string)
+                        .or_else(|| self.held_midi.get(&(assign.instance_id, index)).cloned()),
+                    MidiTarget::Bypass => None,
+                };
+                SavedMidiAssign { assign, symbol }
+            })
+            .collect();
         PresetChain {
             nodes: self.nodes.clone(),
             params: self.params.clone(),
+            params_by_symbol,
             files: self.files.clone(),
             colors: self.colors.clone(),
-            scenes: self.saved_scenes(),
+            scenes,
             scene: self.scene,
             bpm: self.bpm,
             stomps: self.stomps.clone(),
-            midi: self.saved_midi(),
+            midi,
         }
     }
 
-    /// Rebuild from a saved chain; unknown parameter lists get the defaults
-    /// of the plugin so that `params` always matches the plugin ports.
+    /// Rebuild from a saved chain. Parameters are read by port symbol when
+    /// saved so, else by position; missing ones get the defaults of the
+    /// plugin so that `params` always matches the plugin ports. Blocks
+    /// whose plugin is not installed keep what was saved.
     pub fn from_preset_chain(chain: &PresetChain, host: &Lv2Host, stereo_mode: bool) -> Self {
         let mut state = Self {
             nodes: chain.nodes.clone(),
-            params: HashMap::new(),
-            files: HashMap::new(),
-            colors: HashMap::new(),
             next_instance_id: 0,
             stereo_mode,
             scenes: chain.scenes.clone(),
             scene: chain.scene.min(super::scenes::SCENE_COUNT - 1),
             bpm: super::tempo::clamp_bpm(chain.bpm),
             stomps: chain.stomps.clone(),
-            midi: chain.midi.clone(),
+            ..Self::default()
         };
         let mut ids = Vec::new();
         collect_ids(&state.nodes, &mut ids);
         state.next_instance_id = ids.iter().max().map_or(0, |m| m + 1);
 
-        let plugins: Vec<(usize, String)> = state
-            .plugins()
-            .into_iter()
-            .filter_map(|n| match n {
-                ChainNode::Plugin {
-                    instance_id, uri, ..
-                } => Some((*instance_id, uri.clone())),
-                _ => None,
-            })
-            .collect();
-        for (id, uri) in plugins {
-            let mut values = default_parameters(host, &uri);
-            match chain.params.get(&id) {
+        let scanner = host.scanner();
+        let infos = state.plugin_infos(&scanner);
+        let plugins: Vec<usize> = state.plugins().into_iter().map(node_id).collect();
+        for id in plugins {
+            let saved = chain.params.get(&id).map(Vec::as_slice);
+            let by_symbol = chain.params_by_symbol.get(&id);
+            let values = match infos.get(&id) {
+                Some(info) => info.values_from_saved(saved, by_symbol),
                 // Plugin not installed: keep its values for when it is back
-                Some(saved) if values.is_empty() => values = saved.clone(),
-                Some(saved) => {
-                    for (value, saved) in values.iter_mut().zip(saved) {
-                        *value = *saved;
+                None => {
+                    if let Some(by_symbol) = by_symbol {
+                        state.held_values.insert(id, by_symbol.clone());
+                    }
+                    saved.map(<[f32]>::to_vec).unwrap_or_default()
+                }
+            };
+            state.params.insert(id, values);
+        }
+        for scene in state.scenes.iter_mut().flatten() {
+            for (id, by_symbol) in std::mem::take(&mut scene.params_by_symbol) {
+                match infos.get(&id) {
+                    Some(info) => {
+                        let saved = scene.params.get(&id).map(Vec::as_slice);
+                        let values = info.values_from_saved(saved, Some(&by_symbol));
+                        scene.params.insert(id, values);
+                    }
+                    None => {
+                        scene.params_by_symbol.insert(id, by_symbol);
                     }
                 }
-                None => {}
             }
-            state.params.insert(id, values);
+        }
+        // A learned parameter is found by its symbol; gone, its CC is dropped
+        for saved in &chain.midi {
+            let mut assign = saved.assign;
+            if let (MidiTarget::Parameter(index), Some(symbol)) = (assign.target, &saved.symbol) {
+                match infos.get(&assign.instance_id) {
+                    Some(info) => match info.parameter_index(symbol) {
+                        Some(index) => assign.target = MidiTarget::Parameter(index),
+                        None => continue,
+                    },
+                    None => {
+                        state
+                            .held_midi
+                            .insert((assign.instance_id, index), symbol.clone());
+                    }
+                }
+            }
+            state.midi.push(assign);
         }
         // Files and colours of the nodes that exist (splits can be coloured)
         let keep = |id: &usize| ids.contains(id);
@@ -1002,7 +1092,7 @@ impl AppState {
     fn session_json(&self) -> Result<Vec<u8>> {
         let chain = self.chain();
         let session = Session {
-            chain: chain.to_preset_chain(),
+            chain: chain.to_preset_chain(&self.lv2_host),
             stereo_mode: chain.stereo_mode,
             preset_id: self
                 .preset_manager
@@ -1180,9 +1270,8 @@ impl AppState {
 
     /// Parameter values of a new block: its defaults, at the current tempo
     fn defaults_for(&self, uri: &str) -> Result<Vec<f32>> {
-        let info = self
-            .lv2_host
-            .scanner()
+        let scanner = self.lv2_host.scanner();
+        let info = scanner
             .find_by_uri(uri)
             .ok_or_else(|| anyhow!("Plugin not found: {}", uri))?;
         let mut values = info.default_parameters();
@@ -1380,7 +1469,7 @@ impl AppState {
                         .lv2_host
                         .scanner()
                         .find_by_uri(uri)
-                        .and_then(|info| info.control_inputs().nth(index));
+                        .and_then(|info| info.control_inputs().nth(index).cloned());
                     match port {
                         Some(p) => value.clamp(p.min.min(p.max), p.max.max(p.min)),
                         None => value,
@@ -1740,7 +1829,7 @@ impl AppState {
         let chain = self.chain();
         preset.plugins = chain.to_plugin_configs(&self.lv2_host);
         preset.stereo_mode = chain.stereo_mode;
-        preset.chain = Some(chain.to_preset_chain());
+        preset.chain = Some(chain.to_preset_chain(&self.lv2_host));
     }
 
     fn apply_preset(&self, preset: &Preset) {
@@ -2293,13 +2382,157 @@ mod tests {
         let host = Lv2Host::demo();
         let mut chain = EffectChainState::new();
         let id = chain.add_plugin("urn:not-installed", vec![0.1, 0.2]);
-        let restored = EffectChainState::from_preset_chain(&chain.to_preset_chain(), &host, false);
+        let restored =
+            EffectChainState::from_preset_chain(&chain.to_preset_chain(&host), &host, false);
         assert_eq!(restored.parameters(id), &[0.1, 0.2]);
 
         let mut config = PluginConfig::new("urn:not-installed".into(), "Gone".into());
         config.set_parameter(2, 0.7);
         let chain = EffectChainState::from_plugin_configs(&[config], &host, false);
         assert_eq!(chain.parameters(0), &[0.0, 0.0, 0.7]);
+    }
+
+    /// A plugin with one audio input and output and the given controls
+    /// (symbol, default)
+    fn fx_plugin(controls: &[(&str, f32)]) -> PluginInfo {
+        use crate::plugins::scanner::{PluginCategory, PortInfo, PortType};
+        let audio = |index, symbol: &str, port_type| PortInfo {
+            index,
+            name: symbol.to_string(),
+            symbol: symbol.to_string(),
+            port_type,
+            ..Default::default()
+        };
+        let mut ports = vec![
+            audio(0, "in", PortType::AudioInput),
+            audio(1, "out", PortType::AudioOutput),
+        ];
+        for &(symbol, default) in controls {
+            ports.push(PortInfo {
+                default,
+                max: 1.0,
+                ..audio(ports.len(), symbol, PortType::ControlInput)
+            });
+        }
+        PluginInfo {
+            uri: FX.to_string(),
+            name: "Fx".to_string(),
+            author: String::new(),
+            category: PluginCategory::Unknown,
+            num_audio_inputs: 1,
+            num_audio_outputs: 1,
+            num_control_ports: controls.len(),
+            ports,
+        }
+    }
+
+    const FX: &str = "urn:test:fx";
+
+    fn fx_host(controls: &[(&str, f32)]) -> Lv2Host {
+        Lv2Host::with_scanner(crate::plugins::scanner::PluginScanner::from_plugins([
+            fx_plugin(controls),
+        ]))
+    }
+
+    #[test]
+    fn positional_presets_load_as_before() {
+        // A preset saved before parameters were saved by symbol
+        let json = format!(
+            r#"{{"nodes": [{{"Plugin": {{"instance_id": 3, "uri": "{OD}", "enabled": true,
+                "num_inputs": 1, "num_outputs": 1}}}}],
+              "params": {{"3": [0.1, 0.2, 3.0]}},
+              "scenes": [{{"name": "A", "enabled": {{"3": true}}, "params": {{"3": [0.9]}}}}],
+              "midi": [{{"controller": 1, "instance_id": 3, "target": {{"parameter": 2}}}}]}}"#
+        );
+        let chain: PresetChain = serde_json::from_str(&json).unwrap();
+        let state = EffectChainState::from_preset_chain(&chain, &Lv2Host::demo(), false);
+        // Saved positions, then the defaults of the ports not saved
+        assert_eq!(state.parameters(3), &[0.1, 0.2, 3.0, 0.0, 0.0]);
+        assert_eq!(state.scenes[0].as_ref().unwrap().params[&3], vec![0.9]);
+        assert_eq!(state.midi[0].target, MidiTarget::Parameter(2));
+    }
+
+    #[test]
+    fn presets_save_parameters_by_symbol_and_position() {
+        let host = Lv2Host::demo();
+        let mut chain = EffectChainState::new();
+        let id = chain.add_plugin(
+            OD,
+            host.scanner().find_by_uri(OD).unwrap().default_parameters(),
+        );
+        chain.set_parameter(id, 1, 0.8).unwrap();
+        chain.learn_midi(1, id, MidiTarget::Parameter(2)).unwrap();
+        chain.learn_midi(2, id, MidiTarget::Bypass).unwrap();
+        chain.select_scene(1).unwrap();
+        chain.set_parameter(id, 0, 0.3).unwrap();
+
+        let saved = chain.to_preset_chain(&host);
+        let json = serde_json::to_string(&saved).unwrap();
+        // Older versions of the app read the positions
+        assert_eq!(saved.params[&id], vec![0.3, 0.8, 0.0, 0.0, 0.0]);
+        let by_symbol = &saved.params_by_symbol[&id];
+        assert_eq!((by_symbol["drive"], by_symbol["tone"]), (0.3, 0.8));
+        assert_eq!(
+            saved.scenes[0].as_ref().unwrap().params_by_symbol[&id]["drive"],
+            0.5
+        );
+        assert_eq!(saved.midi[0].symbol.as_deref(), Some("level"));
+        assert_eq!(saved.midi[1].symbol, None);
+        assert!(json.contains(r#""symbol":"level""#), "{json}");
+
+        let back: PresetChain = serde_json::from_str(&json).unwrap();
+        let restored = EffectChainState::from_preset_chain(&back, &host, false);
+        assert_eq!(restored.params, chain.params);
+        assert_eq!(restored.midi, chain.midi);
+        assert_eq!(restored.saved_scenes(), chain.saved_scenes());
+        assert!(restored.held_values.is_empty());
+    }
+
+    #[test]
+    fn updated_plugins_keep_values_by_symbol() {
+        let v1 = fx_host(&[("gain", 0.0), ("tone", 0.0), ("level", 0.0)]);
+        let mut chain = EffectChainState::new();
+        let id = chain.add_plugin(FX, vec![0.3, 0.7, 0.9]);
+        chain.learn_midi(1, id, MidiTarget::Parameter(1)).unwrap();
+        chain.learn_midi(2, id, MidiTarget::Parameter(2)).unwrap();
+        chain.select_scene(1).unwrap();
+        chain.set_parameter(id, 0, 0.1).unwrap();
+        let saved = chain.to_preset_chain(&v1);
+
+        // The update reorders the ports, adds "mix" and drops "level"
+        let v2 = fx_host(&[("tone", 0.0), ("mix", 0.5), ("gain", 0.0)]);
+        let mut state = EffectChainState::from_preset_chain(&saved, &v2, false);
+        assert_eq!(state.parameters(id), &[0.7, 0.5, 0.1]);
+        // The CC on "tone" follows it; the one on "level" is gone
+        assert_eq!(state.midi.len(), 1);
+        assert_eq!(state.midi[0].target, MidiTarget::Parameter(0));
+        assert!(state.select_scene(0).unwrap().commands.len() == 1);
+        assert_eq!(state.parameters(id), &[0.7, 0.5, 0.3]);
+    }
+
+    #[test]
+    fn missing_plugins_keep_their_values_by_symbol() {
+        let host = fx_host(&[("gain", 0.0), ("tone", 0.0)]);
+        let mut chain = EffectChainState::new();
+        let id = chain.add_plugin(FX, vec![0.3, 0.7]);
+        chain.learn_midi(1, id, MidiTarget::Parameter(1)).unwrap();
+        chain.select_scene(1).unwrap();
+        chain.set_parameter(id, 0, 0.1).unwrap();
+        let saved = chain.to_preset_chain(&host);
+
+        // Loaded and saved again where the plugin is not installed
+        let state = EffectChainState::from_preset_chain(&saved, &Lv2Host::demo(), false);
+        assert_eq!(state.parameters(id), &[0.1, 0.7]);
+        let again = state.to_preset_chain(&Lv2Host::demo());
+        assert_eq!(again.params, saved.params);
+        assert_eq!(again.params_by_symbol, saved.params_by_symbol);
+        assert_eq!(again.scenes, saved.scenes);
+        assert_eq!(again.midi, saved.midi);
+
+        // Back where it is installed: nothing was lost
+        let back = EffectChainState::from_preset_chain(&again, &host, false);
+        assert_eq!(back.params, chain.params);
+        assert_eq!(back.midi, chain.midi);
     }
 
     #[test]

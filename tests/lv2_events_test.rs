@@ -114,10 +114,8 @@ fn plugins_receive_the_tempo_and_midi() {
         return;
     };
     let host = host_from_path(&support::lv2_path(&root));
-    let info = host
-        .scanner()
-        .find_by_uri(URI)
-        .expect("test plugin discovered");
+    let scanner = host.scanner();
+    let info = scanner.find_by_uri(URI).expect("test plugin discovered");
     let events = &info.ports[0];
     assert!(events.midi && events.time);
 

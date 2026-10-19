@@ -23,7 +23,7 @@ path = "src/bin/splash.rs"
 required-features = ["splash"]
 
 [features]
-default = ["winit", "lv2", "nam", "tone3000", "midi", "update"]
+default = ["winit", "lv2", "nam", "tone3000", "midi", "update", "store"]
 # Desktop window (X11 / Wayland)
 winit = ["slint/backend-winit", "slint/renderer-femtovg"]
 # Full screen straight on the display (DRM/KMS + libinput), without X11 or
@@ -47,6 +47,9 @@ splash = ["dep:png", "dep:libc"]
 # "Check for updates" in Settings: latest release on GitHub; on the
 # pedalboard OS, downloads it and hands it to the system installer
 update = ["dep:ureq", "dep:ring", "dep:libc"]
+# Plugin store: downloads the signed catalog index and installs LV2 bundles
+# into the data directory (minisign check, tar.xz / tar.gz in pure Rust)
+store = ["dep:ureq", "dep:ring", "dep:minisign-verify", "dep:tar", "dep:flate2", "dep:lzma-rs"]
 
 [dependencies]
 lilv = { version = "0.2.4", optional = true }
@@ -93,6 +96,13 @@ midir = { version = "0.11.0", optional = true }  # MIDI input: ALSA, CoreMIDI, W
 png = { version = "0.18", optional = true }
 zune-jpeg = { version = "0.5", optional = true }
 libc = { version = "0.2", optional = true }
+minisign-verify = { version = "0.2", optional = true }
+tar = { version = "0.4", default-features = false, optional = true }
+flate2 = { version = "1", optional = true }
+lzma-rs = { version = "0.3", optional = true }
+
+[dev-dependencies]
+blake2 = "0.10"  # minisign signatures of the store test
 
 [build-dependencies]
 slint-build = "1.9"

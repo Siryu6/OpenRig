@@ -18,7 +18,7 @@ PEDALBOARD_DEPENDENCIES = \
 PEDALBOARD_OVERRIDE_SRCDIR_RSYNC_EXCLUSIONS = \
 	--exclude /target --exclude /os/output --exclude /os/.cache --exclude /os/keys
 
-PEDALBOARD_FEATURES = kms,lv2,nam,tone3000,midi,splash,update
+PEDALBOARD_FEATURES = kms,lv2,nam,tone3000,midi,splash,update,store
 ifeq ($(BR2_PACKAGE_PEDALBOARD_GPIO),y)
 PEDALBOARD_FEATURES += gpio
 endif

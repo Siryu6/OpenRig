@@ -42,7 +42,7 @@ Other targets, for one board: `make -C os rpi5-menuconfig`,
 then the image), `rpi5-clean`. `make -C os help` lists them.
 
 The app is built with `--no-default-features --features
-kms,lv2,nam,tone3000,midi,splash` (plus `gpio` on the Pi): no X11 /
+kms,lv2,nam,tone3000,midi,splash,update,store` (plus `gpio` on the Pi): no X11 /
 Wayland. Its
 dependencies are vendored from `Cargo.lock` at build time; the image's rustc
 is 1.88, which `rust-version` in `Cargo.toml` keeps the lockfile compatible
@@ -329,8 +329,9 @@ the slot.
 ## LV2 plugins
 
 The image ships no LV2 plugins: the NAM, cabinet (IR) and built-in blocks
-work out of the box. Bundles copied into `/data/pedalboard/lv2` are found at
-the next start. They must be built for the board (aarch64 on the Pi, x86_64
+work out of the box. The Store page installs plugins of the OpenRig catalog
+into `/data/pedalboard/lv2` (see [STORE.md](STORE.md)). Bundles copied there
+by hand are found at the next start, or from the Store's refresh button. They must be built for the board (aarch64 on the Pi, x86_64
 on the mini PC) against a glibc no newer than the image's; the simplest way
 is to add their Buildroot package to the defconfig.
 

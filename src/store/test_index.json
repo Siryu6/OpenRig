@@ -1,0 +1,13 @@
+{"schema":1,"serial":2026101913,"generated":"2026-10-19T14:31:15Z","expires":"2099-01-01T00:00:00Z",
+ "packages":[{"id":"zam-plugins","name":"ZAM Plugins","version":"4.5","license":"GPL-2.0-or-later",
+  "homepage":"https://github.com/zamaudio/zam-plugins","origin":"upstream",
+  "source":{"url":"https://github.com/zamaudio/zam-plugins/archive/refs/tags/4.5.tar.gz","sha256":null},
+  "artifacts":{
+   "aarch64":{"url":"https://example.org/a.tar.xz","sha256":"4e02771b743afaaa2d6912eac083661c1d9ab0a92dd6787414f29e365877b4c2","size":39549040,"format":"tar.xz","root":"zam-plugins-4.5"},
+   "x86_64":{"url":"https://example.org/x.tar.xz","sha256":"16b022cce2998d11d3dbcf15aa6fe176cd14576cad42250ae8cfc56d1b7add7a","size":39868912,"format":"tar.xz","root":"zam-plugins-4.5"}},
+  "plugins":[{"id":"zam-comp","uri":"urn:zamaudio:ZamComp","bundle":"ZamComp.lv2","name":"ZamComp",
+   "author":"Damien Zammit","license":"GPL-2.0-or-later","family":"Dynamics","subcategory":"Compressor",
+   "kind":"pedal","tags":["transparent"],"inspired_by":"","summary":"Transparent compressor with sidechain.",
+   "description":"A clean feed-forward compressor.","classes":["CompressorPlugin"],
+   "required_features":["http://lv2plug.in/ns/ext/options#options","http://lv2plug.in/ns/ext/urid#map"],
+   "ports_hash":"","controls":[],"media":{}}]}]}

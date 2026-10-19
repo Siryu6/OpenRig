@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
 import { PluginItem } from "../types.slint";
-import { Badge, Chip, EmptyState, Icon, SectionHeader } from "../components/controls.slint";
+import { Badge, Button, Chip, EmptyState, Icon, SectionHeader } from "../components/controls.slint";
 import { BlockShape } from "../components/block_shape.slint";
 
 // Short code shown in the category tile of a plugin row
@@ -28,6 +28,7 @@ export component PluginBrowser {
     in-out property <string> category-filter: "All";
 
     callback plugin-selected(int, string); // index, uri
+    callback open-store();
 
     private property <[string]> categories: ["All", "Distortion", "Dynamics", "Filter", "Modulation",
         "Delay", "Reverb", "Simulator", "Utility", "Generator", "Routing", "Unknown"];
@@ -38,9 +39,12 @@ export component PluginBrowser {
     VerticalLayout {
         padding-top: Theme.space-md;
         spacing: Theme.space-md;
+        // A short list leaves the free space below it, not in the header
+        alignment: start;
 
         // Header
         HorizontalLayout {
+            vertical-stretch: 0;
             padding-left: Theme.space-lg;
             padding-right: Theme.space-lg;
             spacing: Theme.space-sm;
@@ -72,6 +76,21 @@ export component PluginBrowser {
                 alignment: center;
                 Badge {
                     text: root.plugins.length + " AVAILABLE";
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                Button {
+                    height: 30px;
+                    horizontal-stretch: 0;
+                    text: "STORE";
+                    icon: "download";
+                    font-size: Theme.font-caption;
+                    icon-size: 14px;
+                    clicked => {
+                        root.open-store();
+                    }
                 }
             }
         }
