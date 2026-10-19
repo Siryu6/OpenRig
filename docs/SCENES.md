@@ -31,6 +31,18 @@ moving a block is done on the preset and applies to every scene.
 - A preset whose scenes were never used saves none; older presets load with
   scene 1 only.
 
+## Parameters in preset files
+
+Presets (and their scenes, MIDI assignments and the session) save parameter
+values by LV2 port symbol (`params_by_symbol`, and a `symbol` on a learned
+parameter), so a plugin update that reorders or adds ports keeps the right
+values: ports the preset does not know take their default, saved symbols the
+plugin no longer has are ignored (a CC learned on one is dropped). The values
+are also written by position (`params`, control inputs in port order) for an
+older version of the app after an A/B rollback; the symbols win when present,
+and presets saved before them load by position as always. A block whose
+plugin is not installed keeps what was saved, so saving again loses nothing.
+
 ## Setlists
 
 A setlist (formerly called "scene") maps up to 8 footswitch slots to

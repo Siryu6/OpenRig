@@ -91,7 +91,8 @@ What OpenRig does, in more technical detail than the
   mix changes are applied live without rebuilding. The JACK callback does no
   allocation and takes no blocking lock.
 - **Presets, scenes and setlists**: presets store the whole chain (splits,
-  parameter values, block colours) with 8 scenes and a tempo. A scene
+  parameter values by port symbol, so plugin updates keep them, block
+  colours) with 8 scenes and a tempo. A scene
   recalls bypass, parameters and split settings instantly, without
   rebuilding the chain; a setlist maps footswitch slots to presets, all
   preloaded in memory.

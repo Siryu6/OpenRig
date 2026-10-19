@@ -49,6 +49,9 @@ impl EffectChainState {
                     if let Some(values) = self.params.get(&id) {
                         scene.params.insert(id, values.clone());
                     }
+                    if let Some(values) = self.held_values.get(&id) {
+                        scene.params_by_symbol.insert(id, values.clone());
+                    }
                 }
                 Some(ChainNode::Split {
                     enabled,
@@ -133,6 +136,7 @@ impl EffectChainState {
         for scene in scenes.iter_mut().flatten() {
             scene.enabled.retain(|id, _| ids.contains(id));
             scene.params.retain(|id, _| ids.contains(id));
+            scene.params_by_symbol.retain(|id, _| ids.contains(id));
             scene.splits.retain(|id, _| ids.contains(id));
         }
         scenes

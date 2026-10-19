@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::presets::SymbolValues;
+
 /// Port type enumeration
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum PortType {
@@ -70,6 +72,8 @@ impl PortInfo {
         }
     }
 
+    /// A control of a built-in block. Its symbol, made from the name, is
+    /// what presets save: renaming a control must keep its symbol.
     fn control(index: usize, name: &str, min: f32, max: f32, default: f32) -> Self {
         Self {
             index,
@@ -123,6 +127,52 @@ impl PluginInfo {
     /// Default value of every parameter
     pub fn default_parameters(&self) -> Vec<f32> {
         self.control_inputs().map(|p| p.default).collect()
+    }
+
+    /// Port symbol of parameter `index`
+    pub fn parameter_symbol(&self, index: usize) -> Option<&str> {
+        self.control_inputs()
+            .nth(index)
+            .map(|p| p.symbol.as_str())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Position of the parameter with port symbol `symbol`
+    pub fn parameter_index(&self, symbol: &str) -> Option<usize> {
+        if symbol.is_empty() {
+            return None;
+        }
+        self.control_inputs().position(|p| p.symbol == symbol)
+    }
+
+    /// Parameter values (in order) by port symbol, as presets save them
+    pub fn values_by_symbol(&self, values: &[f32]) -> SymbolValues {
+        self.control_inputs()
+            .zip(values)
+            .filter(|(port, _)| !port.symbol.is_empty())
+            .map(|(port, value)| (port.symbol.clone(), *value))
+            .collect()
+    }
+
+    /// Parameter values (in order) from a preset: by symbol when it has
+    /// them, else by position as older presets saved them. Ports the
+    /// preset does not know take their default; saved symbols the plugin
+    /// no longer has are ignored.
+    pub fn values_from_saved(
+        &self,
+        by_position: Option<&[f32]>,
+        by_symbol: Option<&SymbolValues>,
+    ) -> Vec<f32> {
+        let by_position = by_position.unwrap_or(&[]);
+        self.control_inputs()
+            .enumerate()
+            .map(|(index, port)| match by_symbol {
+                Some(saved) if !port.symbol.is_empty() => {
+                    saved.get(&port.symbol).copied().unwrap_or(port.default)
+                }
+                _ => by_position.get(index).copied().unwrap_or(port.default),
+            })
+            .collect()
     }
 }
 
@@ -710,6 +760,71 @@ mod tests {
         assert_eq!(ret.default_parameters()[ret::INPUT], 1.0);
         assert_eq!(ret.audio_ports(), (1, 1));
         assert!(is_routing(SEND_URI) && !is_routing(IR_URI));
+    }
+
+    #[test]
+    fn built_in_symbols_are_stable_and_unique() {
+        let scanner = PluginScanner::demo();
+        for plugin in scanner.plugins().values() {
+            let symbols: Vec<&str> = plugin.control_inputs().map(|p| p.symbol.as_str()).collect();
+            let mut unique = symbols.clone();
+            unique.sort_unstable();
+            unique.dedup();
+            assert_eq!(unique.len(), symbols.len(), "{}", plugin.uri);
+            assert!(symbols.iter().all(|s| !s.is_empty()), "{}", plugin.uri);
+        }
+        // Presets save these: renaming a control must not change them
+        let symbols = |uri| -> Vec<String> {
+            let plugin = scanner.find_by_uri(uri).unwrap();
+            plugin.control_inputs().map(|p| p.symbol.clone()).collect()
+        };
+        assert_eq!(
+            symbols(IR_URI),
+            ["level", "mix", "normalize", "low_cut", "high_cut"]
+        );
+        assert_eq!(symbols(SEND_URI), ["send", "level"]);
+        assert_eq!(symbols(RETURN_URI), ["input", "level", "mix"]);
+        #[cfg(feature = "nam")]
+        assert_eq!(
+            symbols(NAM_URI),
+            [
+                "input",
+                "output",
+                "normalize",
+                "gate",
+                "threshold",
+                "bass",
+                "middle",
+                "treble",
+                "quality"
+            ]
+        );
+    }
+
+    #[test]
+    fn values_are_read_by_symbol_or_position() {
+        let plugin = PluginScanner::demo()
+            .find_by_uri("urn:pedalboard:demo:delay")
+            .unwrap()
+            .clone();
+        assert_eq!(plugin.parameter_symbol(1), Some("feedback"));
+        assert_eq!(plugin.parameter_index("mix"), Some(2));
+        assert_eq!(plugin.parameter_index(""), None);
+        let saved = plugin.values_by_symbol(&[500.0, 0.6, 0.1]);
+        assert_eq!(
+            plugin.values_from_saved(None, Some(&saved)),
+            [500.0, 0.6, 0.1]
+        );
+        // Symbols win; unknown ones are ignored, missing ones are defaults
+        let partial = SymbolValues::from([("mix".to_string(), 0.9), ("gone".to_string(), 1.0)]);
+        assert_eq!(
+            plugin.values_from_saved(Some(&[1.0, 1.0, 1.0]), Some(&partial)),
+            [400.0, 0.3, 0.9]
+        );
+        assert_eq!(
+            plugin.values_from_saved(Some(&[700.0]), None),
+            [700.0, 0.3, 0.3]
+        );
     }
 
     #[test]

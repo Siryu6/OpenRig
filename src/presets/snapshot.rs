@@ -1,8 +1,13 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
 
 use crate::audio::ChainNode;
+use crate::midi::MidiAssign;
+
+/// Parameter values of one block by LV2 port symbol. Unlike positions,
+/// symbols stay the same when a plugin update reorders or adds ports.
+pub type SymbolValues = BTreeMap<String, f32>;
 
 /// Preset - Complete pedalboard configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,8 +37,13 @@ pub struct Preset {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PresetChain {
     pub nodes: Vec<ChainNode>,
-    /// Parameter values per plugin instance_id
+    /// Parameter values per plugin instance_id, by position (control
+    /// inputs in port order). Still written for older versions of the app
+    /// (an A/B update rolled back); `params_by_symbol` wins when present.
     pub params: HashMap<usize, Vec<f32>>,
+    /// Parameter values per plugin instance_id, by port symbol
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub params_by_symbol: HashMap<usize, SymbolValues>,
     /// Model file per block instance_id, relative to the models directory
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub files: HashMap<usize, String>,
@@ -54,7 +64,17 @@ pub struct PresetChain {
     pub stomps: Vec<Option<usize>>,
     /// MIDI CCs learned by the blocks
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub midi: Vec<crate::midi::MidiAssign>,
+    pub midi: Vec<SavedMidiAssign>,
+}
+
+/// A learned MIDI CC as saved: a parameter target is also named by its
+/// port symbol, which wins over the position when present
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SavedMidiAssign {
+    #[serde(flatten)]
+    pub assign: MidiAssign,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
 }
 
 impl Default for PresetChain {
@@ -62,6 +82,7 @@ impl Default for PresetChain {
         Self {
             nodes: Vec::new(),
             params: HashMap::new(),
+            params_by_symbol: HashMap::new(),
             files: HashMap::new(),
             colors: HashMap::new(),
             scenes: Vec::new(),
@@ -87,8 +108,12 @@ pub struct SceneSnapshot {
     pub name: String,
     /// On / off of every block and split, by instance_id
     pub enabled: HashMap<usize, bool>,
-    /// Parameter values by instance_id
+    /// Parameter values by instance_id, by position (as in `PresetChain`)
     pub params: HashMap<usize, Vec<f32>>,
+    /// Parameter values by instance_id, by port symbol. In memory, only
+    /// for blocks whose plugin is not installed (kept as loaded).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub params_by_symbol: HashMap<usize, SymbolValues>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub splits: HashMap<usize, SplitSnapshot>,
 }

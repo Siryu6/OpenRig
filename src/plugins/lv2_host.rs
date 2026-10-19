@@ -49,6 +49,16 @@ impl Lv2Host {
         }
     }
 
+    /// Host with a given catalogue (no LV2 world), for tests
+    #[cfg(test)]
+    pub(crate) fn with_scanner(scanner: PluginScanner) -> Self {
+        Self {
+            scanner,
+            #[cfg(feature = "lv2")]
+            world: None,
+        }
+    }
+
     /// Get plugin scanner
     pub fn scanner(&self) -> &PluginScanner {
         &self.scanner
