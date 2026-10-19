@@ -1,0 +1,40 @@
+name: Hardware report
+description: OpenRig on a board or interface, working or not.
+labels: ["hardware"]
+body:
+  - type: input
+    id: board
+    attributes:
+      label: Board or computer
+      placeholder: "Raspberry Pi 5 8 GB, Beelink Mini S12 (N100)…"
+    validations:
+      required: true
+  - type: input
+    id: interface
+    attributes:
+      label: Audio interface
+      placeholder: "Behringer UMC404HD"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: OpenRig version
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Works
+        - Works with issues
+        - Does not work
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Sample rate and buffer (pedalboard.txt), DSP load, xruns, screen, footswitches, MIDI controllers, and what does not work.

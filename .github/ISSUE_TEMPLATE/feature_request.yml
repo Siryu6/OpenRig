@@ -1,0 +1,21 @@
+name: Feature request
+description: An idea for OpenRig.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What you want to do
+      description: The problem or the use, on stage, at home or in the studio. This matters more than a solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How it could work
+      description: What you picture, or how another unit (Helix, Quad Cortex, MOD…) does it.
+  - type: textarea
+    id: rig
+    attributes:
+      label: Your rig
+      description: Board, interface, controllers, if it matters for this.
