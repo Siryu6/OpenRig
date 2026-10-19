@@ -1,11 +1,16 @@
 # Project status
 
-Last update: 2026-10-15.
+Last update: 2026-10-19.
 
 ## Working
 
 - LV2 discovery and hosting through lilv, tested end to end with a compiled
-  test plugin (`tests/lv2_hosting_test.rs`).
+  test plugin (`tests/lv2_hosting_test.rs`). The plugins are scanned again
+  without restarting (store installs and removals, Store refresh button).
+- Plugin store: signed index (minisign, serial, expiry), archive checked
+  by size and sha256, safe unpacking, receipts, removal of store installs
+  only; tested end to end without network (`tests/store_test.rs`). See
+  [docs/STORE.md](docs/STORE.md).
 - Chain with nested A/B / Mix / L/R splits, processed in the JACK callback
   without allocation; crossfaded chain switches; live parameter, bypass, A/B
   and mix changes.
@@ -105,8 +110,8 @@ Last update: 2026-10-15.
   once and kept only if the UI runs for 30 s; otherwise the board comes back
   on the previous system. Pi 5: one FAT boot partition per slot and
   `autoboot.txt` tryboot; x86_64: GRUB `grubenv`.
-- 121 tests (`cargo test`), no clippy warning on the default, `lv2`,
-  `lv2,nam`, `gpio`, `kms`, image (`kms,lv2,nam,tone3000,midi,gpio,splash`) and
+- 167 tests (`cargo test`, without `nam`), no clippy warning on the default, `lv2`,
+  `lv2,nam`, `gpio`, `kms`, image (`kms,lv2,nam,tone3000,midi,gpio,splash,update,store`) and
   no-feature builds. `rust-version` 1.88 (the image's rustc).
 
 ## Not tested yet
@@ -127,6 +132,8 @@ Last update: 2026-10-15.
 - Third-party LV2 plugins taking MIDI or the transport (synths, x42 / MOD
   tempo-synced effects): the atom path is tested with a test plugin only.
 - LV2 state and file loading through atoms (patch:Set) are not handled.
+- The store against the real catalog: the index is not signed and
+  published yet, and the catalog builds have not run on the Pi.
 
 ## Limits and ideas
 

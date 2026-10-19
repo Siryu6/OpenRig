@@ -7,6 +7,8 @@ pub mod monitor;
 pub mod plugins;
 pub mod presets;
 pub mod state;
+#[cfg(feature = "store")]
+pub mod store;
 #[cfg(feature = "tone3000")]
 pub mod tone3000;
 pub mod ui;

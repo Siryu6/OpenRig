@@ -1,0 +1,621 @@
+import { Theme } from "../theme.slint";
+import { CatalogItem, CatalogFamily } from "../types.slint";
+import { Badge, Button, Chip, EmptyState, Icon } from "../components/controls.slint";
+import { BlockShape } from "../components/block_shape.slint";
+import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
+
+// Picture of a store entry, on its family's colour: the author's own picture
+// when it has one, else the gear it is drawn as in the rack
+component Artwork inherits Rectangle {
+    in property <string> kind;
+    in property <string> label;
+    in property <color> tint;
+    in property <image> picture;
+    in property <bool> has-picture;
+
+    border-radius: Theme.radius-lg;
+    clip: true;
+    background: @linear-gradient(160deg, root.tint.with-alpha(0.55) 0%, root.tint.with-alpha(0.10) 100%);
+
+    // Spotlight from above
+    Rectangle {
+        background: @radial-gradient(circle, #ffffff26 0%, #ffffff00 65%);
+        y: -parent.height * 0.35;
+        height: parent.height;
+    }
+    // Floor the gear stands on
+    Rectangle {
+        y: parent.height * 0.74;
+        height: parent.height * 0.26;
+        background: #0000002e;
+    }
+
+    // A strip far wider than the frame (a rack unit) would shrink to a line:
+    // it fills the frame instead, showing its middle up close
+    private property <bool> strip: root.crop-strips && root.picture.width > 2.2 * root.picture.height;
+    in property <bool> crop-strips: true;
+
+    if root.has-picture: Image {
+        x: root.strip ? 0 : parent.width * 0.08;
+        y: root.strip ? 0 : parent.height * 0.08;
+        width: root.strip ? parent.width : parent.width * 0.84;
+        height: root.strip ? parent.height : parent.height * 0.84;
+        source: root.picture;
+        image-fit: root.strip ? cover : contain;
+    }
+
+    if !root.has-picture: BlockShape {
+        kind: root.kind;
+        name: root.label;
+        tint: root.tint;
+        x: (parent.width - self.width) / 2;
+        y: parent.height * 0.6 - self.height * 0.5;
+        transform-origin: { x: self.width / 2, y: self.height / 2 };
+        transform-scale: min(parent.width * 0.6 / self.shape-width, parent.height * 0.55 / self.shape-height);
+    }
+}
+
+// Label and value in the facts of an entry
+component Fact inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+
+    spacing: Theme.space-sm;
+    Text {
+        text: root.label;
+        width: 92px;
+        color: Theme.text-muted;
+        font-size: Theme.font-caption;
+        font-weight: Theme.weight-bold;
+        letter-spacing: 0.6px;
+    }
+    Text {
+        horizontal-stretch: 1;
+        text: root.value;
+        color: Theme.text-primary;
+        font-size: Theme.font-small;
+        wrap: word-wrap;
+    }
+}
+
+// Install progress, under an entry
+component Progress inherits Rectangle {
+    in property <float> value;
+
+    height: 4px;
+    border-radius: 2px;
+    background: Theme.track;
+    Rectangle {
+        x: 0;
+        width: parent.width * clamp(root.value, 0, 1);
+        border-radius: 2px;
+        background: Theme.accent;
+    }
+}
+
+// Plugin store: search, families, a grid of entries and the page of one
+export component CatalogView {
+    in property <[CatalogItem]> items: [];
+    in property <[CatalogFamily]> families: [];
+    in property <string> query: "";
+    in property <string> family: "All";
+    in property <int> total: 0;
+    in property <string> status: "";       // date of the catalog, offline, error
+    in property <bool> busy: false;        // the catalog is being downloaded
+    in-out property <int> open: -1;        // entry shown on its own page
+
+    callback search(string);
+    callback pick-family(string);
+    callback install(string);
+    callback remove(string);
+    callback add-to-chain(string);
+    callback refresh();
+
+    private property <bool> searching: false;
+    private property <length> gap: Theme.space-md;
+    private property <length> card-h: 128px;
+
+    width: 100%;
+    height: 100%;
+
+    VerticalLayout {
+        padding-top: Theme.space-md;
+        spacing: Theme.space-md;
+
+        // Search field
+        HorizontalLayout {
+            padding-left: Theme.space-lg;
+            padding-right: Theme.space-lg;
+            spacing: Theme.space-sm;
+
+            Rectangle {
+                horizontal-stretch: 1;
+                height: Theme.touch-target;
+                border-radius: Theme.radius-md;
+                background: Theme.display;
+                border-width: 1px;
+                border-color: root.searching ? Theme.accent : Theme.border;
+
+                search-ta := TouchArea {
+                    clicked => {
+                        root.searching = true;
+                    }
+                }
+                HorizontalLayout {
+                    padding-left: Theme.space-md;
+                    padding-right: Theme.space-sm;
+                    spacing: Theme.space-sm;
+                    VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            name: "search";
+                            size: 18px;
+                            color: Theme.text-muted;
+                        }
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.query != "" ? root.query : "Search: name, sound, \"fuzz\", \"tape\"…";
+                        color: root.query != "" ? Theme.text-primary : Theme.text-muted;
+                        font-size: Theme.font-body;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    if root.query != "": Rectangle {
+                        width: 36px;
+                        Icon {
+                            name: "close";
+                            size: 16px;
+                            color: Theme.text-secondary;
+                        }
+                        TouchArea {
+                            clicked => {
+                                root.search("");
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                width: Theme.touch-target;
+                height: Theme.touch-target;
+                border-radius: Theme.radius-md;
+                background: refresh-ta.pressed ? Theme.key-pressed : Theme.key;
+                border-width: 1px;
+                border-color: Theme.edge-dark-soft;
+                opacity: root.busy ? 0.5 : 1;
+                Icon {
+                    name: "refresh";
+                    size: 18px;
+                    color: Theme.text-secondary;
+                }
+                refresh-ta := TouchArea {
+                    enabled: !root.busy;
+                    clicked => {
+                        root.refresh();
+                    }
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                Badge {
+                    text: root.items.length == root.total ? root.total + " PLUGINS"
+                        : root.items.length + " OF " + root.total;
+                }
+            }
+        }
+
+        if root.status != "" && !root.searching: Text {
+            x: Theme.space-lg;
+            width: parent.width - 2 * Theme.space-lg;
+            text: root.busy ? "Checking the plugin catalog…" : root.status;
+            color: Theme.text-muted;
+            font-size: Theme.font-caption;
+            overflow: elide;
+        }
+
+        // Families, with how many entries match
+        if !root.searching: Flickable {
+            min-width: 0px;
+            height: Theme.touch-target;
+            viewport-width: chips.preferred-width;
+            interactive: chips.preferred-width > self.width;
+
+            chips := HorizontalLayout {
+                padding-left: Theme.space-lg;
+                padding-right: Theme.space-lg;
+                spacing: Theme.space-sm;
+                for f in root.families: Chip {
+                    text: f.name == "Simulator" ? "Amp & cab " + f.count : f.name + " " + f.count;
+                    selected: root.family == f.name;
+                    clicked => {
+                        root.pick-family(f.name);
+                    }
+                }
+            }
+        }
+
+        if root.items.length == 0: Rectangle {
+            vertical-stretch: 1;
+            EmptyState {
+                icon: root.total == 0 ? "download" : "search";
+                title: root.total == 0 ? "No plugin catalog yet" : "Nothing found";
+                message: root.total == 0 ? "Connect to Wi-Fi and refresh to download it."
+                    : "Try another word, or another family.";
+            }
+        }
+
+        // Grid of entries, two by row
+        if root.items.length > 0: list := Flickable {
+            vertical-stretch: 1;
+            min-height: 0px;
+            viewport-height: max(self.height, ceil(root.items.length / 2) * (root.card-h + root.gap) + Theme.space-lg);
+            interactive: self.viewport-height > self.height;
+
+            private property <length> card-w: (self.width - 2 * Theme.space-lg - root.gap) / 2;
+
+            for item[i] in root.items: Rectangle {
+                x: Theme.space-lg + mod(i, 2) * (list.card-w + root.gap);
+                y: floor(i / 2) * (root.card-h + root.gap);
+                width: list.card-w;
+                height: root.card-h;
+                border-radius: Theme.radius-lg;
+                background: card-ta.pressed ? Theme.surface-hover : Theme.surface;
+                border-width: 1px;
+                border-color: Theme.border;
+
+                card-ta := TouchArea {
+                    clicked => {
+                        root.open = i;
+                    }
+                }
+
+                HorizontalLayout {
+                    padding: Theme.space-sm + 2px;
+                    spacing: Theme.space-md;
+
+                    Artwork {
+                        width: 104px;
+                        kind: item.kind;
+                        label: item.subcategory;
+                        tint: item.color;
+                        picture: item.picture;
+                        has-picture: item.has-picture;
+                    }
+
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 3px;
+
+                        HorizontalLayout {
+                            height: 28px;
+                            spacing: Theme.space-sm;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: item.name;
+                                color: Theme.text-primary;
+                                font-size: Theme.font-body;
+                                font-weight: Theme.weight-semibold;
+                                overflow: elide;
+                            }
+                            if item.state == "installed": Badge {
+                                text: "INSTALLED";
+                                tone: "success";
+                            }
+                            if item.state == "update": Badge {
+                                text: "UPDATE";
+                                tone: "accent";
+                            }
+                            if item.state == "manual": Badge {
+                                text: "ON BOARD";
+                            }
+                            if item.state == "available": Rectangle {
+                                width: 30px;
+                                height: 26px;
+                                border-radius: Theme.radius-md;
+                                background: get-ta.pressed ? Theme.key-pressed : Theme.key;
+                                border-width: 1px;
+                                border-color: Theme.edge-dark-soft;
+                                Icon {
+                                    name: "download";
+                                    size: 16px;
+                                    color: Theme.accent;
+                                }
+                                get-ta := TouchArea {
+                                    clicked => {
+                                        root.install(item.id);
+                                    }
+                                }
+                            }
+                        }
+                        Text {
+                            text: item.author + "  ·  " + item.subcategory;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                            overflow: elide;
+                        }
+                        Text {
+                            vertical-stretch: 1;
+                            text: item.summary;
+                            color: Theme.text-primary;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
+                            overflow: elide;
+                        }
+                        if item.state == "installing" || item.state == "removing": VerticalLayout {
+                            spacing: 3px;
+                            Text {
+                                text: item.state == "removing" ? "Removing…" : "Installing… " + round(item.progress * 100) + " %";
+                                color: Theme.accent;
+                                font-size: Theme.font-caption;
+                                font-weight: Theme.weight-bold;
+                            }
+                            Progress {
+                                value: item.progress;
+                            }
+                        }
+                        if item.state != "installing" && item.state != "removing": HorizontalLayout {
+                            spacing: Theme.space-xs;
+                            alignment: start;
+                            Badge {
+                                text: item.license;
+                            }
+                            if item.note != "": Text {
+                                horizontal-stretch: 1;
+                                text: item.note;
+                                color: item.state == "unavailable" ? Theme.text-muted : Theme.danger;
+                                font-size: Theme.font-caption;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.searching: VirtualKeyboard {
+            current-text: root.query;
+            placeholder: "Search plugins";
+            submit-label: "Done";
+            text-changed(t) => {
+                root.search(t);
+            }
+            submit => {
+                root.searching = false;
+            }
+            cancel => {
+                root.search("");
+                root.searching = false;
+            }
+        }
+    }
+
+    // Page of one entry
+    if root.open >= 0 && root.open < root.items.length: Rectangle {
+        private property <CatalogItem> item: root.items[root.open];
+
+        background: Theme.background;
+        TouchArea { }
+
+        HorizontalLayout {
+            padding: Theme.space-lg;
+            spacing: Theme.space-lg;
+
+            VerticalLayout {
+                width: 296px;
+                spacing: Theme.space-md;
+
+                Artwork {
+                    width: 296px;
+                    height: 200px;
+                    crop-strips: false;
+                    kind: item.kind;
+                    label: item.subcategory;
+                    tint: item.color;
+                    picture: item.picture;
+                    has-picture: item.has-picture;
+                }
+                VerticalLayout {
+                    spacing: Theme.space-sm;
+                    Fact {
+                        label: "FAMILY";
+                        value: (item.family == "Simulator" ? "Amp & cab" : item.family) + " › " + item.subcategory;
+                    }
+                    if item.inspired-by != "": Fact {
+                        label: "INSPIRED BY";
+                        value: item.inspired-by;
+                    }
+                    Fact {
+                        label: "CONTROLS";
+                        value: item.controls;
+                    }
+                    Fact {
+                        label: "DOWNLOAD";
+                        value: item.size != "" ? item.size : "Not built for this machine yet";
+                    }
+                    if item.has-picture: Fact {
+                        label: "PICTURE";
+                        value: item.picture-credit;
+                    }
+                    Fact {
+                        label: "BUILD";
+                        value: item.official ? "The author's release" : "Built by OpenRig from the author's source";
+                    }
+                    Fact {
+                        label: "SOURCE";
+                        value: item.source;
+                    }
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+            }
+
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: Theme.space-sm;
+
+                HorizontalLayout {
+                    spacing: Theme.space-sm;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 2px;
+                        Text {
+                            text: item.name;
+                            color: Theme.text-primary;
+                            font-size: Theme.font-headline;
+                            font-weight: Theme.weight-bold;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: item.author + "  ·  version " + item.version;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                        }
+                    }
+                    Rectangle {
+                        width: Theme.touch-target;
+                        height: Theme.touch-target;
+                        border-radius: Theme.radius-md;
+                        background: close-ta.pressed ? Theme.key-pressed : Theme.key;
+                        border-width: 1px;
+                        border-color: Theme.edge-dark-soft;
+                        Icon {
+                            name: "close";
+                            color: Theme.text-secondary;
+                        }
+                        close-ta := TouchArea {
+                            clicked => {
+                                root.open = -1;
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: Theme.space-xs;
+                    alignment: start;
+                    Badge {
+                        text: item.license;
+                    }
+                    Badge {
+                        text: item.official ? "OFFICIAL" : "OPENRIG BUILD";
+                        tone: item.official ? "success" : "neutral";
+                    }
+                    if item.state == "installed": Badge {
+                        text: "INSTALLED";
+                        tone: "success";
+                    }
+                    if item.state == "update": Badge {
+                        text: "UPDATE AVAILABLE";
+                        tone: "accent";
+                    }
+                    if item.state == "manual": Badge {
+                        text: "INSTALLED BY HAND";
+                    }
+                }
+
+                Flickable {
+                    vertical-stretch: 1;
+                    min-height: 0px;
+                    viewport-height: max(self.height, about.preferred-height);
+                    interactive: about.preferred-height > self.height;
+
+                    about := VerticalLayout {
+                        padding-top: Theme.space-sm;
+                        spacing: Theme.space-md;
+                        alignment: start;
+                        Text {
+                            text: item.summary;
+                            color: Theme.text-primary;
+                            font-size: Theme.font-body;
+                            font-weight: Theme.weight-semibold;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: item.description;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: "Tags: " + item.tags;
+                            color: Theme.text-muted;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                if item.note != "": Text {
+                    text: item.note;
+                    color: item.state == "unavailable" || item.state == "manual" ? Theme.text-secondary : Theme.danger;
+                    font-size: Theme.font-small;
+                    wrap: word-wrap;
+                }
+
+                if item.state == "installing" || item.state == "removing": VerticalLayout {
+                    spacing: Theme.space-xs;
+                    Text {
+                        text: item.state == "removing" ? "Removing…" : "Installing… " + round(item.progress * 100) + " %";
+                        color: Theme.accent;
+                        font-size: Theme.font-small;
+                        font-weight: Theme.weight-bold;
+                    }
+                    Progress {
+                        value: item.progress;
+                    }
+                }
+
+                if item.state == "available": Button {
+                    text: item.size != "" ? "Install  ·  " + item.size : "Install";
+                    icon: "download";
+                    variant: "primary";
+                    clicked => {
+                        root.install(item.id);
+                    }
+                }
+
+                if item.state == "manual": Button {
+                    text: "Add to the chain";
+                    icon: "plus";
+                    variant: "primary";
+                    clicked => {
+                        root.add-to-chain(item.id);
+                    }
+                }
+
+                if item.state == "installed" || item.state == "update": HorizontalLayout {
+                    spacing: Theme.space-sm;
+                    Button {
+                        horizontal-stretch: 1;
+                        text: "Add to the chain";
+                        icon: "plus";
+                        variant: "primary";
+                        clicked => {
+                            root.add-to-chain(item.id);
+                        }
+                    }
+                    if item.state == "update": Button {
+                        horizontal-stretch: 1;
+                        text: "Update";
+                        icon: "download";
+                        clicked => {
+                            root.install(item.id);
+                        }
+                    }
+                    Button {
+                        text: "Remove";
+                        icon: "trash";
+                        variant: "danger";
+                        clicked => {
+                            root.remove(item.id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

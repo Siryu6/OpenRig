@@ -1,72 +1,136 @@
 use anyhow::Result;
 use std::path::Path;
+use std::sync::{Arc, Mutex, RwLock};
 use tracing::{info, warn};
 
 use super::instance::PluginInstance;
 use super::scanner::{PluginInfo, PluginScanner};
 
 /// LV2 host: owns the lilv world, the plugin catalogue, and instantiates plugins.
+/// `rescan` replaces both after a plugin is installed or removed.
 pub struct Lv2Host {
+    current: RwLock<Arc<Catalogue>>,
+    /// Catalogues replaced by a rescan, kept for the whole process: the
+    /// plugins instantiated from their world may still be running, and
+    /// lilv frees a plugin's library with its world
+    retired: Mutex<Vec<Arc<Catalogue>>>,
+    /// LV2 path scanned instead of the default one (`LV2_PATH`), for tests
+    path: Option<String>,
+}
+
+/// The plugins found by one scan, and the lilv world they come from
+pub struct Catalogue {
     scanner: PluginScanner,
     #[cfg(feature = "lv2")]
     world: Option<lilv::World>,
 }
 
-impl Lv2Host {
+impl std::ops::Deref for Catalogue {
+    type Target = PluginScanner;
+
+    fn deref(&self) -> &PluginScanner {
+        &self.scanner
+    }
+}
+
+impl Catalogue {
     /// Discover installed LV2 plugins. Falls back to the demo catalogue when
     /// none is usable, so the UI still works on a development machine.
-    pub fn new() -> Result<Self> {
-        info!("Initializing LV2 host");
-
+    fn scan(path: Option<&str>) -> Self {
         #[cfg(feature = "lv2")]
         {
-            let world = lilv::World::with_load_all();
+            let world = match path {
+                Some(path) => world_on(path),
+                None => {
+                    let world = lilv::World::with_load_all();
+                    load_data_bundles(&world);
+                    world
+                }
+            };
             let plugins = discovery::scan(&world);
             if !plugins.is_empty() {
                 info!("LV2 host ready with {} plugins", plugins.len());
-                return Ok(Self {
+                return Self {
                     scanner: PluginScanner::from_plugins(
                         plugins.into_iter().chain(super::scanner::builtin_plugins()),
                     ),
                     world: Some(world),
-                });
+                };
             }
             warn!("No usable LV2 plugin found (check LV2_PATH); using demo plugins");
         }
 
         #[cfg(not(feature = "lv2"))]
-        warn!("Built without the `lv2` feature; using demo plugins");
+        {
+            let _ = path;
+            warn!("Built without the `lv2` feature; using demo plugins");
+        }
 
-        Ok(Self::demo())
+        Self::demo()
     }
 
-    /// Host with the demo catalogue only (no LV2 world)
-    pub fn demo() -> Self {
+    fn demo() -> Self {
         Self {
             scanner: PluginScanner::demo(),
             #[cfg(feature = "lv2")]
             world: None,
         }
     }
+}
+
+impl Lv2Host {
+    pub fn new() -> Result<Self> {
+        info!("Initializing LV2 host");
+        Ok(Self::with(Catalogue::scan(None), None))
+    }
+
+    /// Host with the demo catalogue only (no LV2 world)
+    pub fn demo() -> Self {
+        Self::with(Catalogue::demo(), None)
+    }
+
+    fn with(catalogue: Catalogue, path: Option<String>) -> Self {
+        Self {
+            current: RwLock::new(Arc::new(catalogue)),
+            retired: Mutex::new(Vec::new()),
+            path,
+        }
+    }
 
     /// Host with a given catalogue (no LV2 world), for tests
     #[cfg(test)]
     pub(crate) fn with_scanner(scanner: PluginScanner) -> Self {
-        Self {
-            scanner,
-            #[cfg(feature = "lv2")]
-            world: None,
-        }
+        Self::with(
+            Catalogue {
+                scanner,
+                #[cfg(feature = "lv2")]
+                world: None,
+            },
+            None,
+        )
     }
 
-    /// Get plugin scanner
-    pub fn scanner(&self) -> &PluginScanner {
-        &self.scanner
+    /// Scan the LV2 bundles again (after an install or a removal) and
+    /// return the number of plugins found. Running instances are left
+    /// alone; new blocks use the new scan. Not real-time safe: call it off
+    /// the audio thread.
+    pub fn rescan(&self) -> usize {
+        info!("Rescanning LV2 plugins");
+        let fresh = Arc::new(Catalogue::scan(self.path.as_deref()));
+        let count = fresh.plugins().len();
+        let old = std::mem::replace(&mut *self.current.write().unwrap(), fresh);
+        self.retired.lock().unwrap().push(old);
+        count
+    }
+
+    /// The plugins of the latest scan
+    pub fn scanner(&self) -> Arc<Catalogue> {
+        self.current.read().unwrap().clone()
     }
 
     /// True when only demo plugins are available
     pub fn is_demo(&self) -> bool {
-        self.scanner.is_demo()
+        self.scanner().is_demo()
     }
 
     /// Instantiate and activate a plugin. `file` is the model of blocks
@@ -93,8 +157,8 @@ impl Lv2Host {
         file: Option<&Path>,
         channel: Option<usize>,
     ) -> Result<PluginInstance> {
-        let info = self
-            .scanner
+        let catalogue = self.scanner();
+        let info = catalogue
             .find_by_uri(uri)
             .ok_or_else(|| anyhow::anyhow!("Plugin not found: {}", uri))?
             .clone();
@@ -119,12 +183,12 @@ impl Lv2Host {
         }
         let _ = (file, channel);
 
-        if self.is_demo() {
+        if catalogue.is_demo() {
             return Ok(PluginInstance::passthrough(info, instance_id, max_block));
         }
 
         #[cfg(feature = "lv2")]
-        if let Some(world) = &self.world {
+        if let Some(world) = &catalogue.world {
             return PluginInstance::lv2(world, info, instance_id, sample_rate, max_block);
         }
 
@@ -139,20 +203,62 @@ impl Default for Lv2Host {
     }
 }
 
-/// Build an LV2 world restricted to the bundles in `path` (used by tests).
+/// Build an LV2 host restricted to the bundles in `path` (used by tests).
+/// Unlike the default host, it does not fall back to the demo plugins.
 #[cfg(feature = "lv2")]
 pub fn host_from_path(path: &str) -> Lv2Host {
+    let world = world_on(path);
+    let plugins = discovery::scan(&world);
+    Lv2Host::with(
+        Catalogue {
+            scanner: PluginScanner::from_plugins(plugins),
+            world: Some(world),
+        },
+        Some(path.to_string()),
+    )
+}
+
+/// The LV2 folder of the data directory, where the store installs and the
+/// owner may copy bundles by hand: loaded even when `LV2_PATH` (set by the
+/// OS image to include it) does not list it, as on a desktop
+#[cfg(feature = "lv2")]
+fn load_data_bundles(world: &lilv::World) {
+    let dir = crate::state::data_dir().join("lv2");
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    let listed = std::env::var("LV2_PATH").is_ok_and(|path| {
+        path.split(separator)
+            .any(|p| Path::new(p).canonicalize().ok() == dir.canonicalize().ok())
+    });
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    if listed {
+        return;
+    }
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !path.is_dir() || !name.ends_with(".lv2") || name.starts_with('.') {
+            continue;
+        }
+        let mut bundle = path.display().to_string();
+        if !bundle.ends_with(std::path::MAIN_SEPARATOR) {
+            bundle.push(std::path::MAIN_SEPARATOR);
+        }
+        world.load_bundle(&world.new_file_uri(None, &bundle));
+    }
+}
+
+#[cfg(feature = "lv2")]
+fn world_on(path: &str) -> lilv::World {
     let world = lilv::World::new();
     world.set_option(
         "http://drobilla.net/ns/lilv#lv2-path",
         &world.new_string(path),
     );
     world.load_all();
-    let plugins = discovery::scan(&world);
-    Lv2Host {
-        scanner: PluginScanner::from_plugins(plugins),
-        world: Some(world),
-    }
+    world
 }
 
 #[cfg(feature = "lv2")]

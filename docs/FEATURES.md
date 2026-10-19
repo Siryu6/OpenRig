@@ -10,6 +10,12 @@ What OpenRig does, in more technical detail than the
   that need anything else are skipped. Atom inputs get the tempo
   (`time:Position`) and MIDI. Without any installed plugin, a demo
   catalogue (passthrough) keeps the UI usable for development.
+- **Plugin store** (feature `store`): installs free LV2 plugins from a
+  signed index (minisign, anti-rollback serial, expiry), with the archive
+  checked by size and sha256 and unpacked safely into `<data>/lv2`; the
+  plugins are scanned again without restarting. Bundles copied by hand into
+  that folder are always loaded and never touched by the store. See
+  [STORE.md](STORE.md).
 - **Amp, Amp + Cab and Pedal blocks** (feature `nam`, default): built-in neural blocks
   running Neural Amp Modeler `.nam` captures (and RTNeural `.json` /
   `.aidax` models) through [NeuralAudio](https://github.com/mikeoliphant/NeuralAudio).

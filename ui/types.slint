@@ -222,3 +222,38 @@ export struct RoutingBlock {
     place: string,       // where it is: "A/B split · B, after Cabinet"
     bypassed: bool,
 }
+
+// Plugin store (catalog) entry
+export struct CatalogItem {
+    id: string,
+    name: string,
+    author: string,
+    family: string,         // the families of the Add effect page
+    subcategory: string,    // "Overdrive", "Compressor"…
+    summary: string,        // one line, in the list
+    description: string,    // the detail page
+    inspired-by: string,    // gear it models, as text ("" none)
+    tags: string,
+    version: string,
+    license: string,        // SPDX
+    source: string,         // where its source code is
+    official: bool,         // the author's own build, else built by OpenRig
+    size: string,           // download size, "410 KB" ("" not built for this machine)
+    controls: int,          // control ports of the plugin
+    // "available" | "installed" | "update" | "manual" (copied by hand)
+    // | "unavailable" | "installing" | "removing"
+    state: string,
+    note: string,           // why it is unavailable, or what went wrong
+    progress: float,        // 0..1 while installing
+    kind: string,           // gear drawn as its picture: "pedal", "amp", "cab", "space"
+    color: color,           // colour of its family, as in the rack
+    picture: image,         // the author's own picture, when it has one
+    has-picture: bool,      // else the gear is drawn
+    picture-credit: string, // "Michael Willis, GPL-3.0"
+}
+
+// A family chip of the store, with how many entries match the search
+export struct CatalogFamily {
+    name: string,
+    count: int,
+}
