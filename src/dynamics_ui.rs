@@ -127,7 +127,7 @@ pub(crate) fn drag(app: &App, state: &AppState, handle: &str, x: f32, y: f32) {
     // Between the ratios the control reaches
     let symbol = ratio_control(&d);
     let (low, high) = controls.range(symbol);
-    let ratio_at = |v: f32| d.ratio(&|s: &str| Some(v).filter(|_| Some(s) == symbol));
+    let ratio_at = |v: f32| d.ratio(&|s: &str| (Some(s) == symbol).then_some(v));
     let (min, max) = match (ratio_at(low), ratio_at(high)) {
         (Some(a), Some(b)) => (a.min(b), a.max(b).min(MAX_RATIO)),
         _ => (1.0, MAX_RATIO),
