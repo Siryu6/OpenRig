@@ -1,0 +1,136 @@
+import { Theme } from "../theme.slint";
+import { Spectrum, ScopeView, ScopeLive } from "../types.slint";
+import { Caption, DbLabels, FreqGrid, Handle, InOut, Plot, PlotPath, Tag } from "plot.slint";
+
+// What a delay, reverb, drive, modulation or cabinet block does to the sound:
+// a delay's echoes across, which drag (time, feedback), and measured on what
+// goes through, in (grey) and out (block colour): its level over the last
+// seconds, its spectrum, or its waves in and out.
+export component ScopeGraph inherits Rectangle {
+    in property <ScopeView> scope;
+    in property <ScopeLive> live;
+    in property <Spectrum> spectrum;
+    in property <color> accent: Theme.accent;
+    in property <bool> bypassed: false;
+
+    private property <color> line: !root.bypassed ? root.accent : Theme.text-muted;
+    private property <bool> has-left: root.scope.left != "";
+    private property <length> side: root.height - 34px;
+
+    border-radius: Theme.radius-lg;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    // For the history, left of it
+    if root.scope.left == "history" || (!root.has-left && root.scope.right == "history"): DbLabels {
+        top: 12px;
+        side: root.side;
+    }
+
+    square := Plot {
+        x: 40px;
+        y: 12px;
+        width: root.has-left ? root.side : 0;
+        height: root.side;
+        visible: root.has-left;
+
+        if root.scope.left == "wave": Rectangle {
+            Rectangle {
+                y: square.height / 2;
+                width: square.width;
+                height: 1px;
+                background: Theme.border-strong;
+            }
+            PlotPath {
+                commands: root.live.wave-in;
+                stroke: Theme.text-muted;
+                stroke-width: 1.5px;
+            }
+            PlotPath {
+                commands: root.live.wave-out;
+                stroke: root.line;
+                stroke-width: 2px;
+            }
+            if root.live.gain != "": Tag {
+                x: square.width - self.width - 6px;
+                y: square.height - self.height - 6px;
+                text: root.live.gain;
+                text-color: Theme.text-secondary;
+                font-size: Theme.font-small;
+            }
+        }
+        if root.scope.left == "history": InOut {
+            input: root.live.history-in;
+            output: root.live.history-out;
+            accent: root.line;
+        }
+    }
+
+    wide := Plot {
+        x: root.has-left ? square.x + square.width + 12px : 40px;
+        y: 12px;
+        width: root.width - self.x - 12px;
+        height: root.side;
+        wide: true;
+
+        if root.scope.right == "spectrum": Rectangle {
+            FreqGrid {
+                labels: true;
+            }
+            InOut {
+                input: root.spectrum.input;
+                output: root.spectrum.output;
+                accent: root.line;
+            }
+        }
+        if root.scope.right == "history": InOut {
+            input: root.live.history-in;
+            output: root.live.history-out;
+            accent: root.line;
+        }
+        if root.scope.right == "echoes": Rectangle {
+            // The dry sound first, grey
+            for tap[i] in root.scope.echo-taps: Rectangle {
+                x: tap.x * wide.width - 2px;
+                y: (1 - tap.height) * wide.height;
+                width: 4px;
+                height: tap.height * wide.height;
+                background: i == 0 ? Theme.text-muted : root.line;
+            }
+            if root.scope.echo-span != "": Tag {
+                x: wide.width - self.width - 6px;
+                y: wide.height - self.height - 6px;
+                text: root.scope.echo-span;
+            }
+        }
+        // The kind, and what the fills are (top right over the echoes,
+        // which fade to the right)
+        Caption {
+            x: root.scope.right == "echoes" ? wide.width - self.width - 6px : 6px;
+            y: root.scope.right == "echoes" ? 6px : wide.height - self.height - 6px;
+            text: root.scope.kind + (root.scope.summary == "" ? "" : "  ·  " + root.scope.summary);
+            input: root.scope.right == "" ? "" : root.scope.right == "echoes" ? "dry" : "in";
+            output: root.scope.right == "echoes" ? "echoes" : "out";
+            accent: root.line;
+        }
+    }
+
+    // A delay's first echo (time, across) and second (feedback, up and down)
+    Handle {
+        handle: root.scope.echo-feedback;
+        accent: root.line;
+        plot-x: wide.x;
+        plot-y: wide.y;
+        plot-width: wide.width;
+        plot-height: wide.height;
+    }
+    Handle {
+        handle: root.scope.echo-time;
+        accent: root.line;
+        plot-x: wide.x;
+        plot-y: wide.y;
+        plot-width: wide.width;
+        plot-height: wide.height;
+    }
+}

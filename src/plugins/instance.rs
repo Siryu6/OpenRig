@@ -687,6 +687,11 @@ impl PluginInstance {
         }
     }
 
+    /// Value of every control port, by port index (outputs too)
+    pub fn controls(&self) -> &[f32] {
+        &self.controls
+    }
+
     /// Current value of a parameter
     pub fn parameter(&self, index: usize) -> Option<f32> {
         self.param_ports
