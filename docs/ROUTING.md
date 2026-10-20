@@ -12,6 +12,11 @@ connected to capture port N, `pedalboard:out_N` to playback port N. `in_1`,
 `out_1` and `out_2` keep their former names as aliases (`guitar_in`,
 `out_left`, `out_right`).
 
+The ports the interface offers and each connection made are logged at
+start (`Interface inputs`, `Interface outputs`, `Connected`), and a
+connection that fails is logged as a warning: see
+[OS.md, Troubleshooting](OS.md#troubleshooting) for a silent output.
+
 ## Signal path
 
 In the JACK callback, for each period:
