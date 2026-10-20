@@ -96,7 +96,7 @@ impl IrBlock {
 
 /// Model plus the gains around it. Controls: input dB, output dB,
 /// normalize, gate on/off, gate threshold dB, then bass / middle / treble on
-/// the amp blocks only, then the quality.
+/// the amp blocks only, then the quality, then the EQ position (amp blocks).
 #[cfg(feature = "nam")]
 struct NamBlock {
     model: Option<super::nam::NamModel>,
@@ -105,6 +105,11 @@ struct NamBlock {
     quality: f32,
     gate: NoiseGate,
     tone_stack: Option<ToneStack>,
+    /// Port of the EQ position (tone stack before or after the model), the
+    /// last position seen, and the dry input kept for the gate in Pre mode
+    eq_position_port: Option<usize>,
+    eq_pre: Option<bool>,
+    dry: Vec<f32>,
     /// Gains applied on the previous block, ramped to avoid zipper noise
     input_gain: f32,
     output_gain: f32,
@@ -334,12 +339,20 @@ impl PluginInstance {
         let mut this = Self::with_buffers(info, instance_id, sample_rate, max_block);
         let tone_stack =
             (this.controls.len() > port::NAM_TREBLE).then(|| ToneStack::new(sample_rate));
-        let quality_port = this
-            .info
-            .ports
-            .iter()
-            .find(|p| p.name == super::scanner::NAM_QUALITY)
-            .map(|p| p.index);
+        let port_named = |name: &str| {
+            this.info
+                .ports
+                .iter()
+                .find(|p| p.name == name)
+                .map(|p| p.index)
+        };
+        let quality_port = port_named(super::scanner::NAM_QUALITY);
+        let eq_position_port = port_named(super::scanner::NAM_EQ_POSITION);
+        let dry = if eq_position_port.is_some() {
+            vec![0.0; max_block]
+        } else {
+            Vec::new()
+        };
         let mut block = NamBlock {
             model,
             quality_port,
@@ -347,6 +360,9 @@ impl PluginInstance {
             quality: f32::NAN,
             gate: NoiseGate::new(sample_rate),
             tone_stack,
+            eq_position_port,
+            eq_pre: None,
+            dry,
             input_gain: 1.0,
             output_gain: 1.0,
         };
@@ -492,26 +508,50 @@ impl PluginInstance {
                         block.quality = quality;
                     }
                 }
+                let controls = &self.controls;
+                // Tone stack after the model (as in the NAM plugin), or before
+                // it to shape what hits the amp
+                let pre = block
+                    .eq_position_port
+                    .is_some_and(|port| controls[port] < 0.5);
+                if block.eq_pre != Some(pre) {
+                    if let Some(tone_stack) = &mut block.tone_stack {
+                        tone_stack.reset();
+                    }
+                    block.eq_pre = Some(pre);
+                }
+                let mut tone_stack = |buffer: &mut [f32]| {
+                    if let Some(tone_stack) = &mut block.tone_stack {
+                        tone_stack.process(
+                            buffer,
+                            controls[port::NAM_BASS],
+                            controls[port::NAM_MIDDLE],
+                            controls[port::NAM_TREBLE],
+                        );
+                    }
+                };
+                // The gate listens to the input before the EQ
+                let detector: &[f32] = if pre {
+                    block.dry[..frames].copy_from_slice(input);
+                    tone_stack(input);
+                    &block.dry[..frames]
+                } else {
+                    input
+                };
                 match &mut block.model {
                     Some(model) => model.process(input, output),
                     None => output.copy_from_slice(input),
                 }
                 // Same order as the NAM plugin: gate, tone stack, output level
-                let controls = &self.controls;
                 if controls.get(port::NAM_GATE).is_some_and(|&on| on >= 0.5) {
                     block
                         .gate
-                        .process(input, output, controls[port::NAM_THRESHOLD]);
+                        .process(detector, output, controls[port::NAM_THRESHOLD]);
                 } else {
                     block.gate.reset();
                 }
-                if let Some(tone_stack) = &mut block.tone_stack {
-                    tone_stack.process(
-                        output,
-                        controls[port::NAM_BASS],
-                        controls[port::NAM_MIDDLE],
-                        controls[port::NAM_TREBLE],
-                    );
+                if !pre {
+                    tone_stack(output);
                 }
                 apply_gain_ramp(output, block.output_gain, output_gain);
                 block.input_gain = input_gain;
@@ -893,6 +933,36 @@ mod tests {
         let mut buffer = vec![0.5f32; 128];
         plugin.process_in_place(&mut buffer);
         assert!((buffer[127] - 0.5 * 10f32.powf(-6.0 / 20.0)).abs() < 1e-4);
+    }
+
+    #[cfg(feature = "nam")]
+    #[test]
+    fn nam_tone_stack_runs_before_or_after_the_model() {
+        use crate::plugins::scanner::{builtin_plugins, NAM_URI};
+        let info = builtin_plugins()
+            .into_iter()
+            .find(|p| p.uri == NAM_URI)
+            .unwrap();
+        // A low tone: the bass shelf boosts it in both positions
+        let tone: Vec<f32> = (0..4800)
+            .map(|i| 0.1 * (i as f32 * 2.0 * std::f32::consts::PI * 80.0 / 48000.0).sin())
+            .collect();
+        let peak = |eq_position: f32| {
+            let mut plugin = PluginInstance::nam(info.clone(), 1, 48000.0, 64, None).unwrap();
+            plugin.set_parameter(5, 10.0); // bass up
+            plugin.set_parameter(9, eq_position);
+            let mut peak = 0.0f32;
+            for chunk in tone.chunks(64) {
+                let mut buffer = chunk.to_vec();
+                plugin.process_in_place(&mut buffer);
+                peak = buffer.iter().fold(peak, |p, s| p.max(s.abs()));
+            }
+            peak
+        };
+        let (pre, post) = (peak(0.0), peak(1.0));
+        assert!(pre > 0.15 && post > 0.15, "pre {pre}, post {post}");
+        // Without a model both orders sound the same
+        assert!((pre - post).abs() < 1e-3);
     }
 
     #[test]

@@ -162,6 +162,13 @@ impl ToneStack {
         }
     }
 
+    /// Clear the filter state, when the stack moves in the signal path
+    pub fn reset(&mut self) {
+        for band in &mut self.bands {
+            band.filter.reset();
+        }
+    }
+
     pub fn process(&mut self, buffer: &mut [f32], bass: f32, middle: f32, treble: f32) {
         let sr = self.sample_rate;
         let [b, m, t] = &mut self.bands;
