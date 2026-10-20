@@ -862,6 +862,23 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
         edit(text_edit::replace(&text, start, end, &insert))
     });
     editing.on_erase(move |text, start, end| edit(text_edit::erase(&text, start, end)));
+
+    app.global::<ChoiceSearch>().on_filter(|choices, query| {
+        model(
+            choices
+                .iter()
+                .filter(|c| matches_words(&format!("{} {}", c.title, c.subtitle), &query))
+                .collect(),
+        )
+    });
+}
+
+/// Whether `text` holds every word of `query`, ignoring case
+fn matches_words(text: &str, query: &str) -> bool {
+    let text = text.to_lowercase();
+    query
+        .split_whitespace()
+        .all(|word| text.contains(&word.to_lowercase()))
 }
 
 /// Load a preset of the preset list
@@ -1259,4 +1276,19 @@ fn main() -> Result<()> {
     drop(_audio_watch);
     drop(engine);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::matches_words;
+
+    #[test]
+    fn search_matches_every_word() {
+        assert!(matches_words(
+            "Peavey 5150 Blockletter @doubleyoud",
+            "5150 peavey"
+        ));
+        assert!(matches_words("Peavey 5150", ""));
+        assert!(!matches_words("Peavey 5150", "5150 mesa"));
+    }
 }

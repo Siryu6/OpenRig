@@ -71,6 +71,11 @@ drop the words they all start with ("Boss MT-2 - Doom Metal" shows as
 creator, license, link, gear): a block only lists the tones of its gears;
 tones without `tone.json` are listed in every block of the right format.
 
+A list of more than 8 tones or presets (impulse responses too) has a
+**Search** field at the top: it opens the on-screen keyboard and keeps the
+entries whose title or subtitle (creator, number of presets) holds every
+word typed, e.g. `5150 red`.
+
 Supported model files: `.nam` (WaveNet, LSTM, A2), RTNeural keras `.json` and
 AIDA-X `.aidax`. Free captures: [Tone3000](https://www.tone3000.com).
 

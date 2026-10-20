@@ -5,7 +5,7 @@ import {
 } from "types.slint";
 // Pages
 import { PluginRack } from "pages/rack.slint";
-import { PluginEditor } from "pages/plugin_editor.slint";
+import { ChoiceSearch, PluginEditor } from "pages/plugin_editor.slint";
 import { PluginBrowser } from "pages/plugin_browser.slint";
 import { TunerView } from "pages/tuner_view.slint";
 import { PresetManager } from "pages/preset_manager.slint";
@@ -27,7 +27,7 @@ import { PowerDialog } from "components/power_dialog.slint";
 import { PlotEvents } from "components/plot.slint";
 
 // Re-export the data types used by the Rust side
-export { Features, PlotEvents, TextEdit, TextEditing, Theme }
+export { ChoiceSearch, Features, PlotEvents, TextEdit, TextEditing, Theme }
 export { PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap }
 
 export component App inherits Window {
