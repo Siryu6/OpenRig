@@ -24,6 +24,8 @@ export struct PositionedNode {
     tint: color,         // colour chosen in the editor (when tinted)
     tinted: bool,
     t3k: bool,           // loads a TONE3000 download: shows the T3K mark
+    picture: image,      // its store picture, drawn instead of the gear
+    has-picture: bool,
 }
 
 // Where a dragged block can be dropped (layout units)
@@ -75,6 +77,8 @@ export struct PluginItem {
     kind: string,       // built-in gear ("amp", "cab"…), "" otherwise
     hint: string,       // built-in blocks: what to load in it
     color: color,       // colour of its family, as in the rack
+    picture: image,     // its store picture, once downloaded
+    has-picture: bool,
 }
 
 export struct PresetInfo {

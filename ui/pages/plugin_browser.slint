@@ -167,7 +167,14 @@ export component PluginBrowser {
                                     }
                                 }
 
-                                if plugin.kind == "": Rectangle {
+                                // Store plugins show their picture
+                                if plugin.kind == "" && plugin.has-picture: Image {
+                                    width: 56px;
+                                    source: plugin.picture;
+                                    image-fit: contain;
+                                }
+
+                                if plugin.kind == "" && !plugin.has-picture: Rectangle {
                                     width: 56px;
                                     border-radius: Theme.radius-md;
                                     background: @linear-gradient(180deg, plugin.color.brighter(0.18) 0%, plugin.color.darker(0.12) 100%);

@@ -247,6 +247,8 @@ export component PluginRack {
                             tinted: node.tinted;
                             bypassed: node.bypassed;
                             t3k: node.t3k;
+                            picture: node.picture;
+                            has-picture: node.has-picture;
                             selected: node-el.selected;
                             pressed: node-ta.pressed && idx != root.drag-index;
                         }
@@ -353,6 +355,8 @@ export component PluginRack {
                         tinted: root.dragged.tinted;
                         bypassed: root.dragged.bypassed;
                         t3k: root.dragged.t3k;
+                        picture: root.dragged.picture;
+                        has-picture: root.dragged.has-picture;
                         selected: true;
                     }
                     if root.drag-index >= 0 && root.dragged.is-split: Rectangle {

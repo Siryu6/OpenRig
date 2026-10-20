@@ -5,7 +5,8 @@ import { T3kMark } from "tone3000_brand.slint";
 // glance: an amp head is a flat box with its control panel, a combo adds a
 // grille, a cabinet shows its speakers, a pedal has its footswitch, a space
 // is a rounded box, a send or a return is a jack plate. Other blocks are
-// plain cards.
+// plain cards. A plugin whose store picture shows its own face (a pedal, an
+// amp) is drawn as that picture, framed in its colour.
 // Faces are dark (black tolex, grilles, graphite enclosures): the block's
 // colour (its family's, or the user's) is only its frame and trim, plus a
 // faint glow while it plays. A bypassed block loses its colour and its LED.
@@ -18,11 +19,18 @@ export component BlockShape {
     in property <bool> selected: false;
     in property <bool> pressed: false;
     in property <bool> t3k: false;      // loads a TONE3000 tone: carries its mark
+    in property <image> picture;        // the plugin's own face, from the store
+    in property <bool> has-picture: false;
+
+    // Picture: fitted in 84 x 60, wide strips cropped to 36 high
+    private property <float> aspect: root.picture.width / max(1, root.picture.height);
 
     // Size of the gear (the rack keeps the same cells for every kind)
-    out property <length> shape-width: root.kind == "amp" ? 90px : root.kind == "combo" ? 82px
+    out property <length> shape-width: root.has-picture ? min(84px, 60px * root.aspect)
+        : root.kind == "amp" ? 90px : root.kind == "combo" ? 82px
         : root.kind == "cab" ? 68px : root.kind == "pedal" ? 62px : root.jack ? 66px : 84px;
-    out property <length> shape-height: root.kind == "amp" ? 46px : root.kind == "combo" ? 58px
+    out property <length> shape-height: root.has-picture ? max(36px, min(60px, 84px / root.aspect))
+        : root.kind == "amp" ? 46px : root.kind == "combo" ? 58px
         : root.kind == "cab" ? 58px : root.kind == "pedal" ? 60px : root.kind == "space" ? 46px
         : root.jack ? 40px : 52px;
 
@@ -166,6 +174,7 @@ export component BlockShape {
             y: root.has-panel ? root.panel-h : root.kind == "pedal" ? 15px : 3px;
             width: parent.width - 6px - (root.jack ? root.socket + 5px : 0px);
             height: parent.height - self.y - (root.kind == "pedal" ? 17px : 2px);
+            visible: !root.has-picture;
             text: root.name;
             color: root.bypassed ? Theme.text-muted : #ffffff;
             font-size: root.kind == "pedal" || root.kind == "cab" || root.jack ? 10px : Theme.font-caption;
@@ -174,6 +183,23 @@ export component BlockShape {
             vertical-alignment: center;
             wrap: word-wrap;
             overflow: elide;
+        }
+
+        if root.has-picture: Image {
+            width: parent.width;
+            height: parent.height;
+            source: root.picture;
+            image-fit: cover;
+        }
+        // Bypassed: faded; pressed: lit
+        if root.has-picture && (root.bypassed || root.pressed): Rectangle {
+            background: root.bypassed ? #000000a0 : #ffffff1c;
+        }
+        // Frame over the picture
+        if root.has-picture: Rectangle {
+            border-radius: root.radius;
+            border-width: 2px;
+            border-color: root.trim;
         }
     }
 
@@ -196,8 +222,8 @@ export component BlockShape {
         background: (root.kind == "pedal" ? Theme.led-red : Theme.led-green).with-alpha(0.35);
     }
     led := Rectangle {
-        x: root.kind == "pedal" ? (parent.width - self.width) / 2 : parent.width - 11px;
-        y: root.kind == "pedal" ? 8px : root.has-panel ? 4px : 6px;
+        x: root.has-picture ? parent.width - 9px : root.kind == "pedal" ? (parent.width - self.width) / 2 : parent.width - 11px;
+        y: root.has-picture ? 4px : root.kind == "pedal" ? 8px : root.has-panel ? 4px : 6px;
         width: 5px;
         height: 5px;
         border-radius: 2.5px;
