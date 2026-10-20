@@ -5,8 +5,8 @@
 //! again, so the new plugin can be added to the chain at once.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use slint::{Color, ComponentHandle, Image, Weak};
@@ -49,6 +49,8 @@ struct Page {
     /// Last error per entry
     notes: HashMap<String, String>,
     pictures: HashMap<String, Image>,
+    /// Pictures being downloaded
+    loading: HashSet<String>,
     query: String,
     family: String,
     busy: bool,
@@ -63,6 +65,20 @@ thread_local! {
 
 fn with_page<R>(f: impl FnOnce(&mut Page) -> R) -> Option<R> {
     PAGE.with(|p| p.borrow_mut().as_mut().map(f))
+}
+
+/// Pictures downloaded at once
+const PICTURE_WORKERS: usize = 4;
+
+/// The store picture of plugin `uri`, once downloaded, and whether it shows
+/// the gear's face (so may stand for its block in the rack)
+pub fn picture_for(uri: &str) -> Option<(Image, bool)> {
+    with_page(|p| {
+        let (_, plugin) = p.index.as_ref()?.entries().find(|(_, e)| e.uri == uri)?;
+        let image = p.pictures.get(&plugin.id)?.clone();
+        Some((image, plugin.media.picture.as_ref()?.block_face))
+    })
+    .flatten()
 }
 
 /// Run on the UI thread
@@ -251,6 +267,7 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
         jobs: HashMap::new(),
         notes: HashMap::new(),
         pictures: HashMap::new(),
+        loading: HashSet::new(),
         query: String::new(),
         family: "All".into(),
         busy: false,
@@ -375,17 +392,25 @@ fn refresh(app: &App, state: &Arc<AppState>, rescan: bool) {
     });
 }
 
-/// Pictures of the entries: from the media cache, else downloaded on a
-/// worker thread and shown as they arrive
+/// Pictures of the entries: from the media cache, else downloaded by a few
+/// worker threads and shown as they arrive. Plugins already on the board
+/// come first: their picture also shows in the rack and the Add effect page.
 fn load_pictures(app: &App, state: &Arc<AppState>) {
+    let scanner = state.lv2_host.scanner();
     let Some((store, wanted)) = with_page(|p| {
-        let wanted: Vec<Plugin> = p
+        let mut wanted: Vec<(Plugin, bool)> = p
             .index
             .iter()
             .flat_map(|i| i.entries())
-            .filter(|(_, e)| e.media.picture.is_some() && !p.pictures.contains_key(&e.id))
-            .map(|(_, e)| e.clone())
+            .filter(|(_, e)| {
+                e.media.picture.is_some()
+                    && !p.pictures.contains_key(&e.id)
+                    && !p.loading.contains(&e.id)
+            })
+            .map(|(_, e)| (e.clone(), scanner.find_by_uri(&e.uri).is_some()))
             .collect();
+        wanted.sort_by_key(|(_, here)| !here);
+        p.loading.extend(wanted.iter().map(|(e, _)| e.id.clone()));
         (p.store.clone(), wanted)
     }) else {
         return;
@@ -393,23 +418,33 @@ fn load_pictures(app: &App, state: &Arc<AppState>) {
     if wanted.is_empty() {
         return;
     }
-    let weak = app.as_weak();
-    let st = state.clone();
-    std::thread::spawn(move || {
-        for plugin in wanted {
-            let Some(path) = store.picture(&plugin) else {
-                continue;
+    let workers = wanted.len().min(PICTURE_WORKERS);
+    let queue = Arc::new(Mutex::new(VecDeque::from(wanted)));
+    for _ in 0..workers {
+        let (queue, store, weak, st) = (queue.clone(), store.clone(), app.as_weak(), state.clone());
+        std::thread::spawn(move || loop {
+            let Some((plugin, here)) = queue.lock().unwrap().pop_front() else {
+                return;
             };
+            let path = store.picture(&plugin);
             let st = st.clone();
-            ui(&weak, move |app| match Image::load_from_path(&path) {
-                Ok(image) => {
-                    with_page(|p| p.pictures.insert(plugin.id.clone(), image));
-                    redraw(app, &st);
+            ui(&weak, move |app| {
+                with_page(|p| p.loading.remove(&plugin.id));
+                let Some(path) = path else { return };
+                match Image::load_from_path(&path) {
+                    Ok(image) => {
+                        with_page(|p| p.pictures.insert(plugin.id.clone(), image));
+                        redraw(app, &st);
+                        if here {
+                            crate::set_available_plugins(app, &st);
+                            crate::refresh_chain(app, &st);
+                        }
+                    }
+                    Err(_) => warn!("Store picture unreadable: {}", path.display()),
                 }
-                Err(_) => warn!("Store picture unreadable: {}", path.display()),
             });
-        }
-    });
+        });
+    }
 }
 
 /// Install (or update) entry `id`, on a worker thread

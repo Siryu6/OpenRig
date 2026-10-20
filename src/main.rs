@@ -122,37 +122,47 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
 
     let nodes: Vec<PositionedNode> = nodes
         .into_iter()
-        .map(|n| PositionedNode {
-            instance_id: n.instance_id as i32,
-            x: n.x,
-            y: n.y,
-            width: n.width,
-            height: n.height,
-            name: if n.is_split {
-                n.name
+        .map(|n| {
+            // Only a picture of the gear's face stands for the block
+            let face = if n.is_split {
+                None
             } else {
-                block_name(state, &chain, n.instance_id, &n.uri)
-            }
-            .into(),
-            is_split: n.is_split,
-            split_type: n.split_type.into(),
-            bypassed: n.bypassed,
-            ab_select_a: n.ab_select_a,
-            mix_ratio: n.mix_ratio,
-            pan_a: n.pan[0],
-            pan_b: n.pan[1],
-            kind: scanner::shape(&n.uri).into(),
-            tint: rgb(block_tint(state, &chain, n.instance_id, &n.uri)),
-            tinted: chain
-                .colors
-                .get(&n.instance_id)
-                .is_some_and(|c| views::block_color(c).is_some()),
-            t3k: !n.is_split
-                && chain
-                    .files
+                store_picture(&n.uri).filter(|(_, face)| *face)
+            };
+            PositionedNode {
+                instance_id: n.instance_id as i32,
+                x: n.x,
+                y: n.y,
+                width: n.width,
+                height: n.height,
+                name: if n.is_split {
+                    n.name
+                } else {
+                    block_name(state, &chain, n.instance_id, &n.uri)
+                }
+                .into(),
+                is_split: n.is_split,
+                split_type: n.split_type.into(),
+                bypassed: n.bypassed,
+                ab_select_a: n.ab_select_a,
+                mix_ratio: n.mix_ratio,
+                pan_a: n.pan[0],
+                pan_b: n.pan[1],
+                kind: scanner::shape(&n.uri).into(),
+                tint: rgb(block_tint(state, &chain, n.instance_id, &n.uri)),
+                tinted: chain
+                    .colors
                     .get(&n.instance_id)
-                    .and_then(|f| state.model_pack(&n.uri, f))
-                    .is_some_and(|p| p.tone3000),
+                    .is_some_and(|c| views::block_color(c).is_some()),
+                t3k: !n.is_split
+                    && chain
+                        .files
+                        .get(&n.instance_id)
+                        .and_then(|f| state.model_pack(&n.uri, f))
+                        .is_some_and(|p| p.tone3000),
+                has_picture: face.is_some(),
+                picture: face.map(|(p, _)| p).unwrap_or_default(),
+            }
         })
         .collect();
     let connectors: Vec<Connector> = connectors
@@ -233,18 +243,35 @@ pub(crate) fn block_uri(chain: &EffectChainState, instance_id: usize) -> Option<
     }
 }
 
+/// The store picture of plugin `uri`, once downloaded, and whether it
+/// shows the gear's face (so may stand for its block)
+fn store_picture(uri: &str) -> Option<(slint::Image, bool)> {
+    #[cfg(feature = "store")]
+    return catalog_ui::picture_for(uri);
+    #[cfg(not(feature = "store"))]
+    {
+        let _ = uri;
+        None
+    }
+}
+
 /// The plugins of the Add effect page, from the latest LV2 scan
 pub(crate) fn set_available_plugins(app: &App, state: &AppState) {
     let plugins: Vec<PluginItem> = views::plugin_views(state)
         .into_iter()
-        .map(|p| PluginItem {
-            uri: p.uri.into(),
-            name: p.name.into(),
-            author: p.author.into(),
-            category: p.category.into(),
-            kind: p.kind.into(),
-            hint: p.hint.into(),
-            color: rgb(p.color),
+        .map(|p| {
+            let picture = store_picture(&p.uri).map(|(p, _)| p);
+            PluginItem {
+                has_picture: picture.is_some(),
+                picture: picture.unwrap_or_default(),
+                uri: p.uri.into(),
+                name: p.name.into(),
+                author: p.author.into(),
+                category: p.category.into(),
+                kind: p.kind.into(),
+                hint: p.hint.into(),
+                color: rgb(p.color),
+            }
         })
         .collect();
     app.set_available_plugins(model(plugins));

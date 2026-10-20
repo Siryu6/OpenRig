@@ -14,7 +14,9 @@ What OpenRig does, in more technical detail than the
   signed index (minisign, anti-rollback serial, expiry), with the archive
   checked by size and sha256 and unpacked safely into `<data>/lv2`; the
   plugins are scanned again without restarting. Bundles copied by hand into
-  that folder are always loaded and never touched by the store. See
+  that folder are always loaded and never touched by the store. The
+  picture of a catalog plugin also shows on the Add effect page, and stands
+  for the block in the rack when it is the gear's face. See
   [STORE.md](STORE.md).
 - **Plugin views**: above an LV2 block's controls, the editor draws an EQ's
   response, a compressor's level curve or a delay's echoes, with points to

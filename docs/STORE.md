@@ -93,6 +93,19 @@ settings (by port symbol), and get them back when it is installed again.
 The libraries of earlier scans are kept loaded until the app exits, so a
 running block never loses its code.
 
+## Pictures
+
+An entry's picture comes from the plugin's own sources, with its credit and
+license in the index. It is downloaded on first use, checked against the
+sha256 of the index and kept in `<data>/store/media`, a few at a time, the
+plugins already on the board first. Once downloaded, it also shows:
+
+- on the Add effect page, for every plugin the catalog lists (even one
+  installed by hand or by the system);
+- in the rack, instead of the drawn block, when the picture is the gear's
+  face (`block_face` in the index: a pedal, an amp). It is fitted in the
+  block's cell, framed in the block's colour, and faded when bypassed.
+
 ## Plugins copied by hand
 
 Copy the bundle into `<data>/lv2`, then press the refresh button of the
