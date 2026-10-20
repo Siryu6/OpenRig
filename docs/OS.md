@@ -164,7 +164,8 @@ in the SVG); the build does not render it again. Any PNG works. Before Linux dri
 ## SSH and logs
 
 Put your public keys in a file named `authorized_keys` on the FAT partition
-(copied at each boot; removing the file revokes them), then:
+(copied at each boot; removing the file revokes them), then connect to the
+address shown in Settings → Wi-Fi (Ethernet included):
 
 ```bash
 ssh root@192.168.1.42         # the address your router gave it
@@ -354,5 +355,5 @@ kernel and give the user real-time limits (`@audio - rtprio 95`,
   SSH. Writing a whole image to the card replaces the partition table, so
   `/data` is recreated empty: back up `/data/pedalboard` first.
 - AMD graphics on x86_64 (needs the amdgpu firmware and driver), Wi-Fi
-  hotspot for first set-up, the IP address in Settings, `.local` names
+  hotspot for first set-up, `.local` names
   (mDNS).

@@ -43,6 +43,35 @@ pub enum WifiError {
 
 pub type Result<T> = std::result::Result<T, WifiError>;
 
+/// An IPv4 address of a connected Ethernet or Wi-Fi device, to reach the
+/// pedal over SSH or from a browser
+#[derive(Debug, Clone, PartialEq)]
+pub struct Address {
+    pub device: String,
+    /// "Ethernet" or "Wi-Fi"
+    pub kind: &'static str,
+    /// Without the prefix length
+    pub ip: String,
+}
+
+/// IPv4 addresses of the connected Ethernet and Wi-Fi devices, through
+/// NetworkManager; empty where it is missing. Loopback, VPN and other
+/// virtual devices are left out.
+pub fn addresses() -> Vec<Address> {
+    if !cfg!(target_os = "linux") {
+        return Vec::new();
+    }
+    nmcli(&[
+        "-t",
+        "-f",
+        "GENERAL.DEVICE,GENERAL.TYPE,IP4.ADDRESS",
+        "device",
+        "show",
+    ])
+    .map(|out| parse_addresses(&out))
+    .unwrap_or_default()
+}
+
 /// The Wi-Fi device, driven through NetworkManager
 #[derive(Debug, Clone)]
 pub struct Wifi {
@@ -258,6 +287,45 @@ fn parse_networks(list: &str, saved: &[String]) -> Vec<Network> {
     networks
 }
 
+/// Addresses from `nmcli -t -f GENERAL.DEVICE,GENERAL.TYPE,IP4.ADDRESS device
+/// show`: one "KEY:value" line per field, a blank line between devices
+fn parse_addresses(show: &str) -> Vec<Address> {
+    let mut addresses = Vec::new();
+    let mut device = "";
+    let mut kind = None;
+    for line in show.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        match key {
+            "GENERAL.DEVICE" => {
+                device = value;
+                kind = None;
+            }
+            "GENERAL.TYPE" => {
+                kind = match value {
+                    "ethernet" => Some("Ethernet"),
+                    "wifi" => Some("Wi-Fi"),
+                    _ => None,
+                }
+            }
+            // IP4.ADDRESS[1], IP4.ADDRESS[2]…
+            key if key.starts_with("IP4.ADDRESS") => {
+                let ip = value.split('/').next().unwrap_or("").trim();
+                if let (Some(kind), false) = (kind, ip.is_empty()) {
+                    addresses.push(Address {
+                        device: device.to_string(),
+                        kind,
+                        ip: ip.to_string(),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    addresses
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,6 +361,41 @@ mod tests {
         assert!(networks[0].connected && networks[0].signal == 70);
         assert!(!networks[1].secured);
         assert!(networks[2].saved && networks[2].secured);
+    }
+
+    #[test]
+    fn addresses_of_ethernet_and_wifi_only() {
+        let show = "GENERAL.DEVICE:eth0\n\
+                    GENERAL.TYPE:ethernet\n\
+                    IP4.ADDRESS[1]:192.168.1.50/24\n\
+                    \n\
+                    GENERAL.DEVICE:wlan0\n\
+                    GENERAL.TYPE:wifi\n\
+                    IP4.ADDRESS[1]:192.168.1.42/24\n\
+                    IP4.ADDRESS[2]:10.0.0.7/8\n\
+                    \n\
+                    GENERAL.DEVICE:tailscale0\n\
+                    GENERAL.TYPE:tun\n\
+                    IP4.ADDRESS[1]:100.64.0.20/32\n\
+                    \n\
+                    GENERAL.DEVICE:lo\n\
+                    GENERAL.TYPE:loopback\n\
+                    IP4.ADDRESS[1]:127.0.0.1/8\n\
+                    \n\
+                    GENERAL.DEVICE:eth1\n\
+                    GENERAL.TYPE:ethernet\n";
+        let found: Vec<_> = parse_addresses(show)
+            .into_iter()
+            .map(|a| format!("{} {} {}", a.device, a.kind, a.ip))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                "eth0 Ethernet 192.168.1.50",
+                "wlan0 Wi-Fi 192.168.1.42",
+                "wlan0 Wi-Fi 10.0.0.7"
+            ]
+        );
     }
 
     #[test]
