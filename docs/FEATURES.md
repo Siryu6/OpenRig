@@ -29,7 +29,7 @@ What OpenRig does, in more technical detail than the
   `.aidax` models) through [NeuralAudio](https://github.com/mikeoliphant/NeuralAudio).
   The editor lists tones (a folder of captures, e.g. one TONE3000 tone)
   rather than files: choosing a tone loads its first preset, and a drop-down
-  switches between its presets. Each block only lists the tones of its
+  switches between its presets. Long lists have a search field. Each block only lists the tones of its
   gear (Amp: heads; Amp + Cab: combos and amps with their cab;
   Pedal: pedals, outboard, experimental). Each has a noise gate (as in the NAM plugin: it listens to
   the clean input and gates the model output); the amp blocks add a bass /

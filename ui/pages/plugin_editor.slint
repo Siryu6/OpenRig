@@ -6,8 +6,14 @@ import { ScopeGraph } from "../components/scope_graph.slint";
 import { Button, Badge, Card, EmptyState, Icon, Knob, Stepper, Toggle } from "../components/controls.slint";
 import { Features } from "../features.slint";
 import { T3kBrand, T3kMark, T3kPicture } from "../components/tone3000_brand.slint";
+import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 
 // Formats a parameter value for display ("12.5 dB", "40%", "3")
+// Search in a long list of models (Rust: every word in the title or subtitle)
+export global ChoiceSearch {
+    pure callback filter(choices: [ModelChoice], query: string) -> [ModelChoice];
+}
+
 export global ParamFormat {
     pure public function format(v: float, kind: string, unit: string) -> string {
         if unit == "Hz" && v >= 1000 {
@@ -60,7 +66,13 @@ component ChoiceSheet inherits Rectangle {
     callback close();
 
     private property <length> row-height: root.pictures ? 60px : 56px;
-    private property <int> offset: root.show-none ? 1 : 0;
+    // A search field above long lists (issue #21)
+    private property <bool> searchable: root.choices.length > 8;
+    private property <string> query: "";
+    private property <bool> searching: false;
+    private property <[ModelChoice]> shown: root.query == "" ? root.choices : ChoiceSearch.filter(root.choices, root.query);
+    private property <bool> none-shown: root.show-none && root.query == "";
+    private property <int> offset: root.none-shown ? 1 : 0;
 
     background: Theme.scrim;
 
@@ -74,7 +86,7 @@ component ChoiceSheet inherits Rectangle {
         x: (parent.width - self.width) / 2;
         y: Theme.space-lg;
         width: 560px;
-        height: parent.height - 2 * Theme.space-lg;
+        height: root.searching ? parent.height - keyboard.height - 2 * Theme.space-lg : parent.height - 2 * Theme.space-lg;
         background: Theme.surface-raised;
 
         TouchArea { }
@@ -83,7 +95,7 @@ component ChoiceSheet inherits Rectangle {
             padding: Theme.space-lg;
             spacing: Theme.space-md;
 
-            HorizontalLayout {
+            if !root.searching: HorizontalLayout {
                 Text {
                     horizontal-stretch: 1;
                     text: root.title;
@@ -102,6 +114,73 @@ component ChoiceSheet inherits Rectangle {
                 }
             }
 
+            if root.searchable: HorizontalLayout {
+                spacing: Theme.space-sm;
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: Theme.touch-target;
+                    border-radius: Theme.radius-md;
+                    background: Theme.display;
+                    border-width: 1px;
+                    border-color: root.searching ? Theme.accent : Theme.border;
+                    TouchArea {
+                        clicked => {
+                            root.searching = true;
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: Theme.space-md;
+                        padding-right: Theme.space-sm;
+                        spacing: Theme.space-sm;
+                        VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                name: "search";
+                                size: 18px;
+                                color: Theme.text-muted;
+                            }
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: root.query != "" ? root.query : "Search";
+                            color: root.query != "" ? Theme.text-primary : Theme.text-muted;
+                            font-size: Theme.font-body;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        if root.query != "": Rectangle {
+                            width: 36px;
+                            Icon {
+                                name: "close";
+                                size: 16px;
+                                color: Theme.text-secondary;
+                            }
+                            TouchArea {
+                                clicked => {
+                                    root.query = "";
+                                }
+                            }
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Badge {
+                        text: root.query == "" ? root.choices.length : root.shown.length + " OF " + root.choices.length;
+                    }
+                }
+            }
+
+            if root.query != "" && root.shown.length == 0 && !root.searching: Text {
+                vertical-stretch: 1;
+                text: "No match for \"" + root.query + "\"";
+                color: Theme.text-secondary;
+                font-size: Theme.font-body;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+
             if root.choices.length == 0 && root.empty-text != "": Text {
                 vertical-stretch: 1;
                 text: root.empty-text;
@@ -112,12 +191,12 @@ component ChoiceSheet inherits Rectangle {
                 wrap: word-wrap;
             }
 
-            if root.choices.length > 0 || root.empty-text == "": Flickable {
+            if (root.choices.length > 0 || root.empty-text == "") && !root.searching && (root.shown.length > 0 || root.query == ""): Flickable {
                 vertical-stretch: 1;
-                viewport-height: (root.choices.length + root.offset) * root.row-height;
+                viewport-height: (root.shown.length + root.offset) * root.row-height;
                 interactive: self.viewport-height > self.height;
 
-                if root.show-none: Rectangle {
+                if root.none-shown: Rectangle {
                     y: 0;
                     height: root.row-height - 4px;
                     border-radius: Theme.radius-md;
@@ -136,7 +215,7 @@ component ChoiceSheet inherits Rectangle {
                     }
                 }
 
-                for choice[k] in root.choices: Rectangle {
+                for choice[k] in root.shown: Rectangle {
                     y: (k + root.offset) * root.row-height;
                     height: root.row-height - 4px;
                     border-radius: Theme.radius-md;
@@ -188,6 +267,24 @@ component ChoiceSheet inherits Rectangle {
                     }
                 }
             }
+        }
+    }
+
+    keyboard := VirtualKeyboard {
+        y: parent.height - self.height;
+        visible: root.searching;
+        current-text: root.query;
+        placeholder: "Search";
+        submit-label: "Done";
+        text-changed(t) => {
+            root.query = t;
+        }
+        submit => {
+            root.searching = false;
+        }
+        cancel => {
+            root.query = "";
+            root.searching = false;
         }
     }
 }
