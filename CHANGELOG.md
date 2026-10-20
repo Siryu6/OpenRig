@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/Siryu6/OpenRig/compare/v0.4.0...v0.5.0) - 2026-10-20
+
+### Added
+
+- *(editor)* search in long lists of tones and presets ([#21](https://github.com/Siryu6/OpenRig/pull/21))
+- *(nam)* EQ position Pre / Post on the amp blocks ([#23](https://github.com/Siryu6/OpenRig/pull/23))
+- *(settings)* show the device IP addresses ([#20](https://github.com/Siryu6/OpenRig/pull/20))
+
+### Fixed
+
+- *(audio)* log the interface ports and the JACK connections ([#19](https://github.com/Siryu6/OpenRig/pull/19))
+
+### Other
+
+- Merge pull request #28 from Siryu6/feat/nam-eq-position
+- Merge pull request #29 from Siryu6/fix/jack-connect-logging
+- Merge pull request #30 from Siryu6/feat/choice-search
+
 ## [0.4.0](https://github.com/Siryu6/OpenRig/compare/v0.3.0...v0.4.0) - 2026-10-20
 
 ### Added
