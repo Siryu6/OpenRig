@@ -88,6 +88,7 @@ models can be copied to another pedalboard together.
 | Threshold | -100…0 dB (-80) | Level under which the gate closes |
 | Bass, Middle, Treble | 0…10 (5 = flat) | Tone stack, **Amp and Amp + Cab only** |
 | Quality | Full / Light (Full) | Size of the model used, **only for files holding several sizes** |
+| EQ position | Pre / Post (Post) | Tone stack before or after the model, **Amp and Amp + Cab only** |
 
 The gate and the tone stack work like the ones of the NAM plugin, so the
 same settings sound the same:
@@ -97,12 +98,19 @@ same settings sound the same:
   Below the threshold the gain drops by 0.1 × (dB below)², opens in 5 ms,
   holds 10 ms and closes in 50 ms. It is off by default: one gate, on the
   first high-gain block, is usually enough.
-- The tone stack is three filters after the model: low shelf at 150 Hz
+- The tone stack is three filters after the model (**Post**, as in the NAM
+  plugin): low shelf at 150 Hz
   (±20 dB), peak at 425 Hz (±15 dB, narrower when cutting) and high shelf
   at 1.8 kHz (±10 dB). A centred knob costs nothing. Pedals have no tone
   stack: their capture already includes their tone knob.
+- **EQ position: Pre** moves the tone stack before the model, to shape
+  what hits the amp, like an EQ pedal in front of it: cutting the bass
+  tightens a high-gain capture, boosting the mids pushes it harder. The
+  gate still listens to the input before the EQ. Presets saved before this
+  control keep Post.
 
-Order in the block: input level, model, gate, tone stack, output level.
+Order in the block: input level, model, gate, tone stack, output level
+(Post), or input level, tone stack, model, gate, output level (Pre).
 
 ### Quality
 

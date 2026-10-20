@@ -443,6 +443,8 @@ pub fn uses_file(uri: &str) -> bool {
 /// Last control of the neural blocks: full model or a lighter size, for
 /// model files that hold several (see `nam::file_has_quality`)
 pub const NAM_QUALITY: &str = "Quality";
+/// Tone stack before (0) or after (1, the default) the model, amp blocks only
+pub const NAM_EQ_POSITION: &str = "EQ position";
 
 /// Metadata kept next to downloaded models, never a model itself
 pub const TONE_INFO_FILE: &str = "tone.json";
@@ -519,6 +521,10 @@ pub fn builtin_plugins() -> Vec<PluginInfo> {
                     ]);
                 }
                 controls.push((NAM_QUALITY, QUALITY_LIGHT, QUALITY_FULL, QUALITY_FULL));
+                // After Quality: presets read the controls by position too
+                if block.tone_stack {
+                    controls.push((NAM_EQ_POSITION, 0.0, 1.0, 1.0));
+                }
                 let mut nam = demo_plugin(
                     block.uri,
                     block.name,
@@ -536,12 +542,15 @@ pub fn builtin_plugins() -> Vec<PluginInfo> {
                 }
                 nam.ports[4].toggled = true;
                 nam.ports[5].toggled = true;
-                let quality = nam.ports.last_mut().expect("quality port");
-                quality.enumeration = true;
-                quality.scale_points = vec![
-                    ("Full".to_string(), QUALITY_FULL),
-                    ("Light".to_string(), QUALITY_LIGHT),
-                ];
+                for port in &mut nam.ports {
+                    let choices = match port.name.as_str() {
+                        NAM_QUALITY => [("Full", QUALITY_FULL), ("Light", QUALITY_LIGHT)],
+                        NAM_EQ_POSITION => [("Pre", 0.0), ("Post", 1.0)],
+                        _ => continue,
+                    };
+                    port.enumeration = true;
+                    port.scale_points = choices.map(|(l, v)| (l.to_string(), v)).to_vec();
+                }
                 nam
             }
             #[cfg(not(feature = "nam"))]
@@ -800,7 +809,8 @@ mod tests {
                 "bass",
                 "middle",
                 "treble",
-                "quality"
+                "quality",
+                "eq_position"
             ]
         );
     }

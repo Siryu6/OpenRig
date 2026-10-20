@@ -33,7 +33,8 @@ What OpenRig does, in more technical detail than the
   gear (Amp: heads; Amp + Cab: combos and amps with their cab;
   Pedal: pedals, outboard, experimental). Each has a noise gate (as in the NAM plugin: it listens to
   the clean input and gates the model output); the amp blocks add a bass /
-  middle / treble tone stack, and packed A2 captures a Full / Light quality
+  middle / treble tone stack (after the model, or before it with EQ
+  position Pre), and packed A2 captures a Full / Light quality
   (Light is about four times cheaper). Saved in presets. See [NEURAL_MODELS.md](NEURAL_MODELS.md).
 - **Cabinet and Space blocks**: impulse response loaders (`.wav`) for
   cabinets and rooms, with level, dry/wet mix (35 % by default on Space),
