@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/Siryu6/OpenRig/compare/v0.3.0...v0.4.0) - 2026-10-20
+
+### Added
+
+- *(store)* show plugin pictures in the rack and the Add effect page
+- *(editor)* plugin views inferred from LV2 ports
+- *(store)* install LV2 plugins from the signed catalog
+- *(presets)* keep LV2 values by port symbol
+- *(ui)* light theme
+
+### Fixed
+
+- *(editor)* clippy some_filter on the ratio handle
+
+### Other
+
+- community health files
+
 ## [0.3.0](https://github.com/Siryu6/OpenRig/compare/v0.2.0...v0.3.0) - 2026-10-18
 
 ### Added
