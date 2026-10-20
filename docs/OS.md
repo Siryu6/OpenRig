@@ -195,6 +195,18 @@ to the user: `chown -R pedalboard:pedalboard /data/pedalboard`.
 - **No sound.** `cat /proc/asound/cards` lists the interfaces the kernel
   sees; set `audio_device` in `pedalboard.txt` to one of the names in
   brackets. `tail -f /var/log/messages` shows why jackd does not start.
+- **An output stays silent while its meter moves** (multi-channel
+  interfaces and HATs). At start the app logs the interface ports it sees
+  and what it connected (`grep -E "Interface|Connected|connect" /var/log/messages`):
+  if `pedalboard:out_3 → system:playback_3` is there, the signal leaves
+  OpenRig and the silence is past JACK. `jack_lsp -c` shows the live
+  connections. Many multi-channel cards and HATs have mixer controls per
+  channel that start muted or at zero: check them with
+  `amixer -c <card> contents` (card number from `cat /proc/asound/cards`).
+  To test the card without OpenRig, free it from jackd and play a test on
+  every channel, in one line: `killall jackd; speaker-test -D hw:<card>
+  -c 8 -t wav`. Init starts jackd again 2 s later; it waits for the card
+  until the test ends (Ctrl+C).
 
 ## Updates
 

@@ -170,14 +170,37 @@ fn physical_ports(client: &Client) -> (Vec<String>, Vec<String>) {
 /// Connect input n to the interface's input n and output n to its output n.
 /// Can be disabled with PEDALBOARD_NO_AUTOCONNECT=1.
 fn connect_system_ports(client: &Client, name: &str, captures: &[String], playbacks: &[String]) {
+    // Which interface port each input and output is wired to, to tell a
+    // routing problem from a silent output of the interface (issue #19)
+    info!("Interface inputs: {}", list(captures));
+    info!("Interface outputs: {}", list(playbacks));
     if std::env::var_os("PEDALBOARD_NO_AUTOCONNECT").is_some() {
+        info!("PEDALBOARD_NO_AUTOCONNECT set: ports left unconnected");
         return;
     }
+    if captures.len().max(playbacks.len()) > MAX_PORTS {
+        warn!("Only the first {MAX_PORTS} inputs and outputs of the interface are used");
+    }
+    let mut connected = Vec::new();
+    let mut connect =
+        |source: &str, destination: &str| match client.connect_ports_by_name(source, destination) {
+            Ok(()) => connected.push(format!("{source} → {destination}")),
+            Err(e) => warn!("Cannot connect {source} to {destination}: {e}"),
+        };
     for (i, capture) in captures.iter().take(MAX_PORTS).enumerate() {
-        let _ = client.connect_ports_by_name(capture, &format!("{name}:in_{}", i + 1));
+        connect(capture, &format!("{name}:in_{}", i + 1));
     }
     for (i, playback) in playbacks.iter().take(MAX_PORTS).enumerate() {
-        let _ = client.connect_ports_by_name(&format!("{name}:out_{}", i + 1), playback);
+        connect(&format!("{name}:out_{}", i + 1), playback);
+    }
+    info!("Connected: {}", list(&connected));
+}
+
+fn list(items: &[String]) -> String {
+    if items.is_empty() {
+        "none".to_string()
+    } else {
+        items.join(", ")
     }
 }
 
