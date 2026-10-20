@@ -3,11 +3,12 @@
 
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
+use std::time::Duration;
 
 use slint::{ComponentHandle, Weak};
 use tracing::{info, warn};
 
-use pedalboard::wifi::{Network, Wifi, WifiError};
+use pedalboard::wifi::{self, Network, Wifi, WifiError};
 
 use crate::{model, App, WifiNetwork};
 
@@ -58,6 +59,8 @@ pub fn setup(app: &App) {
 fn worker(rx: Receiver<Command>, app: Weak<App>) {
     let mut wifi: Option<Wifi> = None;
     for command in rx {
+        // Ethernet counts too: published even without a Wi-Fi adapter
+        publish_addresses(&app);
         // Detected on use: an adapter may be plugged in later
         if wifi.is_none() {
             match Wifi::detect() {
@@ -98,6 +101,9 @@ fn worker(rx: Receiver<Command>, app: Weak<App>) {
                 });
                 let result = wifi.connect(&ssid, password.as_deref());
                 ui(&app, |app| app.set_wifi_busy_ssid("".into()));
+                if result.is_ok() {
+                    publish_addresses_later(&app);
+                }
                 result.map_err(|e| match e {
                     WifiError::WrongPassword => {
                         WifiError::Failed(format!("Wrong password for {ssid}."))
@@ -116,7 +122,31 @@ fn worker(rx: Receiver<Command>, app: Weak<App>) {
             }
         };
         refresh(wifi, &app, rescan, message);
+        publish_addresses(&app);
     }
+}
+
+/// "192.168.1.42 (Wi-Fi) · 192.168.1.50 (Ethernet)", or "" when offline
+fn publish_addresses(app: &Weak<App>) {
+    let text = wifi::addresses()
+        .iter()
+        .map(|a| format!("{} ({})", a.ip, a.kind))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    ui(app, move |app| app.set_wifi_addresses(text.into()));
+}
+
+/// DHCP hands out the address a few seconds after joining a network
+fn publish_addresses_later(app: &Weak<App>) {
+    let app = app.clone();
+    let _ = thread::Builder::new()
+        .name("wifi-address".into())
+        .spawn(move || {
+            for _ in 0..3 {
+                thread::sleep(Duration::from_secs(3));
+                publish_addresses(&app);
+            }
+        });
 }
 
 /// Publish the radio state and the networks; a rescan shows the cached list first

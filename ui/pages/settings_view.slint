@@ -50,6 +50,7 @@ export component SettingsView inherits Rectangle {
     in property <bool> wifi-scanning: false;
     in property <string> wifi-busy-ssid: "";        // being joined
     in property <string> wifi-message: "";          // last error
+    in property <string> wifi-addresses: "";        // IPv4 of Ethernet / Wi-Fi, "" offline
 
     callback wifi-refresh(bool);                     // rescan
     callback wifi-set-enabled(bool);
@@ -586,6 +587,25 @@ export component SettingsView inherits Rectangle {
                         }
                     }
 
+                    // To reach the pedal over SSH (issue #20)
+                    if root.wifi-addresses != "": HorizontalLayout {
+                        spacing: Theme.space-sm;
+                        Text {
+                            horizontal-stretch: 0;
+                            text: "IP address";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: root.wifi-addresses;
+                            color: Theme.text-primary;
+                            font-size: Theme.font-small;
+                            vertical-alignment: center;
+                            wrap: word-wrap;
+                        }
+                    }
                     if root.wifi-status == "unsupported": Text {
                         text: "Wi-Fi is managed by the system on this computer.";
                         color: Theme.text-secondary;

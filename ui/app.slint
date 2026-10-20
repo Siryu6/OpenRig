@@ -181,6 +181,7 @@ export component App inherits Window {
     in-out property <bool> wifi-scanning: false;
     in-out property <string> wifi-busy-ssid: "";
     in-out property <string> wifi-message: "";
+    in-out property <string> wifi-addresses: "";    // "192.168.1.42 (Wi-Fi) · …", "" offline
 
     // TONE3000 Connect (Settings); Features.tone3000 is set once connected
     in-out property <bool> t3k-available: false;
@@ -985,6 +986,7 @@ export component App inherits Window {
                 wifi-scanning: root.wifi-scanning;
                 wifi-busy-ssid: root.wifi-busy-ssid;
                 wifi-message: root.wifi-message;
+                wifi-addresses: root.wifi-addresses;
                 wifi-refresh(rescan) => {
                     root.wifi-refresh(rescan);
                 }

@@ -43,6 +43,8 @@ What OpenRig does, in more technical detail than the
   password), disconnect, forget, radio on/off. It drives NetworkManager
   through `nmcli` (as on Raspberry Pi OS); elsewhere (macOS, Windows, Linux
   without NetworkManager) Settings says Wi-Fi is managed by the system.
+  The card also shows the IPv4 address of each connected Ethernet and Wi-Fi
+  device, to reach the pedal over SSH.
 - **Light theme**: Settings → Display switches the screen to light panels
   and dark text, for daylight; dark stays the default. The rack blocks,
   knobs, faders, footswitches and LEDs keep their dark hardware look. Kept
