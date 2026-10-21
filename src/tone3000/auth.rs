@@ -1,10 +1,12 @@
 //! TONE3000 account link.
 //!
 //! The pedalboard signs in with the OAuth device flow: it shows a short code
-//! and a QR code, the user approves it on their phone. Every user brings their
-//! own *publishable* key (`t3k_pub_…`), created in their TONE3000 developer
-//! settings; nothing is embedded in the code. The secret key (`t3k_cs_…`) is
-//! never needed on a device and is refused.
+//! and a QR code, the user approves it on their phone, with their own account.
+//! The pedalboard is the OpenRig application of TONE3000: its *publishable*
+//! key (`t3k_pub_…`) is built in, as publishable keys are meant to be. A
+//! developer can use the key of their own application instead (Settings, or
+//! `PEDALBOARD_TONE3000_CLIENT_ID`). The secret key (`t3k_cs_…`) is never
+//! needed on a device and is refused.
 //!
 //! The settings (key + session tokens) live in `data_dir/tone3000.json`,
 //! readable by the owner only on Unix.
@@ -23,6 +25,15 @@ use crate::state::app_state::data_dir;
 
 pub const API: &str = "https://www.tone3000.com/api/v1";
 pub const WEBSITE: &str = "https://www.tone3000.com";
+
+/// Publishable key of the OpenRig application, set at build time with
+/// `OPENRIG_TONE3000_CLIENT_ID` to build with another one
+pub const OPENRIG_CLIENT_ID: &str = match option_env!("OPENRIG_TONE3000_CLIENT_ID") {
+    Some(key) => key,
+    None => "t3k_pub_NIxDz-jtyrfe8zo-28hzypotyOYp7qPQ",
+};
+/// Version of `tone3000.json`: 2 since the OpenRig key is built in
+const SETTINGS_VERSION: u32 = 2;
 
 const PUBLISHABLE_PREFIX: &str = "t3k_pub_";
 const SECRET_PREFIX: &str = "t3k_cs_";
@@ -67,7 +78,9 @@ pub struct Session {
 /// What `tone3000.json` holds
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Settings {
-    /// Publishable key (OAuth client id)
+    #[serde(default)]
+    version: u32,
+    /// Publishable key of the user's own application, "" for OpenRig's
     #[serde(default)]
     pub client_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -89,6 +102,11 @@ impl Settings {
             }),
             Err(_) => Self::default(),
         };
+        if settings.migrate() {
+            if let Err(e) = settings.save() {
+                warn!("{:#}", e);
+            }
+        }
         if settings.client_id.is_empty() {
             if let Ok(key) = std::env::var("PEDALBOARD_TONE3000_CLIENT_ID") {
                 settings.client_id = key;
@@ -105,6 +123,35 @@ impl Settings {
             }
         }
         settings
+    }
+
+    /// Move settings of an older version to the OpenRig key; true when they
+    /// changed. Up to 0.5, every user signed in with the key of their own
+    /// application: its session cannot be carried over (a refresh token
+    /// belongs to the key it was issued for), so the user connects again.
+    fn migrate(&mut self) -> bool {
+        if self.version >= SETTINGS_VERSION {
+            return false;
+        }
+        self.version = SETTINGS_VERSION;
+        if self.client_id.trim() == OPENRIG_CLIENT_ID {
+            // Already the OpenRig application: the session stays
+            self.client_id.clear();
+        } else if !self.client_id.is_empty() || self.session.is_some() {
+            info!("TONE3000: OpenRig now has its own application, connect again");
+            self.client_id.clear();
+            self.session = None;
+        }
+        true
+    }
+
+    /// The publishable key to sign in with
+    pub fn key(&self) -> &str {
+        if self.client_id.is_empty() {
+            OPENRIG_CLIENT_ID
+        } else {
+            &self.client_id
+        }
     }
 
     pub fn save(&self) -> Result<()> {
@@ -149,7 +196,7 @@ impl Settings {
 
     /// Get (and save) a new access token
     fn refresh(&mut self) -> Result<String, AuthError> {
-        let client_id = self.client_id.clone();
+        let client_id = self.key().to_string();
         let session = self.session.as_mut().ok_or(AuthError::SignedOut)?;
         let token = refresh_token(&client_id, &session.refresh_token)?;
         session.access_token = token.access_token;
@@ -418,7 +465,7 @@ pub enum ConnectEvent {
 impl std::fmt::Debug for Settings {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Settings")
-            .field("client_id", &self.client_id)
+            .field("client_id", &self.key())
             .field("user", &self.session.as_ref().map(|s| &s.username))
             .finish()
     }
@@ -431,8 +478,8 @@ pub struct Connection {
 }
 
 impl Connection {
-    /// Run the device flow for `client_id`; `on_event` is called from the
-    /// connection thread.
+    /// Run the device flow for `client_id` ("" for the OpenRig key);
+    /// `on_event` is called from the connection thread.
     pub fn start(client_id: String, on_event: impl Fn(ConnectEvent) + Send + 'static) -> Self {
         let cancel = Arc::new(AtomicBool::new(false));
         let stop = cancel.clone();
@@ -472,7 +519,12 @@ fn run_device_flow(
     cancel: &AtomicBool,
     on_event: &dyn Fn(ConnectEvent),
 ) -> ConnectEvent {
-    let code = match request_device_code(client_id) {
+    let key = if client_id.is_empty() {
+        OPENRIG_CLIENT_ID
+    } else {
+        client_id
+    };
+    let code = match request_device_code(key) {
         Ok(code) => code,
         Err(e) => return ConnectEvent::Failed(format!("{e:#}")),
     };
@@ -493,7 +545,7 @@ fn run_device_flow(
             &[
                 ("grant_type", DEVICE_GRANT),
                 ("device_code", &device_code),
-                ("client_id", client_id),
+                ("client_id", key),
             ],
         );
         match poll.map(|(status, body)| parse_poll(status, &body)) {
@@ -511,6 +563,7 @@ fn run_device_flow(
         Err(e) => return ConnectEvent::Failed(e.to_string()),
     };
     let settings = Settings {
+        version: SETTINGS_VERSION,
         client_id: client_id.to_string(),
         session: Some(Session {
             username,
@@ -573,6 +626,7 @@ mod tests {
     #[test]
     fn settings_hide_tokens() {
         let settings = Settings {
+            version: SETTINGS_VERSION,
             client_id: "t3k_pub_x".into(),
             session: Some(Session {
                 username: "me".into(),
@@ -593,8 +647,43 @@ mod tests {
     }
 
     #[test]
+    fn older_settings_move_to_the_openrig_key() {
+        let session = || Session {
+            username: "me".into(),
+            access_token: "A".into(),
+            refresh_token: "R".into(),
+            expires_at: 0,
+        };
+        // Own key of 0.5 and before: signed out, connects with OpenRig's
+        let mut own: Settings = serde_json::from_str(r#"{"client_id":"t3k_pub_mine"}"#).unwrap();
+        own.session = Some(session());
+        assert!(own.migrate());
+        assert!(!own.connected());
+        assert_eq!(own.key(), OPENRIG_CLIENT_ID);
+        // Already the OpenRig key: still signed in
+        let mut openrig = Settings {
+            client_id: OPENRIG_CLIENT_ID.into(),
+            session: Some(session()),
+            ..Default::default()
+        };
+        assert!(openrig.migrate());
+        assert!(openrig.connected() && openrig.client_id.is_empty());
+        // Current settings, even with an own key, are left alone
+        let mut current = Settings {
+            version: SETTINGS_VERSION,
+            client_id: "t3k_pub_mine".into(),
+            session: Some(session()),
+        };
+        assert!(!current.migrate());
+        assert!(current.connected());
+        assert_eq!(current.key(), "t3k_pub_mine");
+        assert!(check_client_id(OPENRIG_CLIENT_ID).is_ok());
+    }
+
+    #[test]
     fn a_token_refreshed_meanwhile_is_reused() {
         let mut settings = Settings {
+            version: SETTINGS_VERSION,
             client_id: "t3k_pub_x".into(),
             session: Some(Session {
                 username: "me".into(),

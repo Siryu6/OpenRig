@@ -777,7 +777,7 @@ export component SettingsView inherits Rectangle {
                         wrap: word-wrap;
                     }
 
-                    // --- Signed out: publishable key + Connect
+                    // --- Signed out: Connect, with the OpenRig key unless another is set
                     if root.t3k-available && (root.t3k-status == "signed-out" || root.t3k-status == "starting"): VerticalLayout {
                         spacing: Theme.space-md;
                         Text {
@@ -800,15 +800,15 @@ export component SettingsView inherits Rectangle {
                                     padding-right: Theme.space-md;
                                     spacing: Theme.space-sm;
                                     Text {
-                                        text: "Publishable key";
+                                        text: "Application";
                                         color: Theme.text-muted;
                                         font-size: Theme.font-small;
                                         vertical-alignment: center;
                                     }
                                     Text {
                                         horizontal-stretch: 1;
-                                        text: root.t3k-client-id == "" ? "not set" : root.t3k-client-id;
-                                        color: root.t3k-client-id == "" ? Theme.text-muted : Theme.text-primary;
+                                        text: root.t3k-client-id == "" ? "OpenRig" : root.t3k-client-id;
+                                        color: Theme.text-primary;
                                         font-size: Theme.font-small;
                                         vertical-alignment: center;
                                         horizontal-alignment: right;
@@ -829,14 +829,14 @@ export component SettingsView inherits Rectangle {
                                 text: root.t3k-status == "starting" ? "Connecting…" : "Connect";
                                 horizontal-stretch: 0;
                                 variant: "primary";
-                                enabled: root.t3k-client-id != "" && root.t3k-status == "signed-out";
+                                enabled: root.t3k-status == "signed-out";
                                 clicked => {
                                     root.t3k-connect(root.t3k-client-id);
                                 }
                             }
                         }
                         Text {
-                            text: "Create an application in your TONE3000 developer settings and use its publishable key (t3k_pub_…). Never enter the secret key on a device.";
+                            text: "Developers can sign in through their own TONE3000 application: Edit, then its publishable key (t3k_pub_…); an empty key goes back to OpenRig. Never enter a secret key on a device.";
                             color: Theme.text-muted;
                             font-size: Theme.font-caption;
                             wrap: word-wrap;
@@ -1179,7 +1179,7 @@ export component SettingsView inherits Rectangle {
                         font-weight: Theme.weight-bold;
                     }
                     Text {
-                        text: "Starts with t3k_pub_. A USB keyboard works too (paste with Ctrl+V).";
+                        text: "Optional: empty for OpenRig's. Starts with t3k_pub_. A USB keyboard works too (paste with Ctrl+V).";
                         color: Theme.text-secondary;
                         font-size: Theme.font-small;
                     }

@@ -412,12 +412,17 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
     let state = shared.clone();
     app.on_t3k_connect(move |key| {
         let Some(app) = weak.upgrade() else { return };
-        let key = match tone3000::check_client_id(&key) {
-            Ok(key) => key,
-            Err(e) => {
-                app.set_t3k_error(e.to_string().into());
-                return;
-            }
+        // No key: the OpenRig application
+        let key = match key.trim() {
+            "" => String::new(),
+            key => match tone3000::check_client_id(key) {
+                Ok(key) if key == tone3000::OPENRIG_CLIENT_ID => String::new(),
+                Ok(key) => key,
+                Err(e) => {
+                    app.set_t3k_error(e.to_string().into());
+                    return;
+                }
+            },
         };
         {
             let mut settings = state.settings.lock().unwrap();
