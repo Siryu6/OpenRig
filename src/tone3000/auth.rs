@@ -391,6 +391,7 @@ pub fn get_json<T: serde::de::DeserializeOwned>(
     access_token: &str,
     path: &str,
 ) -> Result<T, AuthError> {
+    super::limiter::acquire(None);
     let mut response = agent()
         .get(format!("{API}{path}"))
         .header("Authorization", format!("Bearer {access_token}"))

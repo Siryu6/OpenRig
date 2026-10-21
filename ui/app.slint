@@ -226,6 +226,9 @@ export component App inherits Window {
     in-out property <string> t3k-detail-url: "";
     in-out property <[T3kModel]> t3k-models: [];
     in-out property <bool> t3k-models-loading: false;
+    in-out property <string> t3k-query: "";           // search shown in tab 5
+    in-out property <int> t3k-selected-count: 0;      // models ticked for download
+    in-out property <string> t3k-download-status: ""; // "" when no download runs
     in-out property <int> t3k-target-id: -1;         // block to load models in (-1 = none)
     in-out property <string> t3k-target-name: "";
     in-out property <[string]> t3k-gear-ids: [];
@@ -332,7 +335,10 @@ export component App inherits Window {
     callback t3k-open(int);                          // target block (-1 = none)
     callback t3k-load(int, string, bool);            // tab, gear, next page
     callback t3k-open-tone(int);                     // index in t3k-tones
-    callback t3k-download(int);                      // index in t3k-models
+    callback t3k-toggle-model(int);                  // index in t3k-models
+    callback t3k-download-selected();
+    callback t3k-cancel-downloads();
+    callback t3k-search(string);                     // "" back to the lists
     callback t3k-add-model(string, string);          // block URI, relative path
     callback tuner-mute-toggled(bool);
     callback tuner-reference-pitch-changed(float);
@@ -841,6 +847,9 @@ export component App inherits Window {
                 detail-url: root.t3k-detail-url;
                 models: root.t3k-models;
                 models-loading: root.t3k-models-loading;
+                query: root.t3k-query;
+                selected-count: root.t3k-selected-count;
+                download-status: root.t3k-download-status;
                 target-name: root.t3k-target-name;
                 gear-ids: root.t3k-gear-ids;
                 gear-names: root.t3k-gear-names;
@@ -856,8 +865,17 @@ export component App inherits Window {
                 open-tone(i) => {
                     root.t3k-open-tone(i);
                 }
-                download(i) => {
-                    root.t3k-download(i);
+                toggle-model(i) => {
+                    root.t3k-toggle-model(i);
+                }
+                download-selected => {
+                    root.t3k-download-selected();
+                }
+                cancel-downloads => {
+                    root.t3k-cancel-downloads();
+                }
+                search(q) => {
+                    root.t3k-search(q);
                 }
                 use-model(path) => {
                     root.set-model(root.t3k-target-id, path);

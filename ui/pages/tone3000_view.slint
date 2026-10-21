@@ -2,17 +2,20 @@ import { Theme } from "../theme.slint";
 import { T3kTone, T3kModel } from "../types.slint";
 import { Badge, Button, Card, Chip, EmptyState, Icon, Segmented } from "../components/controls.slint";
 import { Tone3000Logo, T3kPicture } from "../components/tone3000_brand.slint";
+import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 
 export { T3kTone, T3kModel }
 
 // TONE3000 library: the user's favorites / own / downloaded tones and the
-// trending / latest lists, filtered by gear. Opening a tone lists its models;
-// each is downloaded only when asked, then usable in a NAM or IR block.
+// trending / latest lists, and a search sent when submitted, filtered by gear.
+// Opening a tone lists its models: the user ticks the ones to download, then
+// they are usable in a NAM or IR block.
 // Laid out after the TONE3000 design requirements: full logo and the
 // signed-in account in the header, each tone with its picture, gear, format
 // and creator (avatar and username).
 export component Tone3000View inherits Rectangle {
-    in property <int> tab: 0;                        // index in tab-names
+    in property <int> tab: 0;                        // index in tab-names, 5 = search results
+    in property <string> query: "";
     in property <string> gear: "";                   // API value, "" = all
     in property <[T3kTone]> tones: [];
     in property <bool> loading: false;
@@ -24,6 +27,8 @@ export component Tone3000View inherits Rectangle {
     in property <[T3kModel]> models: [];
     in property <bool> models-loading: false;
     in property <string> detail-url: "";
+    in property <int> selected-count: 0;
+    in property <string> download-status: "";       // "" when no download runs
     // Block the library was opened from ("" = none): downloaded models can be loaded in it
     in property <string> target-name: "";
     private property <bool> can-use: root.target-name != "" && root.detail.usable;
@@ -37,12 +42,17 @@ export component Tone3000View inherits Rectangle {
     callback load(int, string);                      // tab, gear
     callback load-more();
     callback open-tone(int);                         // index in tones
-    callback download(int);                          // index in models
+    callback toggle-model(int);                      // index in models
+    callback download-selected();
+    callback cancel-downloads();
+    callback search(string);                         // "" back to the lists
     callback use-model(string);                      // relative path
     callback add-model(string, string);              // block URI, relative path
 
     private property <[string]> tab-names: ["Favorites", "My tones", "Downloaded", "Trending", "Latest"];
     private property <length> row-height: 64px;
+    private property <bool> searching: false;
+    private property <string> draft: "";
 
     width: 100%;
     height: 100%;
@@ -62,6 +72,51 @@ export component Tone3000View inherits Rectangle {
             }
             Rectangle {
                 horizontal-stretch: 1;
+                height: 40px;
+                border-radius: Theme.radius-md;
+                background: Theme.display;
+                border-width: 1px;
+                border-color: root.searching || root.query != "" ? Theme.accent : Theme.border;
+                TouchArea {
+                    clicked => {
+                        root.draft = root.query;
+                        root.searching = true;
+                    }
+                }
+                HorizontalLayout {
+                    padding-left: Theme.space-md;
+                    padding-right: Theme.space-xs;
+                    spacing: Theme.space-sm;
+                    VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            name: "search";
+                            size: 16px;
+                            color: Theme.text-muted;
+                        }
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.query != "" ? root.query : "Search TONE3000";
+                        color: root.query != "" ? Theme.text-primary : Theme.text-muted;
+                        font-size: Theme.font-small;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    if root.query != "": Rectangle {
+                        width: 36px;
+                        Icon {
+                            name: "close";
+                            size: 14px;
+                            color: Theme.text-secondary;
+                        }
+                        TouchArea {
+                            clicked => {
+                                root.search("");
+                            }
+                        }
+                    }
+                }
             }
             if root.username != "": VerticalLayout {
                 alignment: center;
@@ -113,8 +168,9 @@ export component Tone3000View inherits Rectangle {
             if root.tones.length == 0 && !root.loading && root.error == "": EmptyState {
                 icon: root.tab == 0 ? "check" : "info";
                 title: root.tab == 0 ? "No favorites yet" : root.tab == 1 ? "No tones published yet" :
-                    root.tab == 2 ? "Nothing downloaded yet" : "Nothing here";
+                    root.tab == 2 ? "Nothing downloaded yet" : root.tab == 5 ? "No tone found" : "Nothing here";
                 message: root.tab == 0 ? "Favorite tones on tone3000.com from your phone or computer: they show up here."
+                    : root.tab == 5 ? (root.gear != "" ? "Try other words or another gear filter." : "Try other words.")
                     : root.gear != "" ? "Try another gear filter." : "";
             }
 
@@ -339,12 +395,38 @@ export component Tone3000View inherits Rectangle {
                             y: k * 52px;
                             height: 48px;
                             border-radius: Theme.radius-md;
-                            background: Theme.surface;
+                            background: model-ta.pressed && model.state == "remote" ? Theme.surface-hover
+                                : model.selected ? Theme.accent-soft : Theme.surface;
+
+                            // The whole row ticks a model to download
+                            model-ta := TouchArea {
+                                enabled: model.state == "remote";
+                                clicked => {
+                                    root.toggle-model(k);
+                                }
+                            }
 
                             HorizontalLayout {
                                 padding-left: Theme.space-md;
                                 padding-right: Theme.space-xs;
                                 spacing: Theme.space-md;
+                                VerticalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        width: 24px;
+                                        height: 24px;
+                                        border-radius: 6px;
+                                        border-width: 2px;
+                                        border-color: model.selected ? Theme.accent : Theme.border-strong;
+                                        background: model.selected ? Theme.accent : transparent;
+                                        opacity: model.state == "remote" ? 1.0 : 0.0;
+                                        if model.selected: Icon {
+                                            name: "check";
+                                            size: 16px;
+                                            color: Theme.background;
+                                        }
+                                    }
+                                }
                                 Text {
                                     horizontal-stretch: 1;
                                     text: model.name;
@@ -359,17 +441,12 @@ export component Tone3000View inherits Rectangle {
                                     font-size: Theme.font-small;
                                     vertical-alignment: center;
                                 }
-                                if model.state == "remote": Button {
+                                if model.state == "remote": Rectangle {
                                     width: 128px;
-                                    text: "Download";
-                                    variant: "ghost";
-                                    clicked => {
-                                        root.download(k);
-                                    }
                                 }
-                                if model.state == "downloading": Text {
+                                if model.state == "queued" || model.state == "downloading": Text {
                                     width: 128px;
-                                    text: "Downloading…";
+                                    text: model.state == "queued" ? "Waiting…" : "Downloading…";
                                     color: Theme.text-secondary;
                                     font-size: Theme.font-small;
                                     horizontal-alignment: center;
@@ -414,6 +491,39 @@ export component Tone3000View inherits Rectangle {
                     }
                 }
 
+                // Download bar: what is ticked, what is downloading
+                HorizontalLayout {
+                    spacing: Theme.space-md;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.download-status != "" ? root.download-status
+                            : root.models.length > 0 ? "Tick the models to download." : "";
+                        color: root.download-status != "" ? Theme.text-primary : Theme.text-muted;
+                        font-size: Theme.font-small;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    if root.download-status != "": Button {
+                        horizontal-stretch: 0;
+                        text: "Stop";
+                        variant: "ghost";
+                        clicked => {
+                            root.cancel-downloads();
+                        }
+                    }
+                    Button {
+                        horizontal-stretch: 0;
+                        width: 200px;
+                        icon: "download";
+                        text: root.selected-count > 0 ? "Download (" + root.selected-count + ")" : "Download";
+                        variant: "primary";
+                        enabled: root.selected-count > 0;
+                        clicked => {
+                            root.download-selected();
+                        }
+                    }
+                }
+
                 if root.can-use: Text {
                     text: "Use loads the model in " + root.target-name + ".";
                     color: Theme.text-muted;
@@ -423,6 +533,30 @@ export component Tone3000View inherits Rectangle {
                     text: "Add puts the model in a new " + root.detail.block-name + " block at the end of the chain.";
                     color: Theme.text-muted;
                     font-size: Theme.font-caption;
+                }
+            }
+        }
+    }
+
+    // Search: sent once submitted, never while typing
+    if root.searching: Rectangle {
+        background: Theme.scrim;
+        TouchArea { }
+        VerticalLayout {
+            alignment: end;
+            VirtualKeyboard {
+                current-text: root.draft;
+                placeholder: "Amp, pedal, creator…";
+                submit-label: "Search";
+                text-changed(t) => {
+                    root.draft = t;
+                }
+                submit => {
+                    root.searching = false;
+                    root.search(root.draft);
+                }
+                cancel => {
+                    root.searching = false;
                 }
             }
         }
