@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/Siryu6/OpenRig/compare/v0.5.0...v0.6.0) - 2026-10-22
+
+### Added
+
+- *(store)* install bundles from Debian packages
+
+### Fixed
+
+- *(plugins)* host the LV2 Worker so plugins needing work:schedule load ([#31](https://github.com/Siryu6/OpenRig/pull/31))
+
+### Other
+
+- Merge pull request #33 from Siryu6/feat/store-deb
+
 ## [0.5.0](https://github.com/Siryu6/OpenRig/compare/v0.4.0...v0.5.0) - 2026-10-20
 
 ### Added
