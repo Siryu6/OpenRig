@@ -6,8 +6,10 @@ What OpenRig does, in more technical detail than the
 - **LV2 hosting**: plugins are discovered with lilv (`LV2_PATH` or the
   standard locations). Controls, ranges, units, toggles, integers and
   enumerations are read from the plugin metadata and edited in the UI. URID
-  map / unmap, options, bounded-block-length and isLive are provided; plugins
-  that need anything else are skipped. Atom inputs get the tempo
+  map / unmap, options, bounded-block-length, isLive and the worker
+  (`work:schedule`: slow jobs such as loading a model run on a thread of the
+  plugin's own) are provided; plugins that need anything else are skipped,
+  with a warning naming the missing feature in the log. Atom inputs get the tempo
   (`time:Position`) and MIDI. Without any installed plugin, a demo
   catalogue (passthrough) keeps the UI usable for development.
 - **Plugin store** (feature `store`): installs free LV2 plugins from a

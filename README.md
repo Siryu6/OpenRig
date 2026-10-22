@@ -230,6 +230,7 @@ src/
 ├── plugins/
 │   ├── lv2_host.rs      lilv discovery (rescanned live) and instantiation
 │   ├── lv2_features.rs  URID map/unmap, options
+│   ├── lv2_worker.rs    LV2 Worker: slow plugin jobs on a thread of their own
 │   ├── atom.rs          Atom input events: transport (time:Position) and MIDI
 │   ├── instance.rs      Running plugin with pre-connected buffers
 │   ├── dsp.rs           Small DSP blocks: cuts, noise gate, tone stack

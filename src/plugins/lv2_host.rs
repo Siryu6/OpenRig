@@ -267,7 +267,7 @@ mod discovery {
     use super::super::scanner::{PluginCategory, PluginInfo, PortInfo, PortType};
     use lilv::node::Node;
     use lilv::World;
-    use tracing::debug;
+    use tracing::{debug, warn};
 
     const LV2: &str = "http://lv2plug.in/ns/lv2core#";
 
@@ -332,7 +332,8 @@ mod discovery {
             for feature in plugin.required_features().iter() {
                 let feature = feature.as_uri().unwrap_or_default();
                 if !SUPPORTED_FEATURES.contains(&feature) {
-                    debug!(
+                    // Not debug: someone who copied the plugin wants to know
+                    warn!(
                         "Skipping {}: needs unsupported feature {}",
                         plugin_uri, feature
                     );
