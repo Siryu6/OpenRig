@@ -70,8 +70,9 @@ from the refresh button.
 1. The archive for the board (`aarch64` or `x86_64`) is taken from the
    cache, else downloaded to a `.part` file and checked against the size and
    sha256 of the index.
-2. It is unpacked (`tar.gz` or `tar.xz`) into a staging folder of
-   `<data>/lv2`: only regular files and folders under `<root>/<bundle>/` are
+2. It is unpacked (`tar.gz`, `tar.xz`, or a Debian package `.deb` when a
+   project publishes nothing else: its `data.tar.gz` or `data.tar.xz`) into
+   a staging folder of `<data>/lv2`: only regular files and folders under `<root>/<bundle>/` are
    kept; links, devices, absolute paths and `..` are refused, and so is a
    bundle over 512 MB.
 3. The receipt is written, then the staging folder is renamed into place;
