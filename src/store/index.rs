@@ -50,7 +50,7 @@ pub struct Artifact {
     pub url: String,
     pub sha256: String,
     pub size: u64,
-    /// "tar.xz" or "tar.gz"
+    /// "tar.xz", "tar.gz" or "deb"
     pub format: String,
     /// Directory of the archive the bundles are in ("" or absent: its top)
     #[serde(default)]

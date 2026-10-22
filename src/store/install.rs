@@ -165,35 +165,86 @@ fn read_receipt(bundle: &Path) -> Option<Receipt> {
     serde_json::from_slice(&fs::read(bundle.join(RECEIPT)).ok()?).ok()
 }
 
-/// Unpack the files under `prefix/` of a tar archive into `dest`; returns
-/// how many. Only plain files and directories are taken, and only with
-/// clean relative paths: no links, devices, absolute paths or `..`.
+/// Unpack the files under `prefix/` of an archive into `dest`; returns how
+/// many. Only plain files and directories are taken, and only with clean
+/// relative paths: no links, devices, absolute paths or `..`.
 fn unpack(archive: &Path, format: &str, prefix: &str, dest: &Path) -> Result<usize> {
-    let file = File::open(archive)?;
+    let file = BufReader::new(File::open(archive)?);
     match format {
-        "tar.gz" => unpack_tar(
-            flate2::read::GzDecoder::new(BufReader::new(file)),
-            prefix,
-            dest,
-        ),
-        "tar.xz" => {
-            // lzma-rs decodes into a writer: through a temporary file
-            let tar_path = dest.with_extension("tar");
-            let result = (|| {
-                let mut tar = File::options()
-                    .read(true)
-                    .write(true)
-                    .create_new(true)
-                    .open(&tar_path)?;
-                lzma_rs::xz_decompress(&mut BufReader::new(file), &mut tar)
-                    .map_err(|e| anyhow::anyhow!("The downloaded archive is damaged: {e}"))?;
-                tar.seek(SeekFrom::Start(0))?;
-                unpack_tar(BufReader::new(tar), prefix, dest)
-            })();
-            let _ = fs::remove_file(&tar_path);
-            result
+        "tar.gz" => unpack_tar(flate2::read::GzDecoder::new(file), prefix, dest),
+        "tar.xz" => unpack_tar_xz(file, prefix, dest),
+        // Some projects only publish Debian packages: their files are in
+        // the data.tar.* member (`root` is then usr/lib/lv2)
+        "deb" => {
+            let (member, data) = deb_data(file)?;
+            match member.as_str() {
+                "data.tar.gz" => unpack_tar(flate2::read::GzDecoder::new(data), prefix, dest),
+                "data.tar.xz" => unpack_tar_xz(BufReader::new(data), prefix, dest),
+                "data.tar" => unpack_tar(data, prefix, dest),
+                other => bail!("Unsupported compression in the Debian package: {other}"),
+            }
         }
         other => bail!("Unsupported archive format: {other}"),
+    }
+}
+
+fn unpack_tar_xz(xz: impl std::io::BufRead, prefix: &str, dest: &Path) -> Result<usize> {
+    let mut xz = xz;
+    // lzma-rs decodes into a writer: through a temporary file
+    let tar_path = dest.with_extension("tar");
+    let result = (|| {
+        let mut tar = File::options()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&tar_path)?;
+        lzma_rs::xz_decompress(&mut xz, &mut tar)
+            .map_err(|e| anyhow::anyhow!("The downloaded archive is damaged: {e}"))?;
+        tar.seek(SeekFrom::Start(0))?;
+        unpack_tar(BufReader::new(tar), prefix, dest)
+    })();
+    let _ = fs::remove_file(&tar_path);
+    result
+}
+
+/// The data.tar.* member of a Debian package (an `ar` archive): its name
+/// and its bytes
+fn deb_data<R: Read>(mut deb: R) -> Result<(String, std::io::Take<R>)> {
+    let damaged = || anyhow::anyhow!("The downloaded Debian package is damaged");
+    let mut magic = [0u8; 8];
+    deb.read_exact(&mut magic).map_err(|_| damaged())?;
+    if &magic != b"!<arch>\n" {
+        return Err(damaged());
+    }
+    loop {
+        // name[16] mtime[12] uid[6] gid[6] mode[8] size[10] magic[2]
+        let mut header = [0u8; 60];
+        match deb.read_exact(&mut header) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                bail!("No files in the Debian package")
+            }
+            Err(e) => return Err(e.into()),
+        }
+        if &header[58..60] != b"`\n" {
+            return Err(damaged());
+        }
+        let name = String::from_utf8_lossy(&header[..16])
+            .trim_end()
+            .trim_end_matches('/')
+            .to_string();
+        let size: u64 = std::str::from_utf8(&header[48..58])
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .ok_or_else(damaged)?;
+        if name.starts_with("data.tar") {
+            return Ok((name, deb.take(size)));
+        }
+        // Members are padded to an even size
+        let skip = size + size % 2;
+        if std::io::copy(&mut (&mut deb).take(skip), &mut std::io::sink())? != skip {
+            return Err(damaged());
+        }
     }
 }
 
@@ -396,6 +447,80 @@ mod tests {
             "mine"
         );
         assert_eq!(installed(&lv2)[0].receipt, None);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A Debian package: an odd-sized control member first, then
+    /// data.tar.gz with `files` under ./
+    fn deb(dir: &Path, files: &[(&str, &str)]) -> PathBuf {
+        let mut data = Vec::new();
+        {
+            let gz = flate2::write::GzEncoder::new(&mut data, Default::default());
+            let mut builder = tar::Builder::new(gz);
+            for (name, content) in files {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(content.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                builder
+                    .append_data(&mut header, format!("./{name}"), content.as_bytes())
+                    .unwrap();
+            }
+            builder.into_inner().unwrap().finish().unwrap();
+        }
+        let mut deb = b"!<arch>\n".to_vec();
+        for (name, body) in [
+            ("debian-binary", &b"2.0\n"[..]),
+            ("control.tar.gz", &b"odd"[..]),
+            ("data.tar.gz", &data[..]),
+        ] {
+            deb.extend(
+                format!(
+                    "{:<16}{:<12}{:<6}{:<6}{:<8}{:<10}`\n",
+                    name,
+                    0,
+                    0,
+                    0,
+                    100644,
+                    body.len()
+                )
+                .bytes(),
+            );
+            deb.extend(body);
+            if body.len() % 2 == 1 {
+                deb.push(b'\n');
+            }
+        }
+        let path = dir.join("demo.deb");
+        fs::write(&path, deb).unwrap();
+        path
+    }
+
+    #[test]
+    fn installs_a_bundle_from_a_debian_package() {
+        let dir = temp();
+        let lv2 = dir.join("lv2");
+        let archive = deb(
+            &dir,
+            &[
+                ("usr/lib/lv2/Demo.lv2/manifest.ttl", "@prefix lv2: <x> ."),
+                ("usr/lib/lv2/Demo.lv2/bin/demo-a76.so", "elf"),
+                ("usr/share/doc/demo/copyright", "MIT"),
+            ],
+        );
+        let artifact = Artifact {
+            format: "deb".into(),
+            root: "usr/lib/lv2".into(),
+            ..artifact()
+        };
+        install(&lv2, &package(), &artifact, "Demo.lv2", vec![], &archive).unwrap();
+        assert!(lv2.join("Demo.lv2/manifest.ttl").is_file());
+        assert!(lv2.join("Demo.lv2/bin/demo-a76.so").is_file());
+        assert!(!dir.join("lv2/usr").exists());
+
+        // Not a Debian package
+        fs::write(&archive, b"<html>").unwrap();
+        assert!(install(&lv2, &package(), &artifact, "Demo.lv2", vec![], &archive).is_err());
         fs::remove_dir_all(dir).unwrap();
     }
 
