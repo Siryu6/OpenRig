@@ -10,6 +10,9 @@ from `os/`, for:
 | Raspberry Pi 5 (and Pi 500) | `os/output/rpi5/images/sdcard.img` | Raspberry Pi 6.12, `PREEMPT_RT` |
 | x86_64 mini PC, UEFI (Intel graphics) | `os/output/x86_64/images/disk.img` | mainline 6.12, `PREEMPT_RT` |
 
+Kernel fixes taken from newer Raspberry Pi kernels are in `os/board/rpi5/patches`
+(why each one is there: its README).
+
 ## Build
 
 On Linux, with Buildroot's
