@@ -9,6 +9,8 @@ pub mod ir;
 #[cfg(feature = "lv2")]
 pub mod lv2_features;
 pub mod lv2_host;
+#[cfg(feature = "lv2")]
+pub mod lv2_worker;
 #[cfg(feature = "nam")]
 pub mod nam;
 pub mod scanner;

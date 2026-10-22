@@ -59,6 +59,9 @@ enum Backend {
     Passthrough,
     #[cfg(feature = "lv2")]
     Lv2 {
+        // Declared before the instance: its thread must stop before the
+        // plugin is freed
+        worker: Option<super::lv2_worker::Worker>,
         // Declared before `_features`: the instance must be dropped first
         // because the plugin may hold pointers into the feature data.
         instance: lilv::instance::ActiveInstance,
@@ -303,8 +306,37 @@ impl PluginInstance {
         }
 
         this.reset_atoms();
+        let instance = unsafe { instance.activate() };
+        // Plugins doing slow jobs (loading files, applying a state) off
+        // the audio thread
+        // (lilv calls extension_data without checking it, and it is optional)
+        let has_extension_data = instance.instance().descriptor().is_some_and(|d| {
+            // Typed as a function by lv2_raw, though plugins may leave it NULL
+            let field = std::ptr::addr_of!(d.extension_data) as *const *const std::ffi::c_void;
+            !unsafe { field.read() }.is_null()
+        });
+        let interface = if has_extension_data {
+            unsafe {
+                instance
+                    .instance()
+                    .extension_data::<super::lv2_worker::Interface>(super::lv2_worker::INTERFACE)
+            }
+        } else {
+            None
+        };
+        let worker = match interface {
+            Some(interface) => Some(unsafe {
+                super::lv2_worker::Worker::start(
+                    features.worker(),
+                    interface,
+                    instance.instance().handle(),
+                )
+            }?),
+            None => None,
+        };
         this.backend = Backend::Lv2 {
-            instance: unsafe { instance.activate() },
+            worker,
+            instance,
             _features: features,
         };
         Ok(this)
@@ -467,7 +499,14 @@ impl PluginInstance {
                 }
             }
             #[cfg(feature = "lv2")]
-            Backend::Lv2 { instance, .. } => unsafe { instance.run(frames) },
+            Backend::Lv2 {
+                instance, worker, ..
+            } => {
+                unsafe { instance.run(frames) };
+                if let Some(worker) = worker {
+                    worker.end_run();
+                }
+            }
             Backend::Ir(block) => {
                 let (wet_gain, dry_gain) = block.target_gains(&self.controls);
                 let input = &self.audio_in[0][..frames];

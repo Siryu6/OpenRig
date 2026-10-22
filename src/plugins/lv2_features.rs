@@ -1,9 +1,11 @@
 //! Host-side LV2 features handed to plugins at instantiation:
-//! urid:map/unmap, options (block length, sample rate) and buf-size.
+//! urid:map/unmap, options (block length, sample rate), buf-size and the
+//! worker (`work:schedule`, see `lv2_worker`).
 
 use lv2_raw::core::LV2Feature;
 
 use super::atom::{ATOM_FLOAT, ATOM_INT};
+use super::lv2_worker;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
@@ -29,6 +31,7 @@ pub const SUPPORTED_FEATURES: &[&str] = &[
     OPTIONS,
     BOUNDED_BLOCK_LENGTH,
     IS_LIVE,
+    lv2_worker::SCHEDULE,
     "http://lv2plug.in/ns/lv2core#hardRTCapable",
     "http://lv2plug.in/ns/lv2core#inPlaceBroken",
 ];
@@ -116,6 +119,7 @@ pub struct FeatureSet {
     _options: Box<[OptionsOption]>,
     _option_values: Box<[i32; 3]>,
     _sample_rate: Box<f32>,
+    worker: lv2_worker::Feature,
     features: Vec<LV2Feature>,
 }
 
@@ -168,16 +172,25 @@ impl FeatureSet {
             },
         ]);
 
-        let uris: Vec<CString> = [URID_MAP, URID_UNMAP, OPTIONS, BOUNDED_BLOCK_LENGTH, IS_LIVE]
-            .iter()
-            .map(|u| CString::new(*u).unwrap())
-            .collect();
-        let data: [*mut c_void; 5] = [
+        let worker = lv2_worker::Feature::new();
+        let uris: Vec<CString> = [
+            URID_MAP,
+            URID_UNMAP,
+            OPTIONS,
+            BOUNDED_BLOCK_LENGTH,
+            IS_LIVE,
+            lv2_worker::SCHEDULE,
+        ]
+        .iter()
+        .map(|u| CString::new(*u).unwrap())
+        .collect();
+        let data: [*mut c_void; 6] = [
             &*map as *const UridMap as *mut c_void,
             &*unmap as *const UridUnmap as *mut c_void,
             options.as_ptr() as *mut c_void,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
+            worker.data(),
         ];
         let features = uris
             .iter()
@@ -195,12 +208,18 @@ impl FeatureSet {
             _options: options,
             _option_values: option_values,
             _sample_rate: sample_rate,
+            worker,
             features,
         }
     }
 
     pub fn features(&self) -> &[LV2Feature] {
         &self.features
+    }
+
+    /// The `work:schedule` feature, to start the worker of the instance
+    pub fn worker(&self) -> &lv2_worker::Feature {
+        &self.worker
     }
 }
 
