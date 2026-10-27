@@ -42,7 +42,9 @@ struct Library {
     /// The open tone and its models
     tone: Option<Tone>,
     models: Vec<Model>,
-    /// Models of the open tone ticked for download
+    /// Page of the open tone's models shown
+    model_page: usize,
+    /// Models of the open tone ticked for download, `MAX_SELECTED` at most
     selected: HashSet<u64>,
     downloads: Downloads,
     /// Block the library was opened from
@@ -64,6 +66,11 @@ struct Downloads {
     last_error: Option<String>,
     worker: bool,
 }
+
+/// Models of a tone shown per page, and ticked at once at most: TONE3000
+/// accepts a "select all" on a page, not on a whole pack of hundreds
+const MODELS_PER_PAGE: usize = library::PAGE_SIZE as usize;
+const MAX_SELECTED: usize = MODELS_PER_PAGE;
 
 /// Side the tone pictures are fetched at (drawn at 48 px in the lists,
 /// 88 px in the tone sheet and the block editor)
@@ -617,8 +624,8 @@ fn show_tones(app: &App, shared: &Shared, library: &Library) {
 fn show_models(app: &App, shared: &Shared, library: &Library) {
     let Some(tone) = &library.tone else { return };
     let downloads = &library.downloads;
-    let rows = library
-        .models
+    let page = page_models(library);
+    let rows = page
         .iter()
         .map(|m| {
             let path = m.relative_path(tone);
@@ -647,8 +654,44 @@ fn show_models(app: &App, shared: &Shared, library: &Library) {
         })
         .collect();
     app.set_t3k_models(model(rows));
+    app.set_t3k_model_page(library.model_page as i32);
+    app.set_t3k_model_pages(library.models.len().div_ceil(MODELS_PER_PAGE) as i32);
+    let free: Vec<&Model> = page
+        .iter()
+        .filter(|m| downloadable(shared, library, m))
+        .collect();
+    app.set_t3k_page_selectable(!free.is_empty());
+    app.set_t3k_page_selected(
+        !free.is_empty() && free.iter().all(|m| library.selected.contains(&m.id)),
+    );
     app.set_t3k_selected_count(library.selected.len() as i32);
     show_progress(app, library);
+}
+
+/// The open tone's models on the page shown
+fn page_models(library: &Library) -> &[Model] {
+    let start = (library.model_page * MODELS_PER_PAGE).min(library.models.len());
+    let end = (start + MODELS_PER_PAGE).min(library.models.len());
+    &library.models[start..end]
+}
+
+/// Tick every model of the page shown that can be downloaded, or untick
+/// them all when they are ticked already
+fn select_page(shared: &Shared, library: &mut Library) {
+    let free: Vec<u64> = page_models(library)
+        .iter()
+        .filter(|m| downloadable(shared, library, m))
+        .map(|m| m.id)
+        .collect();
+    if free.iter().all(|id| library.selected.contains(id)) {
+        for id in &free {
+            library.selected.remove(id);
+        }
+        return;
+    }
+    // One page at a time: ticks left on other pages are dropped
+    library.selected.retain(|id| free.contains(id));
+    library.selected.extend(free.into_iter().take(MAX_SELECTED));
 }
 
 fn show_progress(app: &App, library: &Library) {
@@ -949,6 +992,7 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
             let tone = tone.clone();
             library.tone = Some(tone.clone());
             library.models.clear();
+            library.model_page = 0;
             library.selected.clear();
             show_models(&app, &state, &library);
             tone
@@ -1017,14 +1061,40 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
         let mut library = state.library.lock().unwrap();
         let Some(model) = usize::try_from(index)
             .ok()
-            .and_then(|i| library.models.get(i))
+            .and_then(|i| page_models(&library).get(i))
             .cloned()
         else {
             return;
         };
         if downloadable(&state, &library, &model) && !library.selected.remove(&model.id) {
+            if library.selected.len() >= MAX_SELECTED {
+                crate::show_status(
+                    &app,
+                    format!("{MAX_SELECTED} models at most per download").into(),
+                );
+                return;
+            }
             library.selected.insert(model.id);
         }
+        show_models(&app, &state, &library);
+    });
+
+    let weak = app.as_weak();
+    let state = shared.clone();
+    app.on_t3k_select_page(move || {
+        let Some(app) = weak.upgrade() else { return };
+        let mut library = state.library.lock().unwrap();
+        select_page(&state, &mut library);
+        show_models(&app, &state, &library);
+    });
+
+    let weak = app.as_weak();
+    let state = shared.clone();
+    app.on_t3k_model_page_changed(move |page| {
+        let Some(app) = weak.upgrade() else { return };
+        let mut library = state.library.lock().unwrap();
+        let pages = library.models.len().div_ceil(MODELS_PER_PAGE).max(1);
+        library.model_page = usize::try_from(page).unwrap_or(0).min(pages - 1);
         show_models(&app, &state, &library);
     });
 

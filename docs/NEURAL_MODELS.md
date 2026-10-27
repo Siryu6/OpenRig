@@ -221,7 +221,9 @@ or `feather` when several NAM blocks are stacked.
    so it is applied locally). Opening a tone lists its models (A1 and A2:
    `GET /models` only returns A2 models with `architecture=2`, so both are
    asked). Only the models the user ticks are downloaded (no "download
-   everything"), queued one after the other; every request waits its turn
+   everything"): they are shown 25 per page, "Select all" ticks the page
+   shown, and 25 at most are ticked at once, as TONE3000 asked, since a
+   pack can hold up to 300 models. They are queued one after the other; every request waits its turn
    (a burst of 12, then 25 per minute at most), into
    `models/Tone3000/<gear>/<title> [<id>]/` (as `<model> [<model id>].nam`,
    the ids hidden in the UI), with a `tone.json` keeping the

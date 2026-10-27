@@ -28,6 +28,11 @@ export component Tone3000View inherits Rectangle {
     in property <bool> models-loading: false;
     in property <string> detail-url: "";
     in property <int> selected-count: 0;
+    // Models are shown and ticked a page (25) at a time
+    in property <int> model-page: 0;
+    in property <int> model-pages: 0;
+    in property <bool> page-selectable: false;
+    in property <bool> page-selected: false;
     in property <string> download-status: "";       // "" when no download runs
     // Block the library was opened from ("" = none): downloaded models can be loaded in it
     in property <string> target-name: "";
@@ -43,6 +48,8 @@ export component Tone3000View inherits Rectangle {
     callback load-more();
     callback open-tone(int);                         // index in tones
     callback toggle-model(int);                      // index in models
+    callback select-page();                          // tick (or untick) every model shown
+    callback model-page-changed(int);
     callback download-selected();
     callback cancel-downloads();
     callback search(string);                         // "" back to the lists
@@ -494,6 +501,32 @@ export component Tone3000View inherits Rectangle {
                 // Download bar: what is ticked, what is downloading
                 HorizontalLayout {
                     spacing: Theme.space-md;
+                    if root.model-pages > 1: HorizontalLayout {
+                        horizontal-stretch: 0;
+                        spacing: Theme.space-xs;
+                        Button {
+                            icon: "chevron-left";
+                            variant: "ghost";
+                            enabled: root.model-page > 0;
+                            clicked => {
+                                root.model-page-changed(root.model-page - 1);
+                            }
+                        }
+                        Text {
+                            text: (root.model-page + 1) + " / " + root.model-pages;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                            vertical-alignment: center;
+                        }
+                        Button {
+                            icon: "chevron-right";
+                            variant: "ghost";
+                            enabled: root.model-page + 1 < root.model-pages;
+                            clicked => {
+                                root.model-page-changed(root.model-page + 1);
+                            }
+                        }
+                    }
                     Text {
                         horizontal-stretch: 1;
                         text: root.download-status != "" ? root.download-status
@@ -509,6 +542,14 @@ export component Tone3000View inherits Rectangle {
                         variant: "ghost";
                         clicked => {
                             root.cancel-downloads();
+                        }
+                    }
+                    if root.page-selectable: Button {
+                        horizontal-stretch: 0;
+                        text: root.page-selected ? "Clear" : root.model-pages > 1 ? "Select page" : "Select all";
+                        variant: "ghost";
+                        clicked => {
+                            root.select-page();
                         }
                     }
                     Button {

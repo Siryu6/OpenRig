@@ -19,8 +19,9 @@ use crate::plugins::scanner::{TONE_INFO_FILE, TONE_PICTURE_FILE};
 
 /// Folder of the models dir holding the TONE3000 downloads
 pub const FOLDER: &str = "Tone3000";
-/// Models asked per page (the API maximum)
-const PAGE_SIZE: u32 = 25;
+/// Items asked per page (the API maximum); also the models shown and ticked
+/// at once in a tone, as TONE3000 asks
+pub const PAGE_SIZE: u32 = 25;
 
 /// A list of tones
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

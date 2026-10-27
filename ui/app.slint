@@ -228,6 +228,10 @@ export component App inherits Window {
     in-out property <bool> t3k-models-loading: false;
     in-out property <string> t3k-query: "";           // search shown in tab 5
     in-out property <int> t3k-selected-count: 0;      // models ticked for download
+    in-out property <int> t3k-model-page: 0;          // page of the tone's models shown
+    in-out property <int> t3k-model-pages: 0;
+    in-out property <bool> t3k-page-selectable: false; // the page has models to tick
+    in-out property <bool> t3k-page-selected: false;   // ...all ticked already
     in-out property <string> t3k-download-status: ""; // "" when no download runs
     in-out property <int> t3k-target-id: -1;         // block to load models in (-1 = none)
     in-out property <string> t3k-target-name: "";
@@ -336,6 +340,8 @@ export component App inherits Window {
     callback t3k-load(int, string, bool);            // tab, gear, next page
     callback t3k-open-tone(int);                     // index in t3k-tones
     callback t3k-toggle-model(int);                  // index in t3k-models
+    callback t3k-select-page();                      // tick (or untick) the page's models
+    callback t3k-model-page-changed(int);
     callback t3k-download-selected();
     callback t3k-cancel-downloads();
     callback t3k-search(string);                     // "" back to the lists
@@ -849,6 +855,10 @@ export component App inherits Window {
                 models-loading: root.t3k-models-loading;
                 query: root.t3k-query;
                 selected-count: root.t3k-selected-count;
+                model-page: root.t3k-model-page;
+                model-pages: root.t3k-model-pages;
+                page-selectable: root.t3k-page-selectable;
+                page-selected: root.t3k-page-selected;
                 download-status: root.t3k-download-status;
                 target-name: root.t3k-target-name;
                 gear-ids: root.t3k-gear-ids;
@@ -867,6 +877,12 @@ export component App inherits Window {
                 }
                 toggle-model(i) => {
                     root.t3k-toggle-model(i);
+                }
+                select-page => {
+                    root.t3k-select-page();
+                }
+                model-page-changed(page) => {
+                    root.t3k-model-page-changed(page);
                 }
                 download-selected => {
                     root.t3k-download-selected();

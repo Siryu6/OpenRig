@@ -66,7 +66,9 @@ What OpenRig does, in more technical detail than the
   lists your favorites, your own and downloaded tones, and the trending /
   latest ones, and searches TONE3000 (sent when the search is submitted), by gear, each with its picture, format and creator (avatar
   and username), following the TONE3000 design requirements. Pictures are
-  fetched when shown and kept in memory only. The models you tick are
+  fetched when shown and kept in memory only. A tone's models are shown
+  25 per page, with "Select all" for the page shown (25 models ticked at
+  most, as TONE3000 asks). The models you tick are
   downloaded one after the other, at a pace that stays under the TONE3000
   rate limit (as every request), into `models/Tone3000/<gear>/<tone>/` with the creator,
   license and link in `tone.json`, and can be loaded straight into the block.
