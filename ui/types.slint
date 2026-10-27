@@ -160,7 +160,8 @@ export struct T3kTone {
 export struct T3kModel {
     name: string,
     detail: string,      // "A2 · lite", "IR"
-    state: string,       // "remote" | "downloading" | "local"
+    state: string,       // "remote" | "queued" | "downloading" | "local"
+    selected: bool,      // ticked for download
     path: string,        // relative to the models dir once downloaded
 }
 

@@ -153,7 +153,8 @@ with audio disabled.
 | Variable | Default | Purpose |
 |---|---|---|
 | `PEDALBOARD_DATA_DIR` | platform data dir (`~/.local/share/pedalboard` on Linux) | Presets, setlists, session, `models/` (NAM models and IRs) |
-| `PEDALBOARD_TONE3000_CLIENT_ID` | unset | Prefills the TONE3000 publishable key (`t3k_pub_…`) when none is saved |
+| `PEDALBOARD_TONE3000_CLIENT_ID` | unset | Uses the publishable key (`t3k_pub_…`) of your own TONE3000 application instead of OpenRig's, when none is saved |
+| `OPENRIG_TONE3000_CLIENT_ID` | OpenRig's key | At build time: the publishable key built in |
 | `PEDALBOARD_NO_AUTOCONNECT` | unset | Do not connect JACK ports |
 | `PEDALBOARD_FOOTSWITCH_PINS` | `17,27,22,23` | Footswitch GPIOs (BCM), until set in Settings → Hardware (empty: none) |
 | `PEDALBOARD_ENCODER_PINS` | `5,6,13` | Encoder A, B and button, until set in Settings (`A,B`: no button; empty: no encoder) |
@@ -211,7 +212,7 @@ src/
 ├── live_ui.rs           Live page: footswitch modes, tap tempo, hold → tuner
 ├── midi_io.rs           MIDI inputs (midir, feature midi): hot-plug, clock → tempo
 ├── midi_ui.rs           MIDI actions, learn in the block editor, Settings → MIDI
-├── tone3000/            TONE3000: account (device flow, tokens), library (lists, downloads), pictures
+├── tone3000/            TONE3000: account (device flow, tokens), library (lists, search, downloads), limiter, pictures
 ├── tone3000_ui.rs       Settings → TONE3000 Connect, library page, Features.tone3000 flag
 ├── wifi.rs              Wi-Fi through NetworkManager (nmcli): scan, join, forget
 ├── wifi_ui.rs           Settings → Wi-Fi (worker thread running nmcli)

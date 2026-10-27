@@ -1,10 +1,11 @@
 //! TONE3000 in the UI: "TONE3000 Connect" in Settings (device-flow sign-in,
-//! the `Features.tone3000` flag), the library page (lists, models,
-//! downloads on request) and the pictures of tones and creators.
+//! the `Features.tone3000` flag), the library page (lists, search, models,
+//! downloads of the models the user ticks) and the pictures of tones and
+//! creators.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use slint::{
@@ -17,27 +18,59 @@ use pedalboard::plugins::scanner::{self, FileBlock, FileKind};
 use pedalboard::state::AppState;
 use pedalboard::tone3000::images;
 use pedalboard::tone3000::library::{self, List, Model, Tone};
+use pedalboard::tone3000::limiter;
 use pedalboard::tone3000::{self, AuthError, ConnectEvent, Connection, DeviceCode, Settings};
 
 use crate::{model, App, Features, T3kModel, T3kTone};
 
 /// View index of the settings page
 const SETTINGS_VIEW: i32 = 7;
+/// Tab index of the search results, after the lists
+const SEARCH_TAB: usize = List::ALL.len();
 
 /// What the library page shows
 #[derive(Default)]
 struct Library {
+    /// Index in `List::ALL`, or `SEARCH_TAB`
     list: usize,
+    /// List shown before the search, shown again when it is cleared
+    browse: usize,
+    query: String,
     gear: Option<String>,
     page: u32,
     tones: Vec<Tone>,
     /// The open tone and its models
     tone: Option<Tone>,
     models: Vec<Model>,
-    downloading: HashSet<u64>,
+    /// Page of the open tone's models shown
+    model_page: usize,
+    /// Models of the open tone ticked for download, `MAX_SELECTED` at most
+    selected: HashSet<u64>,
+    downloads: Downloads,
     /// Block the library was opened from
     target: Option<&'static FileBlock>,
 }
+
+/// Models waiting for download and the one downloading, from any tone
+#[derive(Default)]
+struct Downloads {
+    queue: VecDeque<(Tone, Model)>,
+    /// Queued or downloading
+    ids: HashSet<u64>,
+    /// The one downloading: id and name
+    active: Option<(u64, String)>,
+    /// Since the queue was last empty
+    total: usize,
+    done: usize,
+    failed: usize,
+    last_error: Option<String>,
+    worker: bool,
+}
+
+/// Models of a tone shown per page, and ticked at once at most: TONE3000
+/// accepts a "select all" on a page, not on a whole pack of hundreds
+const MODELS_PER_PAGE: usize = library::PAGE_SIZE as usize;
+const MAX_SELECTED: usize = MODELS_PER_PAGE;
 
 /// Side the tone pictures are fetched at (drawn at 48 px in the lists,
 /// 88 px in the tone sheet and the block editor)
@@ -239,6 +272,8 @@ struct Shared {
     /// Bumped when the list or the open tone changes, so late answers are dropped
     list_generation: AtomicU64,
     tone_generation: AtomicU64,
+    /// Set to stop the downloads
+    cancel: AtomicBool,
     models_dir: PathBuf,
     state: Arc<AppState>,
     pictures: Arc<Pictures>,
@@ -374,6 +409,7 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
         library: Mutex::new(Library::default()),
         list_generation: AtomicU64::new(0),
         tone_generation: AtomicU64::new(0),
+        cancel: AtomicBool::new(false),
         models_dir,
         state: state.clone(),
         pictures,
@@ -412,12 +448,17 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
     let state = shared.clone();
     app.on_t3k_connect(move |key| {
         let Some(app) = weak.upgrade() else { return };
-        let key = match tone3000::check_client_id(&key) {
-            Ok(key) => key,
-            Err(e) => {
-                app.set_t3k_error(e.to_string().into());
-                return;
-            }
+        // No key: the OpenRig application
+        let key = match key.trim() {
+            "" => String::new(),
+            key => match tone3000::check_client_id(key) {
+                Ok(key) if key == tone3000::OPENRIG_CLIENT_ID => String::new(),
+                Ok(key) => key,
+                Err(e) => {
+                    app.set_t3k_error(e.to_string().into());
+                    return;
+                }
+            },
         };
         {
             let mut settings = state.settings.lock().unwrap();
@@ -582,8 +623,9 @@ fn show_tones(app: &App, shared: &Shared, library: &Library) {
 
 fn show_models(app: &App, shared: &Shared, library: &Library) {
     let Some(tone) = &library.tone else { return };
-    let rows = library
-        .models
+    let downloads = &library.downloads;
+    let page = page_models(library);
+    let rows = page
         .iter()
         .map(|m| {
             let path = m.relative_path(tone);
@@ -595,12 +637,15 @@ fn show_models(app: &App, shared: &Shared, library: &Library) {
                 detail: m.description(tone).into(),
                 state: if local {
                     "local"
-                } else if library.downloading.contains(&m.id) {
+                } else if downloads.active.as_ref().is_some_and(|(id, _)| *id == m.id) {
                     "downloading"
+                } else if downloads.ids.contains(&m.id) {
+                    "queued"
                 } else {
                     "remote"
                 }
                 .into(),
+                selected: library.selected.contains(&m.id),
                 path: path
                     .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or_default()
@@ -609,67 +654,212 @@ fn show_models(app: &App, shared: &Shared, library: &Library) {
         })
         .collect();
     app.set_t3k_models(model(rows));
+    app.set_t3k_model_page(library.model_page as i32);
+    app.set_t3k_model_pages(library.models.len().div_ceil(MODELS_PER_PAGE) as i32);
+    let free: Vec<&Model> = page
+        .iter()
+        .filter(|m| downloadable(shared, library, m))
+        .collect();
+    app.set_t3k_page_selectable(!free.is_empty());
+    app.set_t3k_page_selected(
+        !free.is_empty() && free.iter().all(|m| library.selected.contains(&m.id)),
+    );
+    app.set_t3k_selected_count(library.selected.len() as i32);
+    show_progress(app, library);
 }
 
-/// Download `models` of `tone` one after the other
-/// Download one model, on request only (the free API tier allows no bulk
-/// download)
-fn download(app: &App, shared: &Arc<Shared>, tone: Tone, model: Model) {
-    {
-        let mut library = shared.library.lock().unwrap();
-        if !library.downloading.insert(model.id) {
-            return;
+/// The open tone's models on the page shown
+fn page_models(library: &Library) -> &[Model] {
+    let start = (library.model_page * MODELS_PER_PAGE).min(library.models.len());
+    let end = (start + MODELS_PER_PAGE).min(library.models.len());
+    &library.models[start..end]
+}
+
+/// Tick every model of the page shown that can be downloaded, or untick
+/// them all when they are ticked already
+fn select_page(shared: &Shared, library: &mut Library) {
+    let free: Vec<u64> = page_models(library)
+        .iter()
+        .filter(|m| downloadable(shared, library, m))
+        .map(|m| m.id)
+        .collect();
+    if free.iter().all(|id| library.selected.contains(id)) {
+        for id in &free {
+            library.selected.remove(id);
         }
-        show_models(app, shared, &library);
+        return;
     }
-    let weak = app.as_weak();
-    let shared = shared.clone();
-    std::thread::spawn(move || {
-        // Network and file errors are reported apart from the account ones
-        let mut failure = None;
-        let result = shared.call(|token| {
-            library::download(token, &shared.models_dir, &tone, &model).map_err(|e| {
-                e.downcast::<AuthError>().unwrap_or_else(|e| {
-                    failure = Some(e);
-                    AuthError::Unavailable(String::new())
-                })
-            })
-        });
-        let message = match (result, failure) {
-            (Ok(_), _) => format!("Downloaded {}", model.name),
-            (Err(_), Some(e)) => {
-                warn!("{:#}", e);
-                format!("{e:#}")
-            }
-            (Err(e), None) => {
-                finish_download(&weak, &shared, model.id, None);
-                return fail(&weak, &shared, e);
-            }
-        };
-        finish_download(&weak, &shared, model.id, Some(message));
-    });
+    // One page at a time: ticks left on other pages are dropped
+    library.selected.retain(|id| free.contains(id));
+    library.selected.extend(free.into_iter().take(MAX_SELECTED));
 }
 
-fn finish_download(
-    weak: &slint::Weak<App>,
-    shared: &Arc<Shared>,
-    id: u64,
-    message: Option<String>,
-) {
+fn show_progress(app: &App, library: &Library) {
+    let downloads = &library.downloads;
+    let text = match &downloads.active {
+        Some((_, name)) => format!(
+            "Downloading {} of {}: {name}",
+            downloads.done + downloads.failed + 1,
+            downloads.total
+        ),
+        None if downloads.worker => "Waiting for TONE3000…".to_string(),
+        None => String::new(),
+    };
+    app.set_t3k_download_status(text.into());
+}
+
+/// Whether `model` of the open tone can be ticked: not on the pedalboard,
+/// not queued
+fn downloadable(shared: &Shared, library: &Library, model: &Model) -> bool {
+    let local = library
+        .tone
+        .as_ref()
+        .and_then(|tone| model.relative_path(tone))
+        .is_none_or(|p| shared.models_dir.join(p).is_file());
+    !local && !library.downloads.ids.contains(&model.id)
+}
+
+/// Queue the ticked models of the open tone and start downloading them, one
+/// after the other at the pace TONE3000 accepts (no bulk download: only
+/// what the user picked)
+fn download_selected(app: &App, shared: &Arc<Shared>) {
+    let mut library = shared.library.lock().unwrap();
+    let Some(tone) = library.tone.clone() else {
+        return;
+    };
+    let jobs: Vec<Model> = library
+        .models
+        .iter()
+        .filter(|m| library.selected.contains(&m.id) && downloadable(shared, &library, m))
+        .cloned()
+        .collect();
+    library.selected.clear();
+    for model in jobs {
+        library.downloads.ids.insert(model.id);
+        library.downloads.total += 1;
+        library.downloads.queue.push_back((tone.clone(), model));
+    }
+    shared.cancel.store(false, Ordering::Relaxed);
+    if !library.downloads.worker && !library.downloads.queue.is_empty() {
+        library.downloads.worker = true;
+        let weak = app.as_weak();
+        let shared = shared.clone();
+        std::thread::spawn(move || download_worker(weak, shared));
+    }
+    show_models(app, shared, &library);
+}
+
+/// Stop the downloads: the queue is dropped, the current file finishes
+fn cancel_downloads(app: &App, shared: &Shared) {
+    shared.cancel.store(true, Ordering::Relaxed);
+    let mut library = shared.library.lock().unwrap();
+    let downloads = &mut library.downloads;
+    for (_, model) in downloads.queue.drain(..) {
+        downloads.ids.remove(&model.id);
+        downloads.total -= 1;
+    }
+    show_models(app, shared, &library);
+}
+
+/// Refresh what shows the downloads
+fn show_downloads(weak: &slint::Weak<App>, shared: &Arc<Shared>, refresh_blocks: bool) {
     let shared = shared.clone();
     let _ = weak.upgrade_in_event_loop(move |app| {
-        let mut library = shared.library.lock().unwrap();
-        library.downloading.remove(&id);
+        let library = shared.library.lock().unwrap();
         show_models(&app, &shared, &library);
-        show_tones(&app, &shared, &library);
-        drop(library);
-        // A block may use another preset of this tone: its editor lists the
-        // presets downloaded so far
-        crate::refresh_chain(&app, &shared.state);
-        if let Some(message) = message {
-            crate::show_status(&app, message.into());
+        if refresh_blocks {
+            show_tones(&app, &shared, &library);
+            drop(library);
+            // A block may use another preset of this tone: its editor lists
+            // the presets downloaded so far
+            crate::refresh_chain(&app, &shared.state);
         }
     });
+}
+
+fn download_worker(weak: slint::Weak<App>, shared: Arc<Shared>) {
+    loop {
+        let job = {
+            let mut library = shared.library.lock().unwrap();
+            let downloads = &mut library.downloads;
+            match downloads.queue.pop_front() {
+                Some((tone, model)) => {
+                    downloads.active = Some((model.id, model.name.clone()));
+                    (tone, model)
+                }
+                None => {
+                    let summary = download_summary(downloads);
+                    *downloads = Downloads::default();
+                    drop(library);
+                    show_downloads(&weak, &shared, false);
+                    if let Some(summary) = summary {
+                        let _ = weak.upgrade_in_event_loop(move |app| {
+                            crate::show_status(&app, summary.into());
+                        });
+                    }
+                    return;
+                }
+            }
+        };
+        show_downloads(&weak, &shared, false);
+        let (tone, model) = job;
+        let go = limiter::acquire(Some(&shared.cancel)) && !shared.cancel.load(Ordering::Relaxed);
+        // Network and file errors are reported apart from the account ones
+        let mut failure = None;
+        let result = if go {
+            Some(shared.call(|token| {
+                library::download(token, &shared.models_dir, &tone, &model).map_err(|e| {
+                    e.downcast::<AuthError>().unwrap_or_else(|e| {
+                        failure = Some(e);
+                        AuthError::Unavailable(String::new())
+                    })
+                })
+            }))
+        } else {
+            None
+        };
+        let mut revoked = None;
+        {
+            let mut library = shared.library.lock().unwrap();
+            let downloads = &mut library.downloads;
+            downloads.ids.remove(&model.id);
+            downloads.active = None;
+            match (result, failure) {
+                (None, _) => downloads.total -= 1,
+                (Some(Ok(_)), _) => downloads.done += 1,
+                (Some(Err(_)), Some(e)) => {
+                    warn!("{:#}", e);
+                    downloads.failed += 1;
+                    downloads.last_error = Some(format!("{e:#}"));
+                }
+                (Some(Err(e)), None) => {
+                    // Signed out or unreachable: the rest would fail too
+                    downloads.failed += 1;
+                    for (_, model) in downloads.queue.drain(..) {
+                        downloads.ids.remove(&model.id);
+                        downloads.total -= 1;
+                    }
+                    revoked = Some(e);
+                }
+            }
+        }
+        if let Some(e) = revoked {
+            fail(&weak, &shared, e);
+        }
+        show_downloads(&weak, &shared, true);
+    }
+}
+
+/// What to tell once the queue is empty
+fn download_summary(downloads: &Downloads) -> Option<String> {
+    let plural = |n: usize| if n == 1 { "" } else { "s" };
+    let done = downloads.done;
+    match (done, downloads.failed, &downloads.last_error) {
+        (0, 0, _) => None,
+        (n, 0, _) => Some(format!("Downloaded {n} model{}", plural(n))),
+        (n, f, Some(e)) => Some(format!("Downloaded {n} of {}: {e}", n + f)),
+        (n, f, None) => Some(format!("Downloaded {n} of {}", n + f)),
+    }
 }
 
 fn setup_library(app: &App, shared: &Arc<Shared>) {
@@ -715,6 +905,7 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
             } else {
                 gears[0].to_string()
             };
+            app.set_t3k_query(library.query.as_str().into());
             (library.list as i32, gear)
         };
         app.invoke_t3k_load(tab, gear.into(), false);
@@ -724,19 +915,25 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
     let state = shared.clone();
     app.on_t3k_load(move |list, gear, more| {
         let Some(app) = weak.upgrade() else { return };
-        let list = usize::try_from(list).unwrap_or(0).min(List::ALL.len() - 1);
+        let mut list = usize::try_from(list).unwrap_or(0).min(SEARCH_TAB);
         let gear = (!gear.is_empty()).then(|| gear.to_string());
-        let page = {
+        let (page, query) = {
             let mut library = state.library.lock().unwrap();
+            if list == SEARCH_TAB && library.query.is_empty() {
+                list = library.browse;
+            }
             if !more {
                 state.pictures.reset_queue();
                 library.list = list;
+                if list != SEARCH_TAB {
+                    library.browse = list;
+                }
                 library.gear = gear.clone();
                 library.page = 0;
                 library.tones.clear();
                 show_tones(&app, &state, &library);
             }
-            library.page + 1
+            (library.page + 1, library.query.clone())
         };
         app.set_t3k_tab(list as i32);
         app.set_t3k_gear(gear.clone().unwrap_or_default().into());
@@ -750,8 +947,11 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
         let weak = app.as_weak();
         let shared = state.clone();
         std::thread::spawn(move || {
-            let result =
-                shared.call(|token| library::list(token, List::ALL[list], gear.as_deref(), page));
+            let result = shared.call(|token| match List::ALL.get(list) {
+                Some(&list) => library::list(token, list, gear.as_deref(), page),
+                // Only sent when the user submits a search
+                None => library::search(token, &query, gear.as_deref(), page),
+            });
             let revoked = matches!(result, Err(AuthError::Revoked));
             if revoked {
                 fail(&weak, &shared, AuthError::Revoked);
@@ -792,6 +992,8 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
             let tone = tone.clone();
             library.tone = Some(tone.clone());
             library.models.clear();
+            library.model_page = 0;
+            library.selected.clear();
             show_models(&app, &state, &library);
             tone
         };
@@ -836,6 +1038,13 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
                     Ok(models) => {
                         let mut library = state.library.lock().unwrap();
                         library.models = models;
+                        // A single model to get: ticked already
+                        if let [model] = library.models.as_slice() {
+                            if downloadable(&state, &library, model) {
+                                let id = model.id;
+                                library.selected.insert(id);
+                            }
+                        }
                         show_models(&app, &state, &library);
                     }
                     Err(e) if !revoked => crate::show_status(&app, e.to_string().into()),
@@ -847,17 +1056,80 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
 
     let weak = app.as_weak();
     let state = shared.clone();
-    app.on_t3k_download(move |index| {
+    app.on_t3k_toggle_model(move |index| {
         let Some(app) = weak.upgrade() else { return };
-        let job = {
-            let library = state.library.lock().unwrap();
-            let model = usize::try_from(index)
-                .ok()
-                .and_then(|i| library.models.get(i));
-            library.tone.clone().zip(model.cloned())
+        let mut library = state.library.lock().unwrap();
+        let Some(model) = usize::try_from(index)
+            .ok()
+            .and_then(|i| page_models(&library).get(i))
+            .cloned()
+        else {
+            return;
         };
-        if let Some((tone, model)) = job {
-            download(&app, &state, tone, model);
+        if downloadable(&state, &library, &model) && !library.selected.remove(&model.id) {
+            if library.selected.len() >= MAX_SELECTED {
+                crate::show_status(
+                    &app,
+                    format!("{MAX_SELECTED} models at most per download").into(),
+                );
+                return;
+            }
+            library.selected.insert(model.id);
         }
+        show_models(&app, &state, &library);
+    });
+
+    let weak = app.as_weak();
+    let state = shared.clone();
+    app.on_t3k_select_page(move || {
+        let Some(app) = weak.upgrade() else { return };
+        let mut library = state.library.lock().unwrap();
+        select_page(&state, &mut library);
+        show_models(&app, &state, &library);
+    });
+
+    let weak = app.as_weak();
+    let state = shared.clone();
+    app.on_t3k_model_page_changed(move |page| {
+        let Some(app) = weak.upgrade() else { return };
+        let mut library = state.library.lock().unwrap();
+        let pages = library.models.len().div_ceil(MODELS_PER_PAGE).max(1);
+        library.model_page = usize::try_from(page).unwrap_or(0).min(pages - 1);
+        show_models(&app, &state, &library);
+    });
+
+    let weak = app.as_weak();
+    let state = shared.clone();
+    app.on_t3k_download_selected(move || {
+        if let Some(app) = weak.upgrade() {
+            download_selected(&app, &state);
+        }
+    });
+
+    let weak = app.as_weak();
+    let state = shared.clone();
+    app.on_t3k_cancel_downloads(move || {
+        if let Some(app) = weak.upgrade() {
+            cancel_downloads(&app, &state);
+        }
+    });
+
+    let weak = app.as_weak();
+    let state = shared.clone();
+    app.on_t3k_search(move |query| {
+        let Some(app) = weak.upgrade() else { return };
+        let query = query.trim().to_string();
+        let (tab, gear) = {
+            let mut library = state.library.lock().unwrap();
+            library.query = query.clone();
+            let tab = if query.is_empty() {
+                library.browse
+            } else {
+                SEARCH_TAB
+            };
+            (tab as i32, library.gear.clone().unwrap_or_default())
+        };
+        app.set_t3k_query(query.into());
+        app.invoke_t3k_load(tab, gear.into(), false);
     });
 }

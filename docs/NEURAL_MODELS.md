@@ -206,9 +206,12 @@ or `feather` when several NAM blocks are stacked.
 
 1. ✅ NAM block, model chooser, models saved in presets.
 2. ✅ IR blocks (cabinets and spaces).
-3. ✅ TONE3000 Connect (Settings): the user enters the publishable key of
-   their own TONE3000 application (`t3k_pub_…`; a secret key `t3k_cs_…` is
-   refused), the pedalboard shows a QR code and a short code, approved on a
+3. ✅ TONE3000 Connect (Settings): the pedalboard signs in as the OpenRig
+   application, whose publishable key (`t3k_pub_…`) is built in
+   (`OPENRIG_TONE3000_CLIENT_ID` at build time replaces it); a developer can
+   enter the key of their own application (a secret key `t3k_cs_…` is
+   refused). Settings saved before the built-in key (version 1) are signed
+   out once, as their refresh token belongs to the old key. The pedalboard shows a QR code and a short code, approved on a
    phone at tone3000.com/activate. Tokens are kept in
    `<data dir>/tone3000.json` (owner-only), refreshed when they expire (the
    refresh token rotates); a revoked link signs out, being offline does not.
@@ -217,8 +220,11 @@ or `feather` when several NAM blocks are stacked.
    latest, filtered by gear (the API ignores the gear filter on "latest",
    so it is applied locally). Opening a tone lists its models (A1 and A2:
    `GET /models` only returns A2 models with `architecture=2`, so both are
-   asked). Each model is downloaded only on request, one at a time (the free API
-   tier allows no bulk download), into
+   asked). Only the models the user ticks are downloaded (no "download
+   everything"): they are shown 25 per page, "Select all" ticks the page
+   shown, and 25 at most are ticked at once, as TONE3000 asked, since a
+   pack can hold up to 300 models. They are queued one after the other; every request waits its turn
+   (a burst of 12, then 25 per minute at most), into
    `models/Tone3000/<gear>/<title> [<id>]/` (as `<model> [<model id>].nam`,
    the ids hidden in the UI), with a `tone.json` keeping the
    creator, license and link; the token is only ever sent to tone3000.com.

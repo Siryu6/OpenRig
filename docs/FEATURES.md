@@ -58,15 +58,19 @@ What OpenRig does, in more technical detail than the
 - **TONE3000 Connect** (feature `tone3000`, default): Settings → TONE3000
   Connect links a [tone3000.com](https://www.tone3000.com) account with the
   OAuth device flow (QR code and short code on the screen, approved on a
-  phone). Each user enters the *publishable* key (`t3k_pub_…`) of their own
-  TONE3000 application; no key ships with the code. Once connected, the
+  phone), each user with their own account. The pedalboard signs in as the
+  OpenRig application (its *publishable* key `t3k_pub_…` is built in); a
+  developer can enter the key of their own application instead. Once connected, the
   TONE3000 features are enabled (`Features.tone3000` flag in the UI): the
   **TONE3000 library** (menu ⋮, or the T3K Browse button of a block)
   lists your favorites, your own and downloaded tones, and the trending /
-  latest ones, by gear, each with its picture, format and creator (avatar
+  latest ones, and searches TONE3000 (sent when the search is submitted), by gear, each with its picture, format and creator (avatar
   and username), following the TONE3000 design requirements. Pictures are
-  fetched when shown and kept in memory only. Models are downloaded one at a time
-  when you ask, into `models/Tone3000/<gear>/<tone>/` with the creator,
+  fetched when shown and kept in memory only. A tone's models are shown
+  25 per page, with "Select all" for the page shown (25 models ticked at
+  most, as TONE3000 asks). The models you tick are
+  downloaded one after the other, at a pace that stays under the TONE3000
+  rate limit (as every request), into `models/Tone3000/<gear>/<tone>/` with the creator,
   license and link in `tone.json`, and can be loaded straight into the block.
   Opened from a block, the library only shows the gears that block plays;
   from the menu, "Add" puts a downloaded model in a new block of its type.

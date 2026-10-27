@@ -1,11 +1,12 @@
 //! The user's TONE3000 library: tone lists, the models of a tone, and model
 //! downloads into `models/Tone3000/`.
 //!
-//! Only what the free API tier allows is used: the bounded list endpoints
-//! (favorited, created, downloaded, trending, latest) and per-model
-//! downloads, each one asked for by the user. Nothing is prefetched or
-//! cached; the creator, license and link of every downloaded tone are kept
-//! in a `tone.json` next to its files.
+//! Only what TONE3000 allows OpenRig is used: the bounded list endpoints
+//! (favorited, created, downloaded, trending, latest), the search, sent
+//! when the user submits it, and the downloads of the models the user
+//! picked, one after the other at the pace of `limiter`. Nothing is
+//! prefetched or cached; the creator, license and link of every downloaded
+//! tone are kept in a `tone.json` next to its files.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -18,8 +19,9 @@ use crate::plugins::scanner::{TONE_INFO_FILE, TONE_PICTURE_FILE};
 
 /// Folder of the models dir holding the TONE3000 downloads
 pub const FOLDER: &str = "Tone3000";
-/// Models asked per page (the API maximum)
-const PAGE_SIZE: u32 = 25;
+/// Items asked per page (the API maximum); also the models shown and ticked
+/// at once in a tone, as TONE3000 asks
+pub const PAGE_SIZE: u32 = 25;
 
 /// A list of tones
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -280,6 +282,42 @@ pub fn list(token: &str, list: List, gear: Option<&str>, page: u32) -> Result<Pa
     })
 }
 
+/// One page of the tones matching `query`, filtered by gear (API value,
+/// `None` for all)
+pub fn search(token: &str, query: &str, gear: Option<&str>, page: u32) -> Result<Page, AuthError> {
+    let mut path = format!(
+        "/tones/search?query={}&page={page}&page_size={PAGE_SIZE}",
+        encode(query.trim())
+    );
+    if let Some(gear) = gear {
+        path += &format!("&gears={}", encode(gear));
+    }
+    let response: ListResponse<Tone> = get_json(token, &path)?;
+    let mut tones = response.data;
+    if let Some(gear) = gear {
+        tones.retain(|t| t.gear == gear);
+    }
+    let page = response.page.unwrap_or(page);
+    Ok(Page {
+        tones,
+        page,
+        has_more: page < response.total_pages.unwrap_or(0),
+    })
+}
+
+/// Percent-encode a query parameter
+fn encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            b => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 /// Every model of a tone. The API leaves A2 models out unless asked, so
 /// both sets are requested.
 pub fn models(token: &str, tone: &Tone) -> Result<Vec<Model>, AuthError> {
@@ -331,7 +369,8 @@ struct ToneInfo {
 const MAX_MODEL_BYTES: u64 = 64 << 20;
 
 /// Download one model into `models_dir`; returns its path relative to it.
-/// An existing file is kept.
+/// An existing file is kept. The caller waits for its turn in `limiter`
+/// first.
 pub fn download(token: &str, models_dir: &Path, tone: &Tone, model: &Model) -> Result<PathBuf> {
     let relative = model
         .relative_path(tone)
@@ -486,6 +525,13 @@ mod tests {
         // Trending / latest answer without pagination fields
         let short: ListResponse<Tone> = serde_json::from_str(r#"{"data":[]}"#).unwrap();
         assert_eq!(short.total_pages, None);
+    }
+
+    #[test]
+    fn encodes_search_queries() {
+        assert_eq!(encode("5150 red"), "5150%20red");
+        assert_eq!(encode("AC/30 & co"), "AC%2F30%20%26%20co");
+        assert_eq!(encode("Écho"), "%C3%89cho");
     }
 
     #[test]
