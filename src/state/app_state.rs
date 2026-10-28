@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -324,6 +324,9 @@ pub struct EffectChainState {
     pub params: HashMap<usize, Vec<f32>>,
     /// Model file per block instance_id, relative to the models directory
     pub files: HashMap<usize, String>,
+    /// Files of LV2 plugins per block instance_id: parameter URI to a path
+    /// relative to the models directory
+    pub param_files: HashMap<usize, BTreeMap<String, String>>,
     /// Colour name per block instance_id (rack drawing only)
     pub colors: HashMap<usize, String>,
     pub next_instance_id: usize,
@@ -352,6 +355,7 @@ impl Default for EffectChainState {
             nodes: Vec::new(),
             params: HashMap::new(),
             files: HashMap::new(),
+            param_files: HashMap::new(),
             colors: HashMap::new(),
             next_instance_id: 0,
             stereo_mode: false,
@@ -467,6 +471,7 @@ impl EffectChainState {
         for &id in &ids {
             self.params.remove(&id);
             self.files.remove(&id);
+            self.param_files.remove(&id);
             self.colors.remove(&id);
             self.held_values.remove(&id);
         }
@@ -652,6 +657,7 @@ impl EffectChainState {
             params: self.params.clone(),
             params_by_symbol,
             files: self.files.clone(),
+            param_files: self.param_files.clone(),
             colors: self.colors.clone(),
             scenes,
             scene: self.scene,
@@ -734,6 +740,12 @@ impl EffectChainState {
         let keep = |id: &usize| ids.contains(id);
         state.files = chain
             .files
+            .iter()
+            .filter(|(id, _)| keep(id))
+            .map(|(id, f)| (*id, f.clone()))
+            .collect();
+        state.param_files = chain
+            .param_files
             .iter()
             .filter(|(id, _)| keep(id))
             .map(|(id, f)| (*id, f.clone()))
@@ -986,15 +998,21 @@ impl AppState {
     /// Files the block `uri` can load from the models directory
     /// (subdirectories included), as paths relative to it, sorted
     pub fn list_files(&self, uri: &str) -> Vec<String> {
-        fn walk(dir: &std::path::Path, root: &std::path::Path, uri: &str, out: &mut Vec<String>) {
+        self.list_files_where(|path| crate::plugins::scanner::accepts_file(uri, path))
+    }
+
+    /// Files of the models directory (subdirectories included) that
+    /// `accepts` takes, as paths relative to it, sorted
+    fn list_files_where(&self, accepts: impl Fn(&Path) -> bool) -> Vec<String> {
+        fn walk(dir: &Path, root: &Path, accepts: &dyn Fn(&Path) -> bool, out: &mut Vec<String>) {
             let Ok(entries) = std::fs::read_dir(dir) else {
                 return;
             };
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() {
-                    walk(&path, root, uri, out);
-                } else if crate::plugins::scanner::accepts_file(uri, &path) {
+                    walk(&path, root, accepts, out);
+                } else if accepts(&path) {
                     if let Ok(relative) = path.strip_prefix(root) {
                         out.push(portable(relative));
                     }
@@ -1003,7 +1021,7 @@ impl AppState {
         }
         let root = self.models_dir();
         let mut models = Vec::new();
-        walk(&root, &root, uri, &mut models);
+        walk(&root, &root, &accepts, &mut models);
         models.sort_by_key(|m| m.to_lowercase());
         models
     }
@@ -1012,8 +1030,14 @@ impl AppState {
     /// title. TONE3000 tones of another gear than the block's are left out.
     pub fn list_packs(&self, uri: &str) -> Vec<ModelPack> {
         let gears = crate::plugins::scanner::file_block(uri).map_or(&[][..], |b| b.gears);
+        self.packs_of(self.list_files(uri), Some(gears))
+    }
+
+    /// `files` grouped by tone (folder), sorted by title; with `gears`,
+    /// TONE3000 tones of another gear are left out
+    fn packs_of(&self, files: Vec<String>, gears: Option<&[&str]>) -> Vec<ModelPack> {
         let mut by_dir: Vec<(PathBuf, Vec<String>)> = Vec::new();
-        for file in self.list_files(uri) {
+        for file in files {
             let dir = Path::new(&file)
                 .parent()
                 .map(Path::to_path_buf)
@@ -1030,7 +1054,10 @@ impl AppState {
         let mut packs: Vec<ModelPack> = by_dir
             .into_iter()
             .map(|(dir, files)| ModelPack::new(&root, &dir, files))
-            .filter(|p| p.gear.as_deref().is_none_or(|g| gears.contains(&g)))
+            .filter(|p| match (gears, p.gear.as_deref()) {
+                (Some(gears), Some(gear)) => gears.contains(&gear),
+                _ => true,
+            })
             .collect();
         packs.sort_by_key(|p| p.title.to_lowercase());
         packs
@@ -1209,6 +1236,17 @@ impl AppState {
                 .files
                 .iter()
                 .map(|(id, file)| (*id, self.models_dir().join(file)))
+                .collect(),
+            param_files: chain
+                .param_files
+                .iter()
+                .map(|(id, files)| {
+                    let files = files
+                        .iter()
+                        .map(|(param, file)| (param.clone(), self.models_dir().join(file)))
+                        .collect();
+                    (*id, files)
+                })
                 .collect(),
             stereo: chain.stereo_mode,
             bpm: chain.bpm,
@@ -1456,6 +1494,104 @@ impl AppState {
                 Some(file) => c.files.insert(instance_id, file),
                 None => c.files.remove(&instance_id),
             };
+            Ok(())
+        })
+    }
+
+    /// Files chosen for the LV2 file parameters of a block, by parameter URI
+    pub fn param_files(&self, instance_id: usize) -> BTreeMap<String, String> {
+        self.effect_chain
+            .lock()
+            .unwrap()
+            .param_files
+            .get(&instance_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Choose the file of an LV2 file parameter (None to clear it, which
+    /// only takes effect on a new instance); rebuilds the chain, whose new
+    /// instance loads it before it plays
+    pub fn set_param_file(
+        &self,
+        instance_id: usize,
+        param: &str,
+        file: Option<String>,
+    ) -> Result<()> {
+        self.edit(|c| {
+            match c.find(instance_id) {
+                Some(ChainNode::Plugin { .. }) => {}
+                _ => return Err(anyhow!("Plugin {} not found", instance_id)),
+            }
+            let files = c.param_files.entry(instance_id).or_default();
+            match file {
+                Some(file) => files.insert(param.to_string(), file),
+                None => files.remove(param),
+            };
+            if files.is_empty() {
+                c.param_files.remove(&instance_id);
+            }
+            Ok(())
+        })
+    }
+
+    /// Files a block's LV2 file parameter `param` can load from the models
+    /// directory, grouped by folder like the models of the built-in blocks
+    pub fn list_param_packs(&self, uri: &str, param: &str) -> Vec<ModelPack> {
+        let Some(file_param) = self
+            .lv2_host
+            .scanner()
+            .find_by_uri(uri)
+            .and_then(|info| info.file_params.iter().find(|p| p.uri == param).cloned())
+        else {
+            return Vec::new();
+        };
+        self.packs_of(self.list_files_where(|path| file_param.accepts(path)), None)
+    }
+
+    /// Load a preset the plugin's bundle ships (`PluginInfo::presets`): its
+    /// control values, and its files. Ports and files it leaves out keep
+    /// their value. One change, saved with the chain like any other edit.
+    pub fn apply_factory_preset(&self, instance_id: usize, preset: usize) -> Result<()> {
+        let scanner = self.lv2_host.scanner();
+        let models = self.models_dir();
+        self.edit(|c| {
+            let info = match c.find(instance_id) {
+                Some(ChainNode::Plugin { uri, .. }) => scanner.find_by_uri(uri),
+                _ => None,
+            }
+            .ok_or_else(|| anyhow!("Plugin {} not found", instance_id))?;
+            let preset = info
+                .presets
+                .get(preset)
+                .ok_or_else(|| anyhow!("Preset {} not found", preset))?;
+            // Current values, with defaults for any the block lacks
+            let current = info.values_from_saved(Some(c.parameters(instance_id)), None);
+            let values: Vec<f32> = info
+                .control_inputs()
+                .zip(current)
+                .map(|(port, value)| {
+                    preset
+                        .values
+                        .iter()
+                        .find(|(symbol, _)| *symbol == port.symbol)
+                        .map_or(value, |&(_, v)| {
+                            v.clamp(port.min.min(port.max), port.max.max(port.min))
+                        })
+                })
+                .collect();
+            c.params.insert(instance_id, values);
+            if !preset.files.is_empty() {
+                let files = c.param_files.entry(instance_id).or_default();
+                for (param, path) in &preset.files {
+                    // In the models folder, kept relative like a chosen file
+                    let path = Path::new(path);
+                    let file = path
+                        .strip_prefix(&models)
+                        .map_or_else(|_| portable(path), portable);
+                    files.insert(param.clone(), file);
+                }
+            }
             Ok(())
         })
     }
@@ -2277,6 +2413,111 @@ mod tests {
     }
 
     #[test]
+    fn lv2_file_params_are_saved_and_cleaned() {
+        const MODEL: &str = "urn:test:fx#model";
+        let mut info = fx_plugin(&[("gain", 0.0)]);
+        info.file_params = vec![crate::plugins::scanner::FileParam {
+            uri: MODEL.to_string(),
+            label: "Model".to_string(),
+            extensions: crate::plugins::scanner::file_type_extensions("nammodel"),
+        }];
+        let host =
+            Lv2Host::with_scanner(crate::plugins::scanner::PluginScanner::from_plugins([info]));
+        let dir = std::env::temp_dir().join(format!("pedalboard-test-{}", uuid::Uuid::new_v4()));
+        let state = AppState::with_host(Arc::new(host), dir.clone()).unwrap();
+        std::fs::create_dir_all(state.models_dir().join("Amps")).unwrap();
+        for name in ["Amps/Plexi.nam", "Amps/tone.json", "cab.wav"] {
+            std::fs::write(state.models_dir().join(name), "{}").unwrap();
+        }
+        let packs = state.list_param_packs(FX, MODEL);
+        let files: Vec<&String> = packs.iter().flat_map(|p| &p.files).collect();
+        assert_eq!(files, ["Amps/Plexi.nam"]);
+        assert!(state.list_param_packs(FX, "urn:test:fx#other").is_empty());
+
+        let fx = state.add_plugin(FX).unwrap();
+        state
+            .set_param_file(fx, MODEL, Some("Amps/Plexi.nam".into()))
+            .unwrap();
+        // The engine gets the absolute path
+        let spec = state.spec(&state.chain(), 0);
+        assert_eq!(
+            spec.param_files[&fx],
+            [(MODEL.to_string(), state.models_dir().join("Amps/Plexi.nam"))]
+        );
+        let id = state.save_preset("Amp".into()).unwrap();
+        state.save_session().unwrap();
+
+        state.clear_chain();
+        state.load_preset(&id).unwrap();
+        assert_eq!(state.param_files(fx)[MODEL], "Amps/Plexi.nam");
+        state.clear_chain();
+        assert!(state.restore_session().unwrap());
+        assert_eq!(state.param_files(fx)[MODEL], "Amps/Plexi.nam");
+
+        state.set_param_file(fx, MODEL, None).unwrap();
+        assert!(state.chain().param_files.is_empty());
+        state
+            .set_param_file(fx, MODEL, Some("Amps/Plexi.nam".into()))
+            .unwrap();
+        state.remove_node(fx).unwrap();
+        assert!(state.chain().param_files.is_empty());
+        assert!(state.set_param_file(fx, MODEL, None).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn factory_presets_set_values_and_files() {
+        const IR: &str = "urn:test:fx#ir";
+        let mut info = fx_plugin(&[("gain", 0.0), ("tone", 0.5)]);
+        info.file_params = vec![crate::plugins::scanner::FileParam {
+            uri: IR.to_string(),
+            label: "IR".to_string(),
+            extensions: Vec::new(),
+        }];
+        let dir = std::env::temp_dir().join(format!("pedalboard-test-{}", uuid::Uuid::new_v4()));
+        let models = dir.join("models");
+        info.presets = vec![
+            crate::plugins::scanner::FactoryPreset {
+                label: "Loud".to_string(),
+                // Clamped to the port range; "tone" is left as it is
+                values: vec![("gain".to_string(), 3.0), ("gone".to_string(), 0.2)],
+                files: Vec::new(),
+            },
+            crate::plugins::scanner::FactoryPreset {
+                label: "Room".to_string(),
+                values: vec![("tone".to_string(), 0.1)],
+                files: vec![
+                    (IR.to_string(), "/bundle/ir/room.wav".to_string()),
+                    (
+                        "urn:test:fx#other".to_string(),
+                        models.join("cabs/v30.wav").display().to_string(),
+                    ),
+                ],
+            },
+        ];
+        let host =
+            Lv2Host::with_scanner(crate::plugins::scanner::PluginScanner::from_plugins([info]));
+        let state = AppState::with_host(Arc::new(host), dir.clone()).unwrap();
+        let fx = state.add_plugin(FX).unwrap();
+        state.set_parameter(fx, 1, 0.7).unwrap();
+
+        state.apply_factory_preset(fx, 0).unwrap();
+        assert_eq!(state.chain().parameters(fx), &[1.0, 0.7]);
+        assert!(state.param_files(fx).is_empty());
+
+        state.apply_factory_preset(fx, 1).unwrap();
+        assert_eq!(state.chain().parameters(fx), &[1.0, 0.1]);
+        let files = state.param_files(fx);
+        assert_eq!(files[IR], "/bundle/ir/room.wav");
+        // A file in the models folder is kept relative to it
+        assert_eq!(files["urn:test:fx#other"], "cabs/v30.wav");
+
+        assert!(state.apply_factory_preset(fx, 2).is_err());
+        assert!(state.apply_factory_preset(fx + 1, 0).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn sends_and_returns_are_blocks_of_the_preset() {
         use crate::plugins::scanner::{ret, RETURN_URI};
         let (state, dir) = state();
@@ -2424,6 +2665,8 @@ mod tests {
             num_audio_outputs: 1,
             num_control_ports: controls.len(),
             ports,
+            file_params: Vec::new(),
+            presets: Vec::new(),
         }
     }
 

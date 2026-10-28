@@ -94,6 +94,10 @@ impl Ring {
         }
     }
 
+    fn is_empty(&self) -> bool {
+        self.write.load(Ordering::Acquire) == self.read.load(Ordering::Acquire)
+    }
+
     /// Queue a message; false if there is no room for it
     fn push(&self, message: &[u8]) -> bool {
         let write = self.write.load(Ordering::Relaxed);
@@ -134,6 +138,8 @@ impl Ring {
 pub struct Channel {
     jobs: Ring,
     responses: Ring,
+    /// Jobs scheduled and not worked yet
+    pending: AtomicUsize,
     worker: OnceLock<Thread>,
     stop: AtomicBool,
 }
@@ -144,7 +150,10 @@ unsafe extern "C" fn schedule_work(handle: *mut c_void, size: u32, data: *const 
     let Some(job) = message(size, data) else {
         return ERR_UNKNOWN;
     };
+    // Counted before the worker can take it
+    channel.pending.fetch_add(1, Ordering::AcqRel);
     if !channel.jobs.push(job) {
+        channel.pending.fetch_sub(1, Ordering::AcqRel);
         return ERR_NO_SPACE;
     }
     if let Some(worker) = channel.worker.get() {
@@ -187,6 +196,7 @@ impl Feature {
         let channel = Arc::new(Channel {
             jobs: Ring::new(RING_BYTES),
             responses: Ring::new(RING_BYTES),
+            pending: AtomicUsize::new(0),
             worker: OnceLock::new(),
             stop: AtomicBool::new(false),
         });
@@ -262,6 +272,7 @@ impl Worker {
                                     job.as_ptr().cast(),
                                 );
                             }
+                            channel.pending.fetch_sub(1, Ordering::AcqRel);
                         }
                         None if channel.stop.load(Ordering::Acquire) => return,
                         None => std::thread::park(),
@@ -292,6 +303,14 @@ impl Worker {
         if let Some(end_run) = interface.end_run {
             unsafe { end_run(self.handle.0) };
         }
+    }
+}
+
+impl Worker {
+    /// True once every job scheduled so far is worked and its responses
+    /// handed to the plugin (by `end_run`)
+    pub fn is_idle(&self) -> bool {
+        self.channel.pending.load(Ordering::Acquire) == 0 && self.channel.responses.is_empty()
     }
 }
 
@@ -397,8 +416,9 @@ mod tests {
             SUCCESS
         );
 
+        assert!(!worker.is_idle());
         let deadline = Instant::now() + Duration::from_secs(5);
-        while plugin.received.lock().unwrap().len() < 2 && Instant::now() < deadline {
+        while !worker.is_idle() && Instant::now() < deadline {
             worker.end_run();
             std::thread::sleep(Duration::from_millis(1));
         }

@@ -49,9 +49,10 @@ const MIDI_QUEUE: usize = 64;
 struct AtomPort {
     buffer: Box<[u64]>,
     input: bool,
-    /// Takes MIDI events / the transport
+    /// Takes MIDI events / the transport / patch messages
     midi: bool,
     time: bool,
+    patch: bool,
 }
 
 enum Backend {
@@ -299,6 +300,7 @@ impl PluginInstance {
                             input: port.port_type == PortType::AtomInput,
                             midi: port.midi,
                             time: port.time,
+                            patch: port.patch,
                         });
                     }
                 }
@@ -469,6 +471,76 @@ impl PluginInstance {
         }
         self.tempo = None;
         self.midi_len = 0;
+    }
+
+    /// Give an LV2 plugin its files (`patch:Set` of each parameter URI to a
+    /// path), then run it on silence until it has loaded them: until its
+    /// worker is idle, at most `timeout`. Not real-time safe: for a new
+    /// instance, before the audio thread gets it.
+    pub fn load_files(
+        &mut self,
+        files: &[(String, std::path::PathBuf)],
+        timeout: std::time::Duration,
+    ) {
+        #[cfg(feature = "lv2")]
+        if let Backend::Lv2 { .. } = self.backend {
+            use super::lv2_features::map_uri;
+            let Some(port) = self
+                .atoms
+                .iter()
+                .position(|p| p.input && p.patch)
+                .or_else(|| self.atoms.iter().position(|p| p.input))
+            else {
+                debug!("{}: no atom input to send its files to", self.info.uri);
+                return;
+            };
+            let paths: Vec<(u32, String)> = files
+                .iter()
+                .filter_map(|(uri, path)| Some((map_uri(uri), path.to_str()?.to_string())))
+                .collect();
+            if paths.is_empty() {
+                return;
+            }
+            let sets: Vec<(u32, &str)> = paths.iter().map(|(u, p)| (*u, p.as_str())).collect();
+            let frames = self.max_block;
+            let deadline = std::time::Instant::now() + timeout;
+            let mut sent = 0;
+            loop {
+                self.reset_atoms();
+                if sent < sets.len() {
+                    let buffer = &mut self.atoms[port].buffer;
+                    let bytes = unsafe {
+                        std::slice::from_raw_parts_mut(
+                            buffer.as_mut_ptr() as *mut u8,
+                            buffer.len() * 8,
+                        )
+                    };
+                    sent += atom::write_patch_sets(bytes, &self.urids, &sets[sent..]).max(1);
+                }
+                for input in &mut self.audio_in {
+                    input.fill(0.0);
+                }
+                self.run(frames);
+                let idle = match &self.backend {
+                    Backend::Lv2 { worker, .. } => worker.as_ref().is_none_or(|w| w.is_idle()),
+                    _ => true,
+                };
+                if sent >= sets.len() && idle {
+                    break;
+                }
+                if std::time::Instant::now() > deadline {
+                    tracing::warn!(
+                        "{}: still loading its files after {:?}",
+                        self.info.name,
+                        timeout
+                    );
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            self.reset_atoms();
+        }
+        let _ = (files, timeout);
     }
 
     /// Send the tempo as a transport position at the next run (plugins

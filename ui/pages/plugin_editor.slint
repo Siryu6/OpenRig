@@ -1,5 +1,5 @@
 import { Theme } from "../theme.slint";
-import { ParameterInfo, ModelChoice, ColorChoice, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive } from "../types.slint";
+import { ParameterInfo, ModelChoice, FileSlot, ColorChoice, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive } from "../types.slint";
 import { EqGraph } from "../components/eq_graph.slint";
 import { DynamicsGraph } from "../components/dynamics_graph.slint";
 import { ScopeGraph } from "../components/scope_graph.slint";
@@ -60,6 +60,7 @@ component ChoiceSheet inherits Rectangle {
     in property <[ModelChoice]> choices;
     in property <bool> show-none: false;
     in property <bool> none-current: false;
+    in property <string> none-text: "None (passthrough)";
     in property <string> empty-text: "";
     in property <bool> pictures: false;     // room for the tone pictures
     callback chosen(string);                // file, "" for none
@@ -203,7 +204,7 @@ component ChoiceSheet inherits Rectangle {
                     background: none-ta.pressed ? Theme.surface-hover : root.none-current ? Theme.accent-soft : transparent;
                     Text {
                         x: Theme.space-md;
-                        text: "None (passthrough)";
+                        text: root.none-text;
                         color: root.none-current ? Theme.accent : Theme.text-secondary;
                         font-size: Theme.font-body;
                         vertical-alignment: center;
@@ -323,12 +324,19 @@ export component PluginEditor {
     in property <color> color-value;
     in property <color> auto-color;                 // "Auto": the colour of its family
     in property <string> models-dir: "";
+    // Files of an LV2 plugin (NAM LV2, Ratatouille…), one card each
+    in property <[FileSlot]> file-slots: [];
+    // Presets the plugin's bundle ships; `file` is their position
+    in property <[ModelChoice]> factory-presets: [];
 
     callback parameter-changed(int, float); // LV2 param index, value
     callback bypass-toggled();
     callback models-requested();            // refresh `models` before showing them
     callback model-chosen(string);          // "" unloads the model
     callback browse-tone3000();
+    callback factory-preset-chosen(int);
+    callback slot-files-requested(string);  // refresh `packs` with what a slot can load
+    callback slot-file-chosen(string, string); // parameter, file ("" clears it)
     // MIDI learn: tap MIDI, then touch a control and move a controller
     in property <bool> midi-available: false;
     in property <bool> midi-learning: false;
@@ -352,6 +360,8 @@ export component PluginEditor {
     private property <int> picker-pos: -1;  // position in `parameters` of the open enum picker
     private property <bool> model-picker-open: false;
     private property <bool> preset-picker-open: false;
+    private property <int> slot-picking: -1;   // file slot whose picker is open
+    private property <bool> factory-picker-open: false;
     private property <bool> color-picker-open: false;
 
     width: 100%;
@@ -697,6 +707,85 @@ export component PluginEditor {
             }
         }
 
+        // ---------------- Presets of the plugin's bundle ----------------
+        if root.factory-presets.length > 0: Card {
+            height: 64px;
+            HorizontalLayout {
+                padding: Theme.space-sm;
+                padding-left: Theme.space-lg;
+                spacing: Theme.space-sm;
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: "FACTORY SETTINGS";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-small;
+                        font-weight: Theme.weight-semibold;
+                    }
+                    Text {
+                        text: root.factory-presets.length == 1 ? "1 setting from the plugin" : root.factory-presets.length + " settings from the plugin";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-body;
+                        overflow: elide;
+                    }
+                }
+
+                Button {
+                    horizontal-stretch: 0;
+                    width: 110px;
+                    text: "Load";
+                    enabled: root.instance-id >= 0;
+                    clicked => {
+                        root.factory-picker-open = true;
+                    }
+                }
+            }
+        }
+
+        // ---------------- Files of an LV2 plugin ----------------
+        for slot[i] in root.file-slots: Card {
+            height: 64px;
+            HorizontalLayout {
+                padding: Theme.space-sm;
+                padding-left: Theme.space-lg;
+                spacing: Theme.space-sm;
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: slot.label.to-uppercase() + (slot.folder != "" ? "  ·  " + slot.folder : "");
+                        color: Theme.text-muted;
+                        font-size: Theme.font-small;
+                        font-weight: Theme.weight-semibold;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: slot.file != "" ? slot.name : "No file loaded";
+                        color: slot.file != "" ? Theme.text-primary : Theme.text-secondary;
+                        font-size: Theme.font-body;
+                        font-weight: slot.file != "" ? Theme.weight-semibold : Theme.weight-regular;
+                        overflow: elide;
+                    }
+                }
+
+                Button {
+                    horizontal-stretch: 0;
+                    width: 110px;
+                    text: "Choose";
+                    enabled: root.instance-id >= 0;
+                    clicked => {
+                        root.slot-files-requested(slot.param);
+                        root.slot-picking = i;
+                    }
+                }
+            }
+        }
+
         // ---------------- EQ curve, level curve or scope ----------------
         if root.scope.shown: ScopeGraph {
             height: min(240px, root.height * 0.36);
@@ -963,6 +1052,36 @@ export component PluginEditor {
         }
         close => {
             root.model-picker-open = false;
+        }
+    }
+
+    if root.factory-picker-open: ChoiceSheet {
+        title: "Factory settings";
+        choices: root.factory-presets;
+        chosen(file) => {
+            root.factory-preset-chosen(file.to-float());
+            root.factory-picker-open = false;
+        }
+        close => {
+            root.factory-picker-open = false;
+        }
+    }
+
+    if root.slot-picking >= 0 && root.slot-picking < root.file-slots.length: ChoiceSheet {
+        property <FileSlot> slot: root.file-slots[root.slot-picking];
+        title: "Choose: " + self.slot.label;
+        choices: root.packs;
+        pictures: root.packs-pictures;
+        show-none: true;
+        none-current: self.slot.file == "";
+        none-text: "None";
+        empty-text: "Nothing found.\nCopy " + self.slot.types + " files to\n" + root.models-dir;
+        chosen(file) => {
+            root.slot-file-chosen(self.slot.param, file);
+            root.slot-picking = -1;
+        }
+        close => {
+            root.slot-picking = -1;
         }
     }
 

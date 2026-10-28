@@ -57,14 +57,36 @@ const MANIFEST: &str = r#"
 <urn:pedalboard:test:gain> a lv2:Plugin ;
     lv2:binary <gain.so> ;
     rdfs:seeAlso <gain.ttl> .
+<urn:pedalboard:test:gain#quiet> a <http://lv2plug.in/ns/ext/presets#Preset> ;
+    lv2:appliesTo <urn:pedalboard:test:gain> ;
+    rdfs:seeAlso <presets.ttl> .
+"#;
+
+/// A factory preset, with a control value and a file
+const PRESETS: &str = r#"
+@prefix lv2: <http://lv2plug.in/ns/lv2core#> .
+@prefix pset: <http://lv2plug.in/ns/ext/presets#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix state: <http://lv2plug.in/ns/ext/state#> .
+<urn:pedalboard:test:gain#quiet> a pset:Preset ;
+    lv2:appliesTo <urn:pedalboard:test:gain> ;
+    rdfs:label "Quiet room" ;
+    lv2:port [ lv2:symbol "gain" ; pset:value 0.25 ] ;
+    state:state [ <urn:pedalboard:test:gain#ir> <ir/room.wav> ] .
 "#;
 
 const TTL: &str = r#"
 @prefix lv2: <http://lv2plug.in/ns/lv2core#> .
 @prefix doap: <http://usefulinc.com/ns/doap#> .
 @prefix units: <http://lv2plug.in/ns/extensions/units#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+<urn:pedalboard:test:gain#ir> a lv2:Parameter ;
+    rdfs:label "Room" ;
+    rdfs:range <http://lv2plug.in/ns/ext/atom#Path> ;
+    <http://moddevices.com/ns/mod#fileTypes> "ir" .
 <urn:pedalboard:test:gain> a lv2:Plugin, lv2:AmplifierPlugin ;
     doap:name "Test Gain" ;
+    <http://lv2plug.in/ns/ext/patch#writable> <urn:pedalboard:test:gain#ir> ;
     lv2:port [
         a lv2:InputPort, lv2:ControlPort ; lv2:index 0 ; lv2:symbol "gain" ; lv2:name "Gain" ;
         lv2:default 1.0 ; lv2:minimum 0.0 ; lv2:maximum 2.0 ; units:unit units:coef
@@ -83,6 +105,7 @@ fn hosts_a_real_lv2_plugin() {
         eprintln!("skipped: cannot compile the test plugin (no C compiler or LV2 headers)");
         return;
     };
+    std::fs::write(root.join("gain.lv2/presets.ttl"), PRESETS).unwrap();
     let host = host_from_path(&support::lv2_path(&root));
     let info = host
         .scanner()
@@ -91,6 +114,21 @@ fn hosts_a_real_lv2_plugin() {
         .clone();
     assert_eq!(info.name, "Test Gain");
     assert_eq!(info.default_parameters(), vec![1.0]);
+
+    // Its file parameter, and the preset of its bundle with a file
+    let ir = "urn:pedalboard:test:gain#ir";
+    assert_eq!(info.file_params.len(), 1);
+    assert_eq!(info.file_params[0].uri, ir);
+    assert_eq!(info.file_params[0].label, "Room");
+    assert_eq!(info.file_params[0].extensions, ["wav", "flac"]);
+    assert_eq!(info.presets.len(), 1);
+    let preset = &info.presets[0];
+    assert_eq!(preset.label, "Quiet room");
+    assert_eq!(preset.values, [("gain".to_string(), 0.25)]);
+    let room = std::fs::canonicalize(&root)
+        .unwrap()
+        .join("gain.lv2/ir/room.wav");
+    assert_eq!(preset.files, [(ir.to_string(), room.display().to_string())]);
 
     // Direct instance: default gain, then clamped parameter changes
     let mut plugin = host.instantiate(URI, 0, 48000.0, 64, None).unwrap();
