@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/Siryu6/OpenRig/compare/v0.7.0...v0.8.0) - 2026-10-28
+
+### Added
+
+- *(lv2)* load the factory presets of LV2 plugins
+- *(lv2)* load files in LV2 plugins with file parameters
+
+### Fixed
+
+- *(ui)* keep the menu button on screen at 800x480
+
+### Other
+
+- Merge pull request #43 from Siryu6/feat/lv2-file-params
+
 ## [0.7.0](https://github.com/Siryu6/OpenRig/compare/v0.6.1...v0.7.0) - 2026-10-27
 
 ### Added
