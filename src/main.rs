@@ -300,6 +300,7 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
         app.set_selected_dyn(DynView::default());
         app.set_selected_scope(ScopeView::default());
         app.set_selected_file_slots(model(Vec::new()));
+        app.set_selected_factory_presets(model(Vec::new()));
         if app.get_current_view() == 1 {
             app.set_current_view(0);
         }
@@ -387,6 +388,38 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
     app.set_selected_file_label(view.file_label.into());
     app.set_selected_file_types(view.file_types.into());
     app.set_selected_file_slots(model(file_slots(state, chain, view.instance_id)));
+    app.set_selected_factory_presets(model(factory_presets(state, chain, view.instance_id)));
+}
+
+/// The presets an LV2 block's bundle ships, by position
+fn factory_presets(
+    state: &AppState,
+    chain: &EffectChainState,
+    instance_id: usize,
+) -> Vec<ModelChoice> {
+    let Some(ChainNode::Plugin { uri, .. }) = chain.find(instance_id) else {
+        return Vec::new();
+    };
+    let scanner = state.lv2_host.scanner();
+    let Some(info) = scanner.find_by_uri(uri) else {
+        return Vec::new();
+    };
+    info.presets
+        .iter()
+        .enumerate()
+        .map(|(i, preset)| ModelChoice {
+            title: preset.label.as_str().into(),
+            subtitle: match preset.files.len() {
+                0 => SharedString::new(),
+                1 => "Loads a file".into(),
+                n => format!("Loads {n} files").into(),
+            },
+            image: Default::default(),
+            t3k: false,
+            file: i.to_string().into(),
+            current: false,
+        })
+        .collect()
 }
 
 /// The file parameters of an LV2 block, with the file each one loads
@@ -780,6 +813,19 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
             };
             let file = (!file.is_empty()).then(|| file.to_string());
             if report(&app, state.set_param_file(target, &param, file)).is_some() {
+                refresh_chain(&app, state);
+            }
+        }
+    );
+    on!(
+        app,
+        state,
+        on_apply_factory_preset,
+        |app, state, instance_id, preset| {
+            let (Some(target), Ok(preset)) = (id(instance_id), usize::try_from(preset)) else {
+                return;
+            };
+            if report(&app, state.apply_factory_preset(target, preset)).is_some() {
                 refresh_chain(&app, state);
             }
         }

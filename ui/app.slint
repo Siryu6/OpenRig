@@ -109,6 +109,7 @@ export component App inherits Window {
     in-out property <image> selected-file-image;       // its picture, saved with it
     in-out property <[ModelChoice]> selected-presets: [];
     in-out property <[FileSlot]> selected-file-slots: [];  // files of an LV2 plugin
+    in-out property <[ModelChoice]> selected-factory-presets: [];  // presets of its bundle
     in-out property <string> selected-preset-name: "";
     in-out property <[ModelChoice]> available-packs: [];
     in-out property <bool> available-packs-pictures: false;  // TONE3000 tones among them
@@ -275,6 +276,7 @@ export component App inherits Window {
     callback set-model(int, string);                 // instance-id, file ("" = none)
     callback refresh-slot-files(string);             // files a FileSlot can load, into available-packs
     callback set-param-file(int, string, string);    // instance-id, parameter, file ("" = none)
+    callback apply-factory-preset(int, int);         // instance-id, position of the preset
 
     callback add-split(string);                      // "ab", "mix" or "lr"
     callback add-plugin-to-split-top(int, string);   // split instance-id, plugin uri
@@ -380,6 +382,7 @@ export component App inherits Window {
         root.selected-file = "";
         root.selected-presets = [];
         root.selected-file-slots = [];
+        root.selected-factory-presets = [];
         root.select-node(root.positioned-nodes[idx].instance-id);
     }
 
@@ -644,6 +647,10 @@ export component App inherits Window {
                 packs-pictures: root.available-packs-pictures;
                 models-dir: root.models-dir;
                 file-slots: root.selected-file-slots;
+                factory-presets: root.selected-factory-presets;
+                factory-preset-chosen(preset) => {
+                    root.apply-factory-preset(root.selected-instance-id, preset);
+                }
                 colors: root.block-colors;
                 color: root.selected-color;
                 color-value: root.selected-color-value;

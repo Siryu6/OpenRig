@@ -109,6 +109,19 @@ pub struct PluginInfo {
     /// Files the plugin loads (LV2 parameters with an atom:Path range)
     #[serde(default)]
     pub file_params: Vec<FileParam>,
+    /// Presets shipped in the plugin's bundle (`pset:Preset`), by label
+    #[serde(default)]
+    pub presets: Vec<FactoryPreset>,
+}
+
+/// A preset an LV2 bundle ships (`pset:Preset`), shown as a factory setting
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FactoryPreset {
+    pub label: String,
+    /// Control values by port symbol
+    pub values: Vec<(String, f32)>,
+    /// Files by parameter URI (`state:state`), as absolute paths
+    pub files: Vec<(String, String)>,
 }
 
 /// A file an LV2 plugin loads: a `patch:writable` parameter whose range is
@@ -709,6 +722,7 @@ fn demo_plugin(
         num_control_ports: controls.len(),
         ports,
         file_params: Vec::new(),
+        presets: Vec::new(),
     }
 }
 

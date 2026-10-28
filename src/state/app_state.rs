@@ -1549,6 +1549,53 @@ impl AppState {
         self.packs_of(self.list_files_where(|path| file_param.accepts(path)), None)
     }
 
+    /// Load a preset the plugin's bundle ships (`PluginInfo::presets`): its
+    /// control values, and its files. Ports and files it leaves out keep
+    /// their value. One change, saved with the chain like any other edit.
+    pub fn apply_factory_preset(&self, instance_id: usize, preset: usize) -> Result<()> {
+        let scanner = self.lv2_host.scanner();
+        let models = self.models_dir();
+        self.edit(|c| {
+            let info = match c.find(instance_id) {
+                Some(ChainNode::Plugin { uri, .. }) => scanner.find_by_uri(uri),
+                _ => None,
+            }
+            .ok_or_else(|| anyhow!("Plugin {} not found", instance_id))?;
+            let preset = info
+                .presets
+                .get(preset)
+                .ok_or_else(|| anyhow!("Preset {} not found", preset))?;
+            // Current values, with defaults for any the block lacks
+            let current = info.values_from_saved(Some(c.parameters(instance_id)), None);
+            let values: Vec<f32> = info
+                .control_inputs()
+                .zip(current)
+                .map(|(port, value)| {
+                    preset
+                        .values
+                        .iter()
+                        .find(|(symbol, _)| *symbol == port.symbol)
+                        .map_or(value, |&(_, v)| {
+                            v.clamp(port.min.min(port.max), port.max.max(port.min))
+                        })
+                })
+                .collect();
+            c.params.insert(instance_id, values);
+            if !preset.files.is_empty() {
+                let files = c.param_files.entry(instance_id).or_default();
+                for (param, path) in &preset.files {
+                    // In the models folder, kept relative like a chosen file
+                    let path = Path::new(path);
+                    let file = path
+                        .strip_prefix(&models)
+                        .map_or_else(|_| portable(path), portable);
+                    files.insert(param.clone(), file);
+                }
+            }
+            Ok(())
+        })
+    }
+
     /// Set a plugin parameter (clamped to the port range); returns the value
     pub fn set_parameter(&self, instance_id: usize, index: usize, value: f32) -> Result<f32> {
         self.tweak(|c| {
@@ -2419,6 +2466,58 @@ mod tests {
     }
 
     #[test]
+    fn factory_presets_set_values_and_files() {
+        const IR: &str = "urn:test:fx#ir";
+        let mut info = fx_plugin(&[("gain", 0.0), ("tone", 0.5)]);
+        info.file_params = vec![crate::plugins::scanner::FileParam {
+            uri: IR.to_string(),
+            label: "IR".to_string(),
+            extensions: Vec::new(),
+        }];
+        let dir = std::env::temp_dir().join(format!("pedalboard-test-{}", uuid::Uuid::new_v4()));
+        let models = dir.join("models");
+        info.presets = vec![
+            crate::plugins::scanner::FactoryPreset {
+                label: "Loud".to_string(),
+                // Clamped to the port range; "tone" is left as it is
+                values: vec![("gain".to_string(), 3.0), ("gone".to_string(), 0.2)],
+                files: Vec::new(),
+            },
+            crate::plugins::scanner::FactoryPreset {
+                label: "Room".to_string(),
+                values: vec![("tone".to_string(), 0.1)],
+                files: vec![
+                    (IR.to_string(), "/bundle/ir/room.wav".to_string()),
+                    (
+                        "urn:test:fx#other".to_string(),
+                        models.join("cabs/v30.wav").display().to_string(),
+                    ),
+                ],
+            },
+        ];
+        let host =
+            Lv2Host::with_scanner(crate::plugins::scanner::PluginScanner::from_plugins([info]));
+        let state = AppState::with_host(Arc::new(host), dir.clone()).unwrap();
+        let fx = state.add_plugin(FX).unwrap();
+        state.set_parameter(fx, 1, 0.7).unwrap();
+
+        state.apply_factory_preset(fx, 0).unwrap();
+        assert_eq!(state.chain().parameters(fx), &[1.0, 0.7]);
+        assert!(state.param_files(fx).is_empty());
+
+        state.apply_factory_preset(fx, 1).unwrap();
+        assert_eq!(state.chain().parameters(fx), &[1.0, 0.1]);
+        let files = state.param_files(fx);
+        assert_eq!(files[IR], "/bundle/ir/room.wav");
+        // A file in the models folder is kept relative to it
+        assert_eq!(files["urn:test:fx#other"], "cabs/v30.wav");
+
+        assert!(state.apply_factory_preset(fx, 2).is_err());
+        assert!(state.apply_factory_preset(fx + 1, 0).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn sends_and_returns_are_blocks_of_the_preset() {
         use crate::plugins::scanner::{ret, RETURN_URI};
         let (state, dir) = state();
@@ -2567,6 +2666,7 @@ mod tests {
             num_control_ports: controls.len(),
             ports,
             file_params: Vec::new(),
+            presets: Vec::new(),
         }
     }
 

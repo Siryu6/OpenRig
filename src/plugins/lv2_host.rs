@@ -264,7 +264,9 @@ fn world_on(path: &str) -> lilv::World {
 #[cfg(feature = "lv2")]
 mod discovery {
     use super::super::lv2_features::SUPPORTED_FEATURES;
-    use super::super::scanner::{FileParam, PluginCategory, PluginInfo, PortInfo, PortType};
+    use super::super::scanner::{
+        FactoryPreset, FileParam, PluginCategory, PluginInfo, PortInfo, PortType,
+    };
     use lilv::node::Node;
     use lilv::World;
     use tracing::{debug, warn};
@@ -340,6 +342,70 @@ mod discovery {
             });
         }
         params
+    }
+
+    /// The presets of a plugin's bundle: control values by port symbol,
+    /// and the files of its file parameters from their `state:state`
+    fn presets(
+        world: &World,
+        plugin: &lilv::plugin::Plugin,
+        file_params: &[FileParam],
+    ) -> Vec<FactoryPreset> {
+        let uri = |s: &str| world.new_uri(s);
+        let preset_class = uri("http://lv2plug.in/ns/ext/presets#Preset");
+        let value = uri("http://lv2plug.in/ns/ext/presets#value");
+        let port = uri(&format!("{LV2}port"));
+        let symbol = uri(&format!("{LV2}symbol"));
+        let label = uri("http://www.w3.org/2000/01/rdf-schema#label");
+        let state = uri("http://lv2plug.in/ns/ext/state#state");
+        let number = |n: &lilv::node::Node| n.as_float().or(n.as_int().map(|i| i as f32));
+        let mut presets: Vec<FactoryPreset> = Vec::new();
+        let Some(related) = plugin.related(Some(&preset_class)) else {
+            return presets;
+        };
+        for preset in related.iter() {
+            // Presets live in files of their own, loaded on demand
+            let _ = world.load_resource(&preset);
+            let Some(name) = world
+                .get(Some(&preset), Some(&label), None)
+                .and_then(|n| n.as_str().map(str::to_string))
+            else {
+                continue;
+            };
+            let values: Vec<(String, f32)> = world
+                .find_nodes(Some(&preset), &port, None)
+                .iter()
+                .filter_map(|p| {
+                    let symbol = world.get(Some(&p), Some(&symbol), None)?;
+                    let value = world.get(Some(&p), Some(&value), None)?;
+                    Some((symbol.as_str()?.to_string(), number(&value)?))
+                })
+                .collect();
+            let state = world.get(Some(&preset), Some(&state), None);
+            let files: Vec<(String, String)> = file_params
+                .iter()
+                .filter_map(|param| {
+                    let file = world.get(state.as_ref(), Some(&uri(&param.uri)), None)?;
+                    let path = match file.path() {
+                        Some((_, path)) => path,
+                        None => file.as_str()?.to_string(),
+                    };
+                    Some((param.uri.clone(), path))
+                })
+                .collect();
+            // Plugin state other than files is not restored: a preset
+            // made only of it would do nothing
+            if values.is_empty() && files.is_empty() {
+                continue;
+            }
+            presets.push(FactoryPreset {
+                label: name,
+                values,
+                files,
+            });
+        }
+        presets.sort_by_key(|p| p.label.to_lowercase());
+        presets
     }
 
     pub fn scan(world: &World) -> Vec<PluginInfo> {
@@ -480,6 +546,7 @@ mod discovery {
             };
             let class = class_uri.rsplit('#').next().unwrap_or_default().to_string();
 
+            let file_params = file_params(world, &plugin);
             found.push(PluginInfo {
                 name: plugin
                     .name()
@@ -497,7 +564,8 @@ mod discovery {
                 num_audio_outputs: audio_out,
                 num_control_ports: count(PortType::ControlInput),
                 ports,
-                file_params: file_params(world, &plugin),
+                presets: presets(world, &plugin, &file_params),
+                file_params,
             });
         }
         found

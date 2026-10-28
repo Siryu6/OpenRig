@@ -541,6 +541,7 @@ mod tests {
             num_control_ports: ports.len(),
             ports,
             file_params: Vec::new(),
+            presets: Vec::new(),
         }
     }
 
@@ -933,6 +934,7 @@ mod tests {
                 num_control_ports: p.controls.len(),
                 ports,
                 file_params: Vec::new(),
+                presets: Vec::new(),
             }
         }
     }

@@ -326,12 +326,15 @@ export component PluginEditor {
     in property <string> models-dir: "";
     // Files of an LV2 plugin (NAM LV2, Ratatouille…), one card each
     in property <[FileSlot]> file-slots: [];
+    // Presets the plugin's bundle ships; `file` is their position
+    in property <[ModelChoice]> factory-presets: [];
 
     callback parameter-changed(int, float); // LV2 param index, value
     callback bypass-toggled();
     callback models-requested();            // refresh `models` before showing them
     callback model-chosen(string);          // "" unloads the model
     callback browse-tone3000();
+    callback factory-preset-chosen(int);
     callback slot-files-requested(string);  // refresh `packs` with what a slot can load
     callback slot-file-chosen(string, string); // parameter, file ("" clears it)
     // MIDI learn: tap MIDI, then touch a control and move a controller
@@ -358,6 +361,7 @@ export component PluginEditor {
     private property <bool> model-picker-open: false;
     private property <bool> preset-picker-open: false;
     private property <int> slot-picking: -1;   // file slot whose picker is open
+    private property <bool> factory-picker-open: false;
     private property <bool> color-picker-open: false;
 
     width: 100%;
@@ -703,6 +707,44 @@ export component PluginEditor {
             }
         }
 
+        // ---------------- Presets of the plugin's bundle ----------------
+        if root.factory-presets.length > 0: Card {
+            height: 64px;
+            HorizontalLayout {
+                padding: Theme.space-sm;
+                padding-left: Theme.space-lg;
+                spacing: Theme.space-sm;
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: "FACTORY SETTINGS";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-small;
+                        font-weight: Theme.weight-semibold;
+                    }
+                    Text {
+                        text: root.factory-presets.length == 1 ? "1 setting from the plugin" : root.factory-presets.length + " settings from the plugin";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-body;
+                        overflow: elide;
+                    }
+                }
+
+                Button {
+                    horizontal-stretch: 0;
+                    width: 110px;
+                    text: "Load";
+                    enabled: root.instance-id >= 0;
+                    clicked => {
+                        root.factory-picker-open = true;
+                    }
+                }
+            }
+        }
+
         // ---------------- Files of an LV2 plugin ----------------
         for slot[i] in root.file-slots: Card {
             height: 64px;
@@ -1010,6 +1052,18 @@ export component PluginEditor {
         }
         close => {
             root.model-picker-open = false;
+        }
+    }
+
+    if root.factory-picker-open: ChoiceSheet {
+        title: "Factory settings";
+        choices: root.factory-presets;
+        chosen(file) => {
+            root.factory-preset-chosen(file.to-float());
+            root.factory-picker-open = false;
+        }
+        close => {
+            root.factory-picker-open = false;
         }
     }
 
