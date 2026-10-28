@@ -4,13 +4,15 @@ import { ResourceStatus } from "../types.slint";
 import { LogoMark } from "logo.slint";
 
 // One navigation tab: icon above label, lit (LED strip) when active.
+// Compact: icon only, for narrow screens.
 component NavTab inherits Rectangle {
     in property <string> icon;
     in property <string> label;
     in property <bool> active: false;
+    in property <bool> compact: false;
     callback clicked();
 
-    width: 76px;
+    width: root.compact ? 52px : 76px;
     border-radius: Theme.radius-md;
     background: ta.pressed ? Theme.surface-hover : transparent;
 
@@ -33,7 +35,7 @@ component NavTab inherits Rectangle {
                 color: root.active ? Theme.accent : Theme.text-secondary;
             }
         }
-        Text {
+        if !root.compact: Text {
             text: root.label.to-uppercase();
             color: root.active ? Theme.text-primary : Theme.text-secondary;
             font-size: 10px;
@@ -76,6 +78,11 @@ export component TopBar inherits Rectangle {
     height: Theme.top-bar-height;
     background: Theme.panel;
 
+    // The full bar (preset box, meter, labelled tabs, menu) needs about
+    // 850px. Below that, the tabs drop their labels and the preset box
+    // shrinks, so the menu button never leaves the screen (800x480 DSI).
+    property <bool> compact: root.width < 880px;
+
     HorizontalLayout {
         padding-left: Theme.space-sm;
         padding-right: Theme.space-sm;
@@ -114,7 +121,10 @@ export component TopBar inherits Rectangle {
 
         // Patch display: the preset, as on the screen of a modeler
         if !root.show-back-button: Rectangle {
-            width: 240px;
+            min-width: 140px;
+            preferred-width: 240px;
+            max-width: 240px;
+            horizontal-stretch: 1;
             border-radius: Theme.radius-md;
             background: preset-ta.pressed ? Theme.surface-hover : Theme.display;
             border-width: 1px;
@@ -252,6 +262,7 @@ export component TopBar inherits Rectangle {
             NavTab {
                 icon: "rack";
                 label: "Rack";
+                compact: root.compact;
                 active: root.active-tab == "rack";
                 clicked => {
                     root.rack-clicked();
@@ -260,6 +271,7 @@ export component TopBar inherits Rectangle {
             NavTab {
                 icon: "presets";
                 label: "Presets";
+                compact: root.compact;
                 active: root.active-tab == "presets";
                 clicked => {
                     root.presets-clicked();
@@ -268,6 +280,7 @@ export component TopBar inherits Rectangle {
             NavTab {
                 icon: "live";
                 label: "Live";
+                compact: root.compact;
                 active: root.active-tab == "live";
                 clicked => {
                     root.live-clicked();
@@ -276,6 +289,7 @@ export component TopBar inherits Rectangle {
             NavTab {
                 icon: "tuner";
                 label: "Tuner";
+                compact: root.compact;
                 active: root.active-tab == "tuner";
                 clicked => {
                     root.tuner-clicked();
@@ -284,6 +298,7 @@ export component TopBar inherits Rectangle {
             NavTab {
                 icon: "looper";
                 label: "Looper";
+                compact: root.compact;
                 active: root.active-tab == "looper";
                 clicked => {
                     root.looper-clicked();
