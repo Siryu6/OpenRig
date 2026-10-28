@@ -1,7 +1,8 @@
 //! Events written into the atom input ports of LV2 plugins before each run:
 //! the transport (`time:Position`, so tempo-synced plugins follow the
-//! pedalboard tempo) and MIDI messages. Plain byte layout from the LV2 atom
-//! spec, written in place without allocating (audio thread).
+//! pedalboard tempo) and MIDI messages, plus the `patch:Set` messages that
+//! give a plugin its files. Plain byte layout from the LV2 atom spec,
+//! written in place without allocating (audio thread).
 
 use crate::midi::RawMidi;
 
@@ -11,6 +12,12 @@ pub const ATOM_LONG: &str = "http://lv2plug.in/ns/ext/atom#Long";
 pub const ATOM_INT: &str = "http://lv2plug.in/ns/ext/atom#Int";
 pub const MIDI_EVENT: &str = "http://lv2plug.in/ns/ext/midi#MidiEvent";
 pub const TIME_POSITION: &str = "http://lv2plug.in/ns/ext/time#Position";
+pub const PATCH_MESSAGE: &str = "http://lv2plug.in/ns/ext/patch#Message";
+const ATOM_PATH: &str = "http://lv2plug.in/ns/ext/atom#Path";
+const ATOM_URID: &str = "http://lv2plug.in/ns/ext/atom#URID";
+const PATCH_SET: &str = "http://lv2plug.in/ns/ext/patch#Set";
+const PATCH_PROPERTY: &str = "http://lv2plug.in/ns/ext/patch#property";
+const PATCH_VALUE: &str = "http://lv2plug.in/ns/ext/patch#value";
 const TIME_SPEED: &str = "http://lv2plug.in/ns/ext/time#speed";
 const TIME_BPM: &str = "http://lv2plug.in/ns/ext/time#beatsPerMinute";
 const TIME_BAR: &str = "http://lv2plug.in/ns/ext/time#bar";
@@ -34,6 +41,11 @@ pub struct AtomUrids {
     pub bar_beat: u32,
     pub beat_unit: u32,
     pub beats_per_bar: u32,
+    pub path: u32,
+    pub urid: u32,
+    pub patch_set: u32,
+    pub patch_property: u32,
+    pub patch_value: u32,
 }
 
 impl AtomUrids {
@@ -52,6 +64,11 @@ impl AtomUrids {
             bar_beat: map(TIME_BAR_BEAT),
             beat_unit: map(TIME_BEAT_UNIT),
             beats_per_bar: map(TIME_BEATS_PER_BAR),
+            path: map(ATOM_PATH),
+            urid: map(ATOM_URID),
+            patch_set: map(PATCH_SET),
+            patch_property: map(PATCH_PROPERTY),
+            patch_value: map(PATCH_VALUE),
         }
     }
 }
@@ -138,6 +155,45 @@ pub fn write_input(buf: &mut [u8], urids: &AtomUrids, bpm: Option<f32>, midi: &[
     w.buf[..4].copy_from_slice(&size.to_ne_bytes());
 }
 
+/// Size of the body of a `patch:Set` of a path of `len` bytes: object
+/// header, the property (a URID) and the value (the path, NUL-terminated)
+fn patch_set_body(len: usize) -> usize {
+    8 + 24 + (16 + len + 1).next_multiple_of(8)
+}
+
+/// Write an input sequence holding a `patch:Set` of each (property URID,
+/// path), at frame 0. Sets that do not fit are dropped; returns how many
+/// were written. The buffer must start 8-byte aligned.
+pub fn write_patch_sets(buf: &mut [u8], urids: &AtomUrids, sets: &[(u32, &str)]) -> usize {
+    let mut w = Writer { buf, at: 0 };
+    w.u32(0);
+    w.u32(urids.sequence);
+    w.u32(0); // unit: frames
+    w.u32(0);
+    let mut written = 0;
+    for &(property, path) in sets {
+        let body = patch_set_body(path.len());
+        if !w.fits(16 + body) {
+            break;
+        }
+        w.event(body as u32, urids.object);
+        w.u32(0); // id
+        w.u32(urids.patch_set);
+        w.property(urids.patch_property, urids.urid, &property.to_ne_bytes());
+        w.u32(urids.patch_value);
+        w.u32(0);
+        w.u32(path.len() as u32 + 1);
+        w.u32(urids.path);
+        w.bytes(path.as_bytes());
+        w.bytes(&[0]);
+        w.pad();
+        written += 1;
+    }
+    let size = (w.at - 8) as u32;
+    w.buf[..4].copy_from_slice(&size.to_ne_bytes());
+    written
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,6 +212,11 @@ mod tests {
             TIME_BAR_BEAT,
             TIME_BEAT_UNIT,
             TIME_BEATS_PER_BAR,
+            ATOM_PATH,
+            ATOM_URID,
+            PATCH_SET,
+            PATCH_PROPERTY,
+            PATCH_VALUE,
         ];
         AtomUrids::new(1, |uri| {
             names.iter().position(|n| *n == uri).unwrap() as u32 + 2
@@ -216,5 +277,39 @@ mod tests {
         write_input(&mut buf, &urids(), Some(90.0), &[note, note]);
         // No room for the position; one note fits
         assert_eq!(u32_at(&buf, 0), 8 + 24);
+    }
+
+    #[test]
+    fn patch_set_of_a_path() {
+        let u = urids();
+        let mut buf = [0u8; 256];
+        assert_eq!(write_patch_sets(&mut buf, &u, &[(99, "/m/a.nam")]), 1);
+        // Event: frame, then an object atom of the patch:Set body
+        let body = u32_at(&buf, 24) as usize;
+        assert_eq!(body, patch_set_body(8));
+        assert_eq!(u32_at(&buf, 28), u.object);
+        assert_eq!(u32_at(&buf, 36), u.patch_set);
+        // patch:property is the parameter, as a URID
+        assert_eq!(u32_at(&buf, 40), u.patch_property);
+        assert_eq!(u32_at(&buf, 52), u.urid);
+        assert_eq!(u32_at(&buf, 56), 99);
+        // patch:value is the path, NUL-terminated
+        assert_eq!(u32_at(&buf, 64), u.patch_value);
+        assert_eq!(u32_at(&buf, 72), 9);
+        assert_eq!(u32_at(&buf, 76), u.path);
+        assert_eq!(&buf[80..89], b"/m/a.nam\0");
+        // The sequence covers its body and the padded event
+        assert_eq!(u32_at(&buf, 0) as usize, 8 + 16 + body);
+        assert_eq!(body % 8, 0);
+    }
+
+    #[test]
+    fn patch_sets_that_do_not_fit_are_dropped() {
+        let mut buf = [0u8; 96];
+        let long = "x".repeat(64);
+        assert_eq!(
+            write_patch_sets(&mut buf, &urids(), &[(1, "a"), (2, &long)]),
+            1
+        );
     }
 }

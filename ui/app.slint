@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
 import {
     PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus,
-    T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile, RoutingOutput, RoutingBlock, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap
+    T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile, RoutingOutput, RoutingBlock, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot
 } from "types.slint";
 // Pages
 import { PluginRack } from "pages/rack.slint";
@@ -28,7 +28,7 @@ import { PlotEvents } from "components/plot.slint";
 
 // Re-export the data types used by the Rust side
 export { ChoiceSearch, Features, PlotEvents, TextEdit, TextEditing, Theme }
-export { PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap }
+export { PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot }
 
 export component App inherits Window {
     title: "OpenRig";
@@ -108,6 +108,7 @@ export component App inherits Window {
     in-out property <bool> selected-file-t3k: false;   // a TONE3000 download
     in-out property <image> selected-file-image;       // its picture, saved with it
     in-out property <[ModelChoice]> selected-presets: [];
+    in-out property <[FileSlot]> selected-file-slots: [];  // files of an LV2 plugin
     in-out property <string> selected-preset-name: "";
     in-out property <[ModelChoice]> available-packs: [];
     in-out property <bool> available-packs-pictures: false;  // TONE3000 tones among them
@@ -272,6 +273,8 @@ export component App inherits Window {
     callback toggle-node-bypass(int);                // instance-id
     callback refresh-models();
     callback set-model(int, string);                 // instance-id, file ("" = none)
+    callback refresh-slot-files(string);             // files a FileSlot can load, into available-packs
+    callback set-param-file(int, string, string);    // instance-id, parameter, file ("" = none)
 
     callback add-split(string);                      // "ab", "mix" or "lr"
     callback add-plugin-to-split-top(int, string);   // split instance-id, plugin uri
@@ -376,6 +379,7 @@ export component App inherits Window {
         root.selected-uses-file = false;
         root.selected-file = "";
         root.selected-presets = [];
+        root.selected-file-slots = [];
         root.select-node(root.positioned-nodes[idx].instance-id);
     }
 
@@ -639,6 +643,7 @@ export component App inherits Window {
                 packs: root.available-packs;
                 packs-pictures: root.available-packs-pictures;
                 models-dir: root.models-dir;
+                file-slots: root.selected-file-slots;
                 colors: root.block-colors;
                 color: root.selected-color;
                 color-value: root.selected-color-value;
@@ -680,6 +685,12 @@ export component App inherits Window {
                 }
                 model-chosen(file) => {
                     root.set-model(root.selected-instance-id, file);
+                }
+                slot-files-requested(param) => {
+                    root.refresh-slot-files(param);
+                }
+                slot-file-chosen(param, file) => {
+                    root.set-param-file(root.selected-instance-id, param, file);
                 }
                 browse-tone3000 => {
                     root.open-tone3000(root.selected-instance-id);

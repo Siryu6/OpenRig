@@ -58,6 +58,10 @@ pub struct PortInfo {
     /// Atom input taking the transport (atom:supports time:Position)
     #[serde(default)]
     pub time: bool,
+    /// Atom input taking patch messages (atom:supports patch:Message), the
+    /// one file parameters are set through
+    #[serde(default)]
+    pub patch: bool,
 }
 
 impl PortInfo {
@@ -102,6 +106,68 @@ pub struct PluginInfo {
     pub num_audio_outputs: usize,
     pub num_control_ports: usize,
     pub ports: Vec<PortInfo>,
+    /// Files the plugin loads (LV2 parameters with an atom:Path range)
+    #[serde(default)]
+    pub file_params: Vec<FileParam>,
+}
+
+/// A file an LV2 plugin loads: a `patch:writable` parameter whose range is
+/// `atom:Path`, set with a `patch:Set` message (NAM LV2, Ratatouille…)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FileParam {
+    /// URI of the parameter, the key presets save the file under
+    pub uri: String,
+    pub label: String,
+    /// Extensions it takes, lowercase without the dot; empty: any file
+    pub extensions: Vec<String>,
+}
+
+impl FileParam {
+    /// True if the plugin takes `path` for this parameter
+    pub fn accepts(&self, path: &std::path::Path) -> bool {
+        path.file_name()
+            .is_some_and(|n| n != TONE_INFO_FILE && n != TONE_PICTURE_FILE)
+            && (self.extensions.is_empty()
+                || path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| self.extensions.contains(&e.to_ascii_lowercase())))
+    }
+}
+
+/// Extensions of a `mod:fileTypes` list ("nam,nammodel,json"): the names
+/// MOD gives to kinds of files become their extensions, anything else is
+/// taken as an extension
+pub fn file_type_extensions(types: &str) -> Vec<String> {
+    let mut extensions: Vec<String> = Vec::new();
+    for kind in types
+        .split(',')
+        .map(|t| t.trim().trim_start_matches('.').to_ascii_lowercase())
+    {
+        let known: &[&str] = match kind.as_str() {
+            "" => &[],
+            "nammodel" => &["nam"],
+            "aidadspmodel" => &["json", "aidax"],
+            "cabsim" | "ir" => &["wav", "flac"],
+            "audio" | "audioloop" | "audiorecording" | "audiosample" | "audiotrack" => {
+                &["wav", "flac", "ogg", "mp3"]
+            }
+            "midiclip" | "midisong" => &["mid", "midi"],
+            "h2drumkit" => &["h2drumkit"],
+            other => {
+                if !extensions.iter().any(|e| e == other) {
+                    extensions.push(other.to_string());
+                }
+                continue;
+            }
+        };
+        for extension in known {
+            if !extensions.iter().any(|e| e == extension) {
+                extensions.push(extension.to_string());
+            }
+        }
+    }
+    extensions
 }
 
 impl PluginInfo {
@@ -642,6 +708,7 @@ fn demo_plugin(
         num_audio_outputs: channels,
         num_control_ports: controls.len(),
         ports,
+        file_params: Vec::new(),
     }
 }
 
@@ -744,6 +811,30 @@ fn demo_plugins() -> Vec<PluginInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maps_mod_file_types_to_extensions() {
+        use std::path::Path;
+        assert_eq!(
+            file_type_extensions("nam,nammodel,json,aidax,aidadspmodel"),
+            ["nam", "json", "aidax"]
+        );
+        assert_eq!(file_type_extensions("cabsim, ir, .WAV"), ["wav", "flac"]);
+        assert!(file_type_extensions("").is_empty());
+        let param = FileParam {
+            uri: "urn:test#ir".into(),
+            label: "IR".into(),
+            extensions: file_type_extensions("cabsim"),
+        };
+        assert!(param.accepts(Path::new("cabs/V30.WAV")));
+        assert!(!param.accepts(Path::new("amp.nam")));
+        let any = FileParam {
+            extensions: Vec::new(),
+            ..param
+        };
+        assert!(any.accepts(Path::new("anything.bin")));
+        assert!(!any.accepts(Path::new("pack/tone.json")));
+    }
 
     #[test]
     fn recognises_block_files() {

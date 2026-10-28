@@ -299,6 +299,7 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
         app.set_selected_eq(EqView::default());
         app.set_selected_dyn(DynView::default());
         app.set_selected_scope(ScopeView::default());
+        app.set_selected_file_slots(model(Vec::new()));
         if app.get_current_view() == 1 {
             app.set_current_view(0);
         }
@@ -385,6 +386,49 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
     app.set_selected_file(view.file.into());
     app.set_selected_file_label(view.file_label.into());
     app.set_selected_file_types(view.file_types.into());
+    app.set_selected_file_slots(model(file_slots(state, chain, view.instance_id)));
+}
+
+/// The file parameters of an LV2 block, with the file each one loads
+fn file_slots(state: &AppState, chain: &EffectChainState, instance_id: usize) -> Vec<FileSlot> {
+    let Some(ChainNode::Plugin { uri, .. }) = chain.find(instance_id) else {
+        return Vec::new();
+    };
+    let Some(info) = state.lv2_host.scanner().find_by_uri(uri).cloned() else {
+        return Vec::new();
+    };
+    let files = chain.param_files.get(&instance_id);
+    info.file_params
+        .iter()
+        .map(|param| {
+            let file = files
+                .and_then(|f| f.get(&param.uri))
+                .cloned()
+                .unwrap_or_default();
+            FileSlot {
+                param: param.uri.as_str().into(),
+                label: param.label.as_str().into(),
+                name: ModelPack::preset_name(&file).into(),
+                // The tone (folder) of the file
+                folder: state
+                    .model_pack(uri, &file)
+                    .filter(|_| file.contains('/'))
+                    .map(|p| p.title)
+                    .unwrap_or_default()
+                    .into(),
+                types: match param.extensions.as_slice() {
+                    [] => "the".to_string(),
+                    exts => exts
+                        .iter()
+                        .map(|e| format!(".{e}"))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                }
+                .into(),
+                file: file.into(),
+            }
+        })
+        .collect()
 }
 
 /// "CC n" when a controller drives this target of the block
@@ -687,6 +731,59 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
         app.set_available_packs(model(packs));
         app.set_models_dir(state.models_dir().display().to_string().into());
     });
+    on!(app, state, on_refresh_slot_files, |app, state, param| {
+        let Some(instance_id) = id(app.get_selected_instance_id()) else {
+            return;
+        };
+        let chain = state.chain();
+        let Some(ChainNode::Plugin { uri, .. }) = chain.find(instance_id) else {
+            return;
+        };
+        let current = chain
+            .param_files
+            .get(&instance_id)
+            .and_then(|f| f.get(param.as_str()))
+            .cloned()
+            .unwrap_or_default();
+        // One choice per file: a slot loads a file, not a tone
+        let choices: Vec<ModelChoice> = state
+            .list_param_packs(uri, &param)
+            .into_iter()
+            .flat_map(|pack| {
+                let image = pack_picture(Some(&pack));
+                let labels = pack.preset_labels();
+                pack.files
+                    .iter()
+                    .zip(labels)
+                    .map(|(file, label)| ModelChoice {
+                        title: label.into(),
+                        subtitle: pack.title.as_str().into(),
+                        image: image.clone(),
+                        t3k: pack.tone3000,
+                        current: *file == current,
+                        file: file.as_str().into(),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        app.set_available_packs_pictures(choices.iter().any(|p| p.t3k));
+        app.set_available_packs(model(choices));
+        app.set_models_dir(state.models_dir().display().to_string().into());
+    });
+    on!(
+        app,
+        state,
+        on_set_param_file,
+        |app, state, instance_id, param, file| {
+            let Some(target) = id(instance_id) else {
+                return;
+            };
+            let file = (!file.is_empty()).then(|| file.to_string());
+            if report(&app, state.set_param_file(target, &param, file)).is_some() {
+                refresh_chain(&app, state);
+            }
+        }
+    );
     on!(app, state, on_set_model, |app, state, instance_id, file| {
         let Some(target) = id(instance_id) else {
             return;

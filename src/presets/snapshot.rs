@@ -47,6 +47,10 @@ pub struct PresetChain {
     /// Model file per block instance_id, relative to the models directory
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub files: HashMap<usize, String>,
+    /// Files of the LV2 plugins per block instance_id: parameter URI to a
+    /// path relative to the models directory
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub param_files: HashMap<usize, BTreeMap<String, String>>,
     /// Colour name per block instance_id, for the rack drawing
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub colors: HashMap<usize, String>,
@@ -84,6 +88,7 @@ impl Default for PresetChain {
             params: HashMap::new(),
             params_by_symbol: HashMap::new(),
             files: HashMap::new(),
+            param_files: HashMap::new(),
             colors: HashMap::new(),
             scenes: Vec::new(),
             scene: 0,

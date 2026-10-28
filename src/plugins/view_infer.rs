@@ -540,6 +540,7 @@ mod tests {
             num_audio_outputs: 1,
             num_control_ports: ports.len(),
             ports,
+            file_params: Vec::new(),
         }
     }
 
@@ -931,6 +932,7 @@ mod tests {
                 num_audio_outputs: p.audio.outputs,
                 num_control_ports: p.controls.len(),
                 ports,
+                file_params: Vec::new(),
             }
         }
     }

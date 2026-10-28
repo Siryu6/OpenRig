@@ -32,6 +32,10 @@ use crate::audio::split_chain::{ChainNode, SplitType};
 use crate::midi::RawMidi;
 use crate::monitor::BlockMeter;
 
+/// How long a new LV2 instance may take to load its files before its
+/// chain goes to the audio thread anyway
+const FILE_LOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Split gain ramp duration (A/B switching and mix changes)
 const SPLIT_RAMP_SECONDS: f32 = 0.01;
 
@@ -47,6 +51,9 @@ pub struct ChainSpec {
     pub params: HashMap<usize, Vec<f32>>,
     /// File loaded by a block (NAM model), as an absolute path
     pub files: HashMap<usize, PathBuf>,
+    /// Files of the LV2 plugins that load some: (parameter URI, absolute
+    /// path) per instance_id
+    pub param_files: HashMap<usize, Vec<(String, PathBuf)>>,
     /// Two outputs (L/R splits and stereo blocks); otherwise mono
     pub stereo: bool,
     /// Tempo sent to plugins taking the transport (0: none)
@@ -784,6 +791,9 @@ impl EffectChain {
                                 for (index, value) in values.iter().enumerate() {
                                     plugin.set_parameter(index, *value);
                                 }
+                            }
+                            if let Some(files) = spec.param_files.get(instance_id) {
+                                plugin.load_files(files, FILE_LOAD_TIMEOUT);
                             }
                             plugin.set_bypass_immediate(!enabled);
                             Box::new(plugin)

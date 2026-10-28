@@ -175,6 +175,17 @@ export struct ModelChoice {
     t3k: bool,           // a TONE3000 download
 }
 
+// A file an LV2 plugin loads (its model, its impulse response…), chosen in
+// the editor
+export struct FileSlot {
+    param: string,       // URI of the plugin's parameter
+    label: string,       // "Neural Model A"
+    file: string,        // relative to the models dir, "" if none
+    name: string,        // what the file is called on screen
+    folder: string,      // the tone or folder it is in
+    types: string,       // accepted extensions, for the empty list hint
+}
+
 // A Wi-Fi network in range (Settings)
 export struct WifiNetwork {
     ssid: string,

@@ -264,7 +264,7 @@ fn world_on(path: &str) -> lilv::World {
 #[cfg(feature = "lv2")]
 mod discovery {
     use super::super::lv2_features::SUPPORTED_FEATURES;
-    use super::super::scanner::{PluginCategory, PluginInfo, PortInfo, PortType};
+    use super::super::scanner::{FileParam, PluginCategory, PluginInfo, PortInfo, PortType};
     use lilv::node::Node;
     use lilv::World;
     use tracing::{debug, warn};
@@ -303,6 +303,45 @@ mod discovery {
             .and_then(|n| n.as_str().map(str::to_string))
     }
 
+    /// Files a plugin loads: its `patch:writable` parameters whose range is
+    /// `atom:Path`, with the file types MOD's `mod:fileTypes` gives them
+    fn file_params(world: &World, plugin: &lilv::plugin::Plugin) -> Vec<FileParam> {
+        let uri = |s: &str| world.new_uri(s);
+        let writable = uri("http://lv2plug.in/ns/ext/patch#writable");
+        let range = uri("http://www.w3.org/2000/01/rdf-schema#range");
+        let label = uri("http://www.w3.org/2000/01/rdf-schema#label");
+        let path = uri("http://lv2plug.in/ns/ext/atom#Path");
+        let file_types = uri("http://moddevices.com/ns/mod#fileTypes");
+        let mut params = Vec::new();
+        for param in plugin.value(&writable).iter() {
+            let Some(param_uri) = param.as_uri().map(str::to_string) else {
+                continue;
+            };
+            if world.get(Some(&param), Some(&range), None).as_ref() != Some(&path) {
+                continue;
+            }
+            let text = |predicate| {
+                world
+                    .get(Some(&param), Some(predicate), None)
+                    .and_then(|n| n.as_str().map(str::to_string))
+            };
+            params.push(FileParam {
+                label: text(&label).unwrap_or_else(|| {
+                    param_uri
+                        .rsplit(['#', '/', ':'])
+                        .next()
+                        .unwrap_or("File")
+                        .to_string()
+                }),
+                extensions: text(&file_types)
+                    .map(|t| super::super::scanner::file_type_extensions(&t))
+                    .unwrap_or_default(),
+                uri: param_uri,
+            });
+        }
+        params
+    }
+
     pub fn scan(world: &World) -> Vec<PluginInfo> {
         let uri = |s: &str| world.new_uri(s);
         let audio = uri(&format!("{LV2}AudioPort"));
@@ -320,6 +359,7 @@ mod discovery {
         let bpm = uri("http://lv2plug.in/ns/ext/time#beatsPerMinute");
         let midi_event = uri(crate::plugins::atom::MIDI_EVENT);
         let position = uri(crate::plugins::atom::TIME_POSITION);
+        let patch_message = uri(crate::plugins::atom::PATCH_MESSAGE);
 
         let mut found = Vec::new();
         'plugins: for plugin in world.plugins().iter() {
@@ -417,6 +457,7 @@ mod discovery {
                     off_value: None,
                     midi: port_type == PortType::AtomInput && port.supports_event(&midi_event),
                     time: port_type == PortType::AtomInput && port.supports_event(&position),
+                    patch: port_type == PortType::AtomInput && port.supports_event(&patch_message),
                 });
             }
             ports.sort_by_key(|p| p.index);
@@ -456,6 +497,7 @@ mod discovery {
                 num_audio_outputs: audio_out,
                 num_control_ports: count(PortType::ControlInput),
                 ports,
+                file_params: file_params(world, &plugin),
             });
         }
         found
