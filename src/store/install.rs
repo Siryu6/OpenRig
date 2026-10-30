@@ -7,7 +7,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{BufReader, Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::index::{valid_bundle, valid_relative, Artifact, Package};
 use crate::persist::{sync_dir, write_atomic};
@@ -297,16 +297,12 @@ fn set_mode(path: &Path, executable: bool) {
 #[cfg(not(unix))]
 fn set_mode(_path: &Path, _executable: bool) {}
 
-/// Where a bundle of the LV2 folder is
-pub fn bundle_path(lv2_dir: &Path, bundle: &str) -> PathBuf {
-    lv2_dir.join(bundle)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::store::index::Source;
     use std::collections::HashMap;
+    use std::path::PathBuf;
 
     fn temp() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("openrig-store-{}", uuid::Uuid::new_v4()));
