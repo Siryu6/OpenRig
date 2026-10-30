@@ -5,13 +5,19 @@ import { DynamicsGraph } from "../components/dynamics_graph.slint";
 import { ScopeGraph } from "../components/scope_graph.slint";
 import { Button, Badge, Card, EmptyState, Icon, Knob, Stepper, Toggle } from "../components/controls.slint";
 import { Features } from "../features.slint";
-import { T3kBrand, T3kMark, T3kPicture } from "../components/tone3000_brand.slint";
+import { T3kMark, T3kPicture } from "../components/tone3000_brand.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 
 // Formats a parameter value for display ("12.5 dB", "40%", "3")
 // Search in a long list of models (Rust: every word in the title or subtitle)
 export global ChoiceSearch {
     pure callback filter(choices: [ModelChoice], query: string) -> [ModelChoice];
+    // Folders (Rust: pedalboard::ui::folders): what a folder shows, the
+    // folder shown when opening one, the one above, and where a list opens
+    pure callback browse(choices: [ModelChoice], folder: string) -> [ModelChoice];
+    pure callback enter(choices: [ModelChoice], folder: string) -> string;
+    pure callback up(choices: [ModelChoice], folder: string) -> string;
+    pure callback start(choices: [ModelChoice]) -> string;
 }
 
 export global ParamFormat {
@@ -63,17 +69,27 @@ component ChoiceSheet inherits Rectangle {
     in property <string> none-text: "None (passthrough)";
     in property <string> empty-text: "";
     in property <bool> pictures: false;     // room for the tone pictures
+    in property <bool> browsable: false;    // show the folders of the choices
+    in property <bool> show-tone3000: false; // first row: open the TONE3000 library
     callback chosen(string);                // file, "" for none
     callback close();
+    callback tone3000();
 
     private property <length> row-height: root.pictures ? 60px : 56px;
     // A search field above long lists (issue #21)
     private property <bool> searchable: root.choices.length > 8;
     private property <string> query: "";
     private property <bool> searching: false;
-    private property <[ModelChoice]> shown: root.query == "" ? root.choices : ChoiceSearch.filter(root.choices, root.query);
-    private property <bool> none-shown: root.show-none && root.query == "";
-    private property <int> offset: root.none-shown ? 1 : 0;
+    // Folder shown, and the top one (levels holding one folder are skipped)
+    private property <string> top: root.browsable ? ChoiceSearch.enter(root.choices, "") : "";
+    private property <string> folder: root.browsable ? ChoiceSearch.start(root.choices) : "";
+    private property <[ModelChoice]> shown: root.query != "" ? ChoiceSearch.filter(root.choices, root.query)
+        : root.browsable ? ChoiceSearch.browse(root.choices, root.folder) : root.choices;
+    private property <bool> at-top: root.query == "" && root.folder == root.top;
+    private property <bool> up-shown: root.query == "" && !root.at-top;
+    private property <bool> t3k-shown: root.show-tone3000 && root.at-top;
+    private property <bool> none-shown: root.show-none && root.at-top;
+    private property <int> offset: (root.t3k-shown ? 1 : 0) + (root.none-shown ? 1 : 0) + (root.up-shown ? 1 : 0);
 
     background: Theme.scrim;
 
@@ -197,8 +213,87 @@ component ChoiceSheet inherits Rectangle {
                 viewport-height: (root.shown.length + root.offset) * root.row-height;
                 interactive: self.viewport-height > self.height;
 
-                if root.none-shown: Rectangle {
+                if root.t3k-shown: Rectangle {
                     y: 0;
+                    height: root.row-height - 4px;
+                    border-radius: Theme.radius-md;
+                    background: t3k-ta.pressed ? Theme.surface-hover : transparent;
+                    HorizontalLayout {
+                        padding-left: root.pictures ? 4px : Theme.space-md;
+                        padding-right: Theme.space-md;
+                        spacing: Theme.space-md;
+                        if root.pictures: VerticalLayout {
+                            alignment: center;
+                            T3kPicture {
+                                width: 48px;
+                                placeholder: "";
+                            }
+                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 1px;
+                            Text {
+                                text: "TONE3000";
+                                color: Theme.text-primary;
+                                font-size: Theme.font-body;
+                                font-weight: Theme.weight-semibold;
+                            }
+                            Text {
+                                text: "Find and download tones";
+                                color: Theme.text-muted;
+                                font-size: Theme.font-small;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                name: "chevron-right";
+                                color: Theme.text-secondary;
+                            }
+                        }
+                    }
+                    t3k-ta := TouchArea {
+                        clicked => {
+                            root.tone3000();
+                        }
+                    }
+                }
+
+                if root.up-shown: Rectangle {
+                    y: 0;
+                    height: root.row-height - 4px;
+                    border-radius: Theme.radius-md;
+                    background: up-ta.pressed ? Theme.surface-hover : transparent;
+                    HorizontalLayout {
+                        padding-left: Theme.space-md;
+                        padding-right: Theme.space-md;
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                name: "chevron-left";
+                                color: Theme.accent;
+                            }
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: root.folder;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-body;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                    up-ta := TouchArea {
+                        clicked => {
+                            root.folder = ChoiceSearch.up(root.choices, root.folder);
+                        }
+                    }
+                }
+
+                if root.none-shown: Rectangle {
+                    y: root.t3k-shown ? root.row-height : 0;
                     height: root.row-height - 4px;
                     border-radius: Theme.radius-md;
                     background: none-ta.pressed ? Theme.surface-hover : root.none-current ? Theme.accent-soft : transparent;
@@ -226,7 +321,18 @@ component ChoiceSheet inherits Rectangle {
                         padding-left: root.pictures ? 4px : Theme.space-md;
                         padding-right: Theme.space-md;
                         spacing: Theme.space-md;
-                        if root.pictures: VerticalLayout {
+                        if choice.folder: VerticalLayout {
+                            alignment: center;
+                            width: root.pictures ? 48px : 24px;
+                            HorizontalLayout {
+                                alignment: center;
+                                Icon {
+                                    name: "folder";
+                                    color: Theme.accent;
+                                }
+                            }
+                        }
+                        if root.pictures && !choice.folder: VerticalLayout {
                             alignment: center;
                             T3kPicture {
                                 width: 48px;
@@ -263,7 +369,11 @@ component ChoiceSheet inherits Rectangle {
 
                     choice-ta := TouchArea {
                         clicked => {
-                            root.chosen(choice.file);
+                            if (choice.folder) {
+                                root.folder = ChoiceSearch.enter(root.choices, choice.file);
+                            } else {
+                                root.chosen(choice.file);
+                            }
                         }
                     }
                 }
@@ -757,17 +867,6 @@ export component PluginEditor {
                     }
                 }
 
-                // Opens the TONE3000 library: compact place, the T3K mark
-                if Features.tone3000: Button {
-                    horizontal-stretch: 0;
-                    logo: T3kBrand.mark;
-                    text: "Browse";
-                    enabled: root.instance-id >= 0;
-                    clicked => {
-                        root.browse-tone3000();
-                    }
-                }
-
                 Button {
                     horizontal-stretch: 0;
                     width: 110px;
@@ -1175,6 +1274,12 @@ export component PluginEditor {
         title: "Choose: " + root.file-label;
         choices: root.packs;
         pictures: root.packs-pictures;
+        browsable: true;
+        show-tone3000: Features.tone3000;
+        tone3000 => {
+            root.model-picker-open = false;
+            root.browse-tone3000();
+        }
         show-none: true;
         none-current: root.file == "";
         empty-text: "Nothing found.\nCopy " + root.file-types + " files to\n" + root.models-dir;
@@ -1204,6 +1309,7 @@ export component PluginEditor {
         title: "Choose: " + self.slot.label;
         choices: root.packs;
         pictures: root.packs-pictures;
+        browsable: true;
         show-none: true;
         none-current: self.slot.file == "";
         none-text: "None";
