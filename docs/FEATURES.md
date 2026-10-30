@@ -152,7 +152,8 @@ What OpenRig does, in more technical detail than the
   and `t` do the same on a keyboard. The rotary encoder drives the UI
   without the touch screen (arrows, Return and Escape on a keyboard): turn
   to move, press to open or adjust, hold to go back. In the rack it picks a
-  block and opens it; in the editor it goes through the parameters, On/Off
+  block and opens it, or, past the last block, the add button (the browser
+  then adds the focused effect); in the editor it goes through the parameters, On/Off
   and Remove (press twice; while arranging, a press picks a control and
   the turns move it, or puts it in or out of the strip), a press makes the turns change the parameter
   (in steps of 1/100 of its range, per octave for frequencies, one option
