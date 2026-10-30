@@ -340,6 +340,7 @@ impl PluginScanner {
     }
 
     /// Get plugins by category
+    #[cfg(test)]
     pub fn plugins_by_category(&self, category: PluginCategory) -> Vec<&PluginInfo> {
         self.plugins
             .values()

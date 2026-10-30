@@ -50,9 +50,9 @@ export component App inherits Window {
     in-out property <int> selected-plugin: 0;       // index into positioned-nodes
     private property <string> selected-split-type: root.selected-plugin >= 0 && root.selected-plugin < root.positioned-nodes.length
         ? root.positioned-nodes[root.selected-plugin].split-type : "";
-    in-out property <int> focused-parameter: 0;
+    private property <int> focused-parameter: 0;
     // The editor's Remove button waits for a second press
-    in-out property <bool> remove-armed: false;
+    private property <bool> remove-armed: false;
     // Encoder (Left/Right: turn, Return: press, Escape: long press). In the
     // editor the focus goes through the parameters, then On/Off and Remove
     // (and Arrange first, when there is something to arrange)
@@ -61,29 +61,29 @@ export component App inherits Window {
     private property <int> bypass-slot: root.selected-parameters.length + (root.arrange-slot >= 0 ? 1 : 0)
         + (root.arranging ? 1 : 0);
     // Arranging the parameters; the encoder stops twice on each: move, strip
-    in-out property <bool> arranging: false;
-    in-out property <int> arrange-stop: 0;
+    private property <bool> arranging: false;
+    private property <int> arrange-stop: 0;
     in-out property <int> selected-strip-count: 0;
     private property <int> remove-slot: root.bypass-slot + 1;
     // The focused parameter follows the encoder; its value before, for a
     // long press
-    in-out property <bool> adjusting: false;
+    private property <bool> adjusting: false;
     private property <float> adjust-from: 0;
     // Page switcher, opened by a long press on a main page
-    in-out property <bool> pages-open: false;
-    in-out property <int> pages-index: 0;
+    private property <bool> pages-open: false;
+    private property <int> pages-index: 0;
     private property <[int]> page-views: [0, 4, 9, 3, 5, 7];
     // Focus on the presets, Live, looper and tuner pages
-    in-out property <int> page-focus: 0;
+    private property <int> page-focus: 0;
     private property <int> page-slots: root.current-view == 4 ? root.presets.length
         : root.current-view == 9 ? root.live-tiles.length + 3
         : root.current-view == 5 ? 7
         : root.current-view == 3 ? 2 : 0;
-    in-out property <int> browser-selected-index: 0;
+    private property <int> browser-selected-index: 0;
 
     // Split chain insertion mode: 0 = main, 1 = top branch, 2 = bottom branch
-    in-out property <int> split-insertion-mode: 0;
-    in-out property <int> target-split-index: -1;   // split instance-id
+    private property <int> split-insertion-mode: 0;
+    private property <int> target-split-index: -1;   // split instance-id
 
     // Tuner
     in-out property <float> tuner-frequency: 0;
@@ -189,10 +189,10 @@ export component App inherits Window {
     in property <string> selected-bypass-midi: ""; // "CC n" driving the block's on/off
 
     // Context menu
-    in-out property <bool> show-context-menu: false;
-    in-out property <[MenuItem]> context-menu-items: [];
-    in-out property <length> context-menu-x: 0px;
-    in-out property <length> context-menu-y: 0px;
+    private property <bool> show-context-menu: false;
+    private property <[MenuItem]> context-menu-items: [];
+    private property <length> context-menu-x: 0px;
+    private property <length> context-menu-y: 0px;
 
     // Audio
     in-out property <bool> stereo-mode: false;
@@ -204,7 +204,7 @@ export component App inherits Window {
         dsp-load: -1, dsp-peak: -1, jack-load: -1, cpu: -1, cpu-max-core: -1,
         temperature: -1, latency-ms: -1,
     };
-    in-out property <bool> show-resources: false;
+    private property <bool> show-resources: false;
 
     // Wi-Fi (Settings)
     in-out property <string> wifi-status: "unsupported"; // "unsupported" | "no-device" | "off" | "on"
@@ -280,7 +280,7 @@ export component App inherits Window {
     in property <int> catalog-total: 0;
     in property <string> catalog-status: "";
     in property <bool> catalog-busy: false;
-    in-out property <int> catalog-open: -1;
+    private property <int> catalog-open: -1;
 
     // Transient toast text set by Rust; empty = hidden
     in-out property <string> status-message: "";
@@ -397,7 +397,7 @@ export component App inherits Window {
     callback routing-toggle(int, string);            // "mute" | "solo" | "invert"
     callback power(string);                          // "poweroff" | "reboot" | "restart" (the app)
     in-out property <bool> power-dialog: false;
-    in-out property <string> power-action: "";       // set once chosen
+    private property <string> power-action: "";       // set once chosen
 
     // -------------------------------------------------------------- helpers
 
