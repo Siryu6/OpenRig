@@ -210,8 +210,8 @@ component ChoiceSheet inherits Rectangle {
 
             if (root.choices.length > 0 || root.empty-text == "") && !root.searching && (root.shown.length > 0 || root.query == ""): Flickable {
                 vertical-stretch: 1;
-                viewport-height: (root.shown.length + root.offset) * root.row-height;
-                interactive: self.viewport-height > self.height;
+                content-height: (root.shown.length + root.offset) * root.row-height;
+                interactive: self.content-height > self.height;
 
                 if root.t3k-shown: Rectangle {
                     y: 0;
@@ -1075,17 +1075,17 @@ export component PluginEditor {
             // Space above and below the knob: name and value
             property <length> top: self.compact ? 24px : 30px;
             property <length> bottom: self.compact ? 26px : 40px;
-            viewport-height: max(self.height, self.rows * (self.cell-height + root.gap) - root.gap);
-            interactive: self.viewport-height > self.height;
+            content-height: max(self.height, self.rows * (self.cell-height + root.gap) - root.gap);
+            interactive: self.content-height > self.height;
             // Keeps the encoder's parameter in sight
             property <int> focused: root.focused-param;
             changed focused => {
                 if (self.focused < root.parameters.length) {
                     let y = floor(self.focused / root.columns) * (self.cell-height + root.gap);
-                    if (y < -self.viewport-y) {
-                        self.viewport-y = -y;
-                    } else if (y + self.cell-height > self.height - self.viewport-y) {
-                        self.viewport-y = self.height - y - self.cell-height;
+                    if (y < -self.content-y) {
+                        self.content-y = -y;
+                    } else if (y + self.cell-height > self.height - self.content-y) {
+                        self.content-y = self.height - y - self.cell-height;
                     }
                 }
             }
@@ -1453,8 +1453,8 @@ export component PluginEditor {
 
                 Flickable {
                     vertical-stretch: 1;
-                    viewport-height: sheet.param.options.length * 52px;
-                    interactive: self.viewport-height > self.height;
+                    content-height: sheet.param.options.length * 52px;
+                    interactive: self.content-height > self.height;
 
                     for label[k] in sheet.param.options: opt-row := Rectangle {
                         property <bool> current: k < sheet.param.option-values.length && abs(sheet.param.option-values[k] - sheet.param.value) < 0.0001;

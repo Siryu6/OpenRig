@@ -300,7 +300,7 @@ export component RoutingView inherits Rectangle {
     }
 
     if root.available: Flickable {
-        viewport-height: content.preferred-height;
+        content-height: content.preferred-height;
 
         content := VerticalLayout {
             alignment: start;
@@ -391,7 +391,7 @@ export component RoutingView inherits Rectangle {
 
                     Flickable {
                         height: strips.preferred-height;
-                        viewport-width: strips.preferred-width;
+                        content-width: strips.preferred-width;
                         strips := HorizontalLayout {
                             alignment: start;
                             spacing: Theme.space-sm;

@@ -219,7 +219,7 @@ export component CatalogView {
         if !root.searching: Flickable {
             min-width: 0px;
             height: Theme.touch-target;
-            viewport-width: chips.preferred-width;
+            content-width: chips.preferred-width;
             interactive: chips.preferred-width > self.width;
 
             chips := HorizontalLayout {
@@ -250,8 +250,8 @@ export component CatalogView {
         if root.items.length > 0: list := Flickable {
             vertical-stretch: 1;
             min-height: 0px;
-            viewport-height: max(self.height, ceil(root.items.length / 2) * (root.card-h + root.gap) + Theme.space-lg);
-            interactive: self.viewport-height > self.height;
+            content-height: max(self.height, ceil(root.items.length / 2) * (root.card-h + root.gap) + Theme.space-lg);
+            interactive: self.content-height > self.height;
 
             private property <length> card-w: (self.width - 2 * Theme.space-lg - root.gap) / 2;
 
@@ -520,7 +520,7 @@ export component CatalogView {
                 Flickable {
                     vertical-stretch: 1;
                     min-height: 0px;
-                    viewport-height: max(self.height, about.preferred-height);
+                    content-height: max(self.height, about.preferred-height);
                     interactive: about.preferred-height > self.height;
 
                     about := VerticalLayout {

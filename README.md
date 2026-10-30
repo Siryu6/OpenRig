@@ -247,7 +247,7 @@ src/
 └── ui/                  Chain layout (block positions, connectors), view models, text editing
 native/                  C wrapper around NeuralAudio, built with CMake by build.rs
 third_party/NeuralAudio  Submodule: NAM Core + RTNeural
-third_party/lilv, i-slint-backend-linuxkms   Patched crates (see their PATCHED.md)
+third_party/i-slint-backend-linuxkms  Patched Slint KMS backend (see its PATCHED.md)
 ui/                      Slint UI (app.slint, types.slint, pages/, components/, theme.slint)
 os/                      Buildroot external tree: Pi 5 / x86_64 images, RAUC updates, init scripts
 docs/                    Features, OS image, live (scenes, setlists, tempo), MIDI, routing, store, neural amp models (NAM)
