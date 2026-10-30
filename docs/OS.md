@@ -7,10 +7,10 @@ from `os/`, for:
 
 | Board | Image | Kernel |
 |---|---|---|
-| Raspberry Pi 5 (and Pi 500) | `os/output/rpi5/images/sdcard.img` | Raspberry Pi 6.12, `PREEMPT_RT` |
-| x86_64 mini PC, UEFI (Intel graphics) | `os/output/x86_64/images/disk.img` | mainline 6.12, `PREEMPT_RT` |
+| Raspberry Pi 5 (and Pi 500) | `os/output/rpi5/images/sdcard.img` | Raspberry Pi 6.18 (rpi-6.18.y), `PREEMPT_RT` |
+| x86_64 mini PC, UEFI (Intel graphics) | `os/output/x86_64/images/disk.img` | mainline 6.18 LTS, `PREEMPT_RT` |
 
-Kernel fixes taken from newer Raspberry Pi kernels are in `os/board/rpi5/patches`
+Kernel fixes taken from newer Raspberry Pi kernels go in `os/board/rpi5/patches`
 (why each one is there: its README).
 
 ## Build
