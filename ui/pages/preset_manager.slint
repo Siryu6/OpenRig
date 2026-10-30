@@ -94,17 +94,17 @@ export component PresetManager inherits Rectangle {
         if root.presets.length > 0: Flickable {
             vertical-stretch: 1;
             min-height: 0px;
-            viewport-height: max(self.height, list.preferred-height);
+            content-height: max(self.height, list.preferred-height);
             interactive: list.preferred-height > self.height;
             // Keeps the encoder's preset in sight (rows of 64px)
             property <int> focused: root.focused;
             changed focused => {
                 if (self.focused >= 0) {
                     let y = self.focused * (64px + Theme.space-sm);
-                    if (y < -self.viewport-y) {
-                        self.viewport-y = -y;
-                    } else if (y + 64px > self.height - self.viewport-y) {
-                        self.viewport-y = self.height - y - 64px;
+                    if (y < -self.content-y) {
+                        self.content-y = -y;
+                    } else if (y + 64px > self.height - self.content-y) {
+                        self.content-y = self.height - y - 64px;
                     }
                 }
             }

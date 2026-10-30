@@ -93,7 +93,7 @@ export component SceneManager inherits Rectangle {
         if root.view-mode == 0 && root.scenes.length > 0: Flickable {
             vertical-stretch: 1;
             min-height: 0px;
-            viewport-height: max(self.height, scene-list.preferred-height);
+            content-height: max(self.height, scene-list.preferred-height);
             interactive: scene-list.preferred-height > self.height;
 
             scene-list := VerticalLayout {
@@ -372,8 +372,8 @@ export component SceneManager inherits Rectangle {
                 if root.presets.length > 0: Flickable {
                     vertical-stretch: 1;
                     min-height: 0px;
-                    viewport-height: root.presets.length * 52px;
-                    interactive: self.viewport-height > self.height;
+                    content-height: root.presets.length * 52px;
+                    interactive: self.content-height > self.height;
                     for preset[k] in root.presets: Rectangle {
                         y: k * 52px;
                         height: 48px;

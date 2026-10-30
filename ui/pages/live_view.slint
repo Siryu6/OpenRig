@@ -477,8 +477,8 @@ export component LiveView inherits Rectangle {
                 Flickable {
                     vertical-stretch: 1;
                     min-height: 0px;
-                    viewport-height: (root.stomp-choices.length + 1) * 52px;
-                    interactive: self.viewport-height > self.height;
+                    content-height: (root.stomp-choices.length + 1) * 52px;
+                    interactive: self.content-height > self.height;
 
                     Rectangle {
                         y: 0;

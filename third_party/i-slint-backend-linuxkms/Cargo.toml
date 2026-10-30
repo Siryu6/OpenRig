@@ -11,9 +11,9 @@
 
 [package]
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.92"
 name = "i-slint-backend-linuxkms"
-version = "1.16.1"
+version = "1.18.1"
 authors = ["Slint Developers <info@slint.dev>"]
 build = "build.rs"
 autolib = false
@@ -32,6 +32,10 @@ rustdoc-args = ["--generate-link-to-definition"]
 
 [features]
 default = []
+libinput = [
+    "dep:input",
+    "dep:xkbcommon",
+]
 libseat = ["dep:libseat"]
 renderer-femtovg = [
     "i-slint-renderer-femtovg/opengl",
@@ -43,6 +47,7 @@ renderer-femtovg = [
 renderer-femtovg-wgpu = [
     "i-slint-renderer-femtovg/wgpu",
     "drm",
+    "dep:wgpu-30",
 ]
 renderer-skia = ["renderer-skia-opengl"]
 renderer-skia-opengl = [
@@ -54,9 +59,8 @@ renderer-skia-opengl = [
     "dep:memmap2",
 ]
 renderer-skia-vulkan = [
-    "i-slint-renderer-skia/wgpu-28",
-    "drm",
-    "dep:memmap2",
+    "unstable-wgpu-30",
+    "i-slint-renderer-skia/vulkan",
 ]
 renderer-software = [
     "i-slint-renderer-software/std",
@@ -64,15 +68,23 @@ renderer-software = [
     "dep:bytemuck",
     "dep:memmap2",
 ]
-unstable-wgpu-27 = [
-    "i-slint-renderer-skia/wgpu-27",
+renderer-vello = [
+    "dep:i-slint-renderer-anyrender",
+    "i-slint-renderer-anyrender/vello",
+    "i-slint-core/unstable-wgpu-29",
     "drm",
     "dep:memmap2",
 ]
-unstable-wgpu-28 = [
-    "i-slint-renderer-skia/wgpu-28",
+unstable-wgpu-29 = [
+    "i-slint-renderer-skia/wgpu-29",
     "drm",
     "dep:memmap2",
+]
+unstable-wgpu-30 = [
+    "i-slint-renderer-skia/wgpu-30",
+    "drm",
+    "dep:memmap2",
+    "dep:wgpu-30",
 ]
 
 [lib]
@@ -80,12 +92,12 @@ name = "i_slint_backend_linuxkms"
 path = "lib.rs"
 
 [dependencies.i-slint-common]
-version = "=1.16.1"
+version = "=1.18.1"
 features = ["default"]
 default-features = false
 
 [dependencies.i-slint-core]
-version = "=1.16.1"
+version = "=1.18.1"
 features = [
     "default",
     "image-decoders",
@@ -93,14 +105,19 @@ features = [
 ]
 default-features = false
 
+[dependencies.i-slint-renderer-anyrender]
+version = "=1.18.1"
+optional = true
+default-features = false
+
 [dependencies.i-slint-renderer-femtovg]
-version = "=1.16.1"
+version = "=1.18.1"
 features = ["default"]
 optional = true
 default-features = false
 
 [dependencies.i-slint-renderer-skia]
-version = "=1.16.1"
+version = "=1.18.1"
 features = [
     "default",
     "kms",
@@ -109,12 +126,19 @@ optional = true
 default-features = false
 
 [dependencies.i-slint-renderer-software]
-version = "=1.16.1"
+version = "=1.18.1"
 optional = true
 default-features = false
 
+[dependencies.wgpu-30]
+version = "30"
+features = ["drm"]
+optional = true
+default-features = false
+package = "wgpu"
+
 [build-dependencies.cfg_aliases]
-version = "0.2.0"
+version = "0.2.2"
 
 [target.'cfg(target_os = "linux")'.dependencies.bytemuck]
 version = "1.13.1"
@@ -144,7 +168,8 @@ optional = true
 default-features = false
 
 [target.'cfg(target_os = "linux")'.dependencies.input]
-version = "0.9.0"
+version = "0.10.0"
+optional = true
 default-features = true
 
 [target.'cfg(target_os = "linux")'.dependencies.libseat]
@@ -157,7 +182,7 @@ version = "0.9.4"
 optional = true
 
 [target.'cfg(target_os = "linux")'.dependencies.nix]
-version = "0.30.1"
+version = "0.31.0"
 features = [
     "fs",
     "ioctl",
@@ -169,3 +194,4 @@ optional = true
 
 [target.'cfg(target_os = "linux")'.dependencies.xkbcommon]
 version = "0.9.0"
+optional = true

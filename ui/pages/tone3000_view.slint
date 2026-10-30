@@ -188,8 +188,8 @@ export component Tone3000View inherits Rectangle {
             }
 
             if root.tones.length > 0: Flickable {
-                viewport-height: (root.tones.length + (root.has-more ? 1 : 0)) * (root.row-height + 4px);
-                interactive: self.viewport-height > self.height;
+                content-height: (root.tones.length + (root.has-more ? 1 : 0)) * (root.row-height + 4px);
+                interactive: self.content-height > self.height;
 
                 for tone[i] in root.tones: Rectangle {
                     y: i * (root.row-height + 4px);
@@ -395,8 +395,8 @@ export component Tone3000View inherits Rectangle {
                     }
 
                     if root.detail.supported && !root.models-loading: Flickable {
-                        viewport-height: root.models.length * 52px;
-                        interactive: self.viewport-height > self.height;
+                        content-height: root.models.length * 52px;
+                        interactive: self.content-height > self.height;
 
                         for model[k] in root.models: Rectangle {
                             y: k * 52px;

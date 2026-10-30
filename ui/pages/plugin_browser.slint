@@ -99,7 +99,7 @@ export component PluginBrowser {
         Flickable {
             min-width: 0px;
             height: Theme.touch-target;
-            viewport-width: chips.preferred-width;
+            content-width: chips.preferred-width;
             interactive: chips.preferred-width > self.width;
 
             chips := HorizontalLayout {
@@ -129,7 +129,7 @@ export component PluginBrowser {
         if root.plugins.length > 0: list := Flickable {
             vertical-stretch: 1;
             min-height: 0px;
-            viewport-height: max(self.height, rows.preferred-height);
+            content-height: max(self.height, rows.preferred-height);
             interactive: rows.preferred-height > self.height;
 
             rows := VerticalLayout {
