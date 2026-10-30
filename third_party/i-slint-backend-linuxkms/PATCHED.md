@@ -1,7 +1,7 @@
-# i-slint-backend-linuxkms 1.14.1, patched
+# i-slint-backend-linuxkms 1.16.1, patched
 
 Copy of Slint's [linuxkms backend](https://crates.io/crates/i-slint-backend-linuxkms)
-1.14.1 (licenses in LICENSES), used through `[patch.crates-io]` in the
+1.16.1 (licenses in LICENSES), used through `[patch.crates-io]` in the
 pedalboard's Cargo.toml.
 
 Change, in `display/gbmdisplay.rs`: when adding the GPU-rendered buffer as a

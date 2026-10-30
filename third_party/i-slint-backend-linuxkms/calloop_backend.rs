@@ -16,8 +16,8 @@ use std::sync::{Arc, Mutex};
 use calloop::EventLoop;
 use i_slint_core::platform::PlatformError;
 
-use crate::fullscreenwindowadapter::FullscreenWindowAdapter;
 use crate::BackendBuilder;
+use crate::fullscreenwindowadapter::FullscreenWindowAdapter;
 
 #[cfg(not(any(target_family = "windows", target_vendor = "apple", target_arch = "wasm32")))]
 mod input;
@@ -69,12 +69,13 @@ pub struct Backend {
     window: RefCell<Option<Rc<FullscreenWindowAdapter>>>,
     user_event_receiver: RefCell<Option<calloop::channel::Channel<Box<dyn FnOnce() + Send>>>>,
     proxy: Proxy,
-    renderer_factory: for<'a> fn(
-        &'a crate::DeviceOpener,
-    ) -> Result<
-        Box<dyn crate::fullscreenwindowadapter::FullscreenRenderer>,
-        PlatformError,
-    >,
+    renderer_factory:
+        fn(
+            &crate::DeviceOpener,
+            Option<&i_slint_core::graphics::RequestedGraphicsAPI>,
+        )
+            -> Result<Box<dyn crate::fullscreenwindowadapter::FullscreenRenderer>, PlatformError>,
+    requested_graphics_api: Option<i_slint_core::graphics::RequestedGraphicsAPI>,
     sel_clipboard: RefCell<Option<String>>,
     clipboard: RefCell<Option<String>>,
     libinput_event_hook: Option<Box<dyn Fn(&::input::Event) -> bool>>,
@@ -85,14 +86,18 @@ impl Backend {
         let (user_event_sender, user_event_receiver) = calloop::channel::channel();
 
         let renderer_factory = match builder.renderer_name.as_deref() {
-            #[cfg(feature = "renderer-skia-vulkan")]
-            Some("skia-vulkan") => crate::renderer::skia::SkiaRendererAdapter::new_vulkan,
+            #[cfg(enable_skia_wgpu)]
+            Some("skia-vulkan") | Some("skia-wgpu") => {
+                crate::renderer::skia::SkiaRendererAdapter::new_wgpu
+            }
             #[cfg(feature = "renderer-skia-opengl")]
             Some("skia-opengl") => crate::renderer::skia::SkiaRendererAdapter::new_opengl,
-            #[cfg(any(feature = "renderer-skia-opengl", feature = "renderer-skia-vulkan"))]
+            #[cfg(enable_skia)]
             Some("skia-software") => crate::renderer::skia::SkiaRendererAdapter::new_software,
             #[cfg(feature = "renderer-femtovg")]
             Some("femtovg") => crate::renderer::femtovg::FemtoVGRendererAdapter::new,
+            #[cfg(feature = "renderer-femtovg-wgpu")]
+            Some("femtovg-wgpu") => crate::renderer::femtovg_wgpu::FemtoVGWgpuRendererAdapter::new,
             #[cfg(feature = "renderer-software")]
             Some("software") => crate::renderer::sw::SoftwareRendererAdapter::new,
             None => crate::renderer::try_skia_then_femtovg_then_software,
@@ -129,7 +134,7 @@ impl Backend {
             if seat.dispatch(5000).map_err(|e| format!("Error waiting for seat activation: {e}"))?
                 == 0
             {
-                return Err(format!("Timeout while waiting to activate session").into());
+                return Err("Timeout while waiting to activate session".to_string().into());
             }
         }
 
@@ -140,6 +145,7 @@ impl Backend {
             user_event_receiver: RefCell::new(Some(user_event_receiver)),
             proxy: Proxy::new(user_event_sender),
             renderer_factory,
+            requested_graphics_api: builder.requested_graphics_api,
             sel_clipboard: Default::default(),
             clipboard: Default::default(),
             libinput_event_hook: builder.libinput_event_hook,
@@ -194,7 +200,8 @@ impl i_slint_core::platform::Platform for Backend {
                     .map_err(|e| format!("Failed to parse SLINT_KMS_ROTATION: {e}"))
             })?;
 
-        let renderer = (self.renderer_factory)(&device_accessor)?;
+        let renderer =
+            (self.renderer_factory)(&device_accessor, self.requested_graphics_api.as_ref())?;
         let adapter = FullscreenWindowAdapter::new(renderer, rotation)?;
 
         *self.window.borrow_mut() = Some(adapter.clone());
@@ -209,6 +216,9 @@ impl i_slint_core::platform::Platform for Backend {
         let loop_signal = event_loop.get_signal();
 
         *self.proxy.loop_signal.lock().unwrap() = Some(loop_signal.clone());
+        if let Some(adapter) = self.window.borrow().as_ref() {
+            adapter.set_loop_signal(loop_signal.clone());
+        }
         let quit_loop = self.proxy.quit_loop.clone();
 
         let mouse_position_property = input::LibInputHandler::init(
@@ -220,9 +230,9 @@ impl i_slint_core::platform::Platform for Backend {
         )?;
 
         let Some(user_event_receiver) = self.user_event_receiver.borrow_mut().take() else {
-            return Err(
-                format!("Re-entering the linuxkms event loop is currently not supported").into()
-            );
+            return Err("Re-entering the linuxkms event loop is currently not supported"
+                .to_string()
+                .into());
         };
 
         let callbacks_to_invoke_per_iteration = Rc::new(RefCell::new(Vec::new()));

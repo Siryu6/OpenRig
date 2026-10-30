@@ -11,14 +11,8 @@ pub trait Presenter {
 
 #[cfg(any(feature = "renderer-skia-opengl", feature = "renderer-femtovg"))]
 pub mod gbmdisplay;
-#[cfg(any(
-    feature = "renderer-skia-opengl",
-    feature = "renderer-skia-vulkan",
-    feature = "renderer-software"
-))]
+#[cfg(any(enable_skia, feature = "renderer-software"))]
 pub mod swdisplay;
-#[cfg(feature = "renderer-skia-vulkan")]
-pub mod vulkandisplay;
 
 /// This enum describes the way the output is supposed to be rotated to simulate
 /// a screen rotation. This is implemented entirely inside the actual renderer.
@@ -49,9 +43,9 @@ impl TryFrom<&str> for RenderingRotation {
             180 => Self::Rotate180,
             270 => Self::Rotate270,
             _ => {
-                return Err(format!(
-                    "Invalid value for rotation. Must be one of 0, 90, 180, or 270"
-                ))
+                return Err(
+                    "Invalid value for rotation. Must be one of 0, 90, 180, or 270".to_string()
+                );
             }
         })
     }
@@ -89,11 +83,7 @@ impl RenderingRotation {
     }
 }
 
-#[cfg(any(
-    feature = "renderer-skia-vulkan",
-    feature = "renderer-software",
-    feature = "renderer-skia-opengl"
-))]
+#[cfg(any(enable_skia, feature = "renderer-software"))]
 pub(crate) mod noop_presenter {
     use std::sync::Arc;
 

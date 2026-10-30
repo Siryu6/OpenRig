@@ -10,12 +10,12 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2021"
+edition = "2024"
 rust-version = "1.88"
 name = "i-slint-backend-linuxkms"
-version = "1.14.1"
+version = "1.16.1"
 authors = ["Slint Developers <info@slint.dev>"]
-build = false
+build = "build.rs"
 autolib = false
 autobins = false
 autoexamples = false
@@ -26,7 +26,6 @@ homepage = "https://slint.dev"
 readme = "README.md"
 license = "GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0"
 repository = "https://github.com/slint-ui/slint"
-resolver = "3"
 
 [package.metadata.docs.rs]
 rustdoc-args = ["--generate-link-to-definition"]
@@ -41,6 +40,10 @@ renderer-femtovg = [
     "glutin",
     "raw-window-handle",
 ]
+renderer-femtovg-wgpu = [
+    "i-slint-renderer-femtovg/wgpu",
+    "drm",
+]
 renderer-skia = ["renderer-skia-opengl"]
 renderer-skia-opengl = [
     "i-slint-renderer-skia/opengl",
@@ -51,15 +54,24 @@ renderer-skia-opengl = [
     "dep:memmap2",
 ]
 renderer-skia-vulkan = [
-    "i-slint-renderer-skia/vulkan",
-    "vulkano",
+    "i-slint-renderer-skia/wgpu-28",
     "drm",
     "dep:memmap2",
 ]
 renderer-software = [
-    "i-slint-core/software-renderer-systemfonts",
+    "i-slint-renderer-software/std",
     "drm",
     "dep:bytemuck",
+    "dep:memmap2",
+]
+unstable-wgpu-27 = [
+    "i-slint-renderer-skia/wgpu-27",
+    "drm",
+    "dep:memmap2",
+]
+unstable-wgpu-28 = [
+    "i-slint-renderer-skia/wgpu-28",
+    "drm",
     "dep:memmap2",
 ]
 
@@ -68,12 +80,12 @@ name = "i_slint_backend_linuxkms"
 path = "lib.rs"
 
 [dependencies.i-slint-common]
-version = "=1.14.1"
+version = "=1.16.1"
 features = ["default"]
 default-features = false
 
 [dependencies.i-slint-core]
-version = "=1.14.1"
+version = "=1.16.1"
 features = [
     "default",
     "image-decoders",
@@ -82,19 +94,27 @@ features = [
 default-features = false
 
 [dependencies.i-slint-renderer-femtovg]
-version = "=1.14.1"
+version = "=1.16.1"
 features = ["default"]
 optional = true
 default-features = false
 
 [dependencies.i-slint-renderer-skia]
-version = "=1.14.1"
+version = "=1.16.1"
 features = [
     "default",
     "kms",
 ]
 optional = true
 default-features = false
+
+[dependencies.i-slint-renderer-software]
+version = "=1.16.1"
+optional = true
+default-features = false
+
+[build-dependencies.cfg_aliases]
+version = "0.2.0"
 
 [target.'cfg(target_os = "linux")'.dependencies.bytemuck]
 version = "1.13.1"
@@ -146,11 +166,6 @@ features = [
 [target.'cfg(target_os = "linux")'.dependencies.raw-window-handle]
 version = "0.6.2"
 optional = true
-
-[target.'cfg(target_os = "linux")'.dependencies.vulkano]
-version = "0.35.0"
-optional = true
-default-features = false
 
 [target.'cfg(target_os = "linux")'.dependencies.xkbcommon]
 version = "0.9.0"
