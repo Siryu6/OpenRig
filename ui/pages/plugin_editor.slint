@@ -939,6 +939,7 @@ export component PluginEditor {
                         y: grid.top;
                         size: min(80px, parent.height - grid.top - grid.bottom);
                         value: p.value;
+                        default-value: p.default;
                         minimum: p.min;
                         maximum: p.max;
                         integer: p.kind == "int";

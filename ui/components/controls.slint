@@ -382,6 +382,8 @@ export component Slider inherits Rectangle {
 // ---------------------------------------------------------------------------
 // Rotary knob: 270 degree arc, drag vertically to change. Controlled like
 // Slider: live value while dragging, then the parent-owned `value`.
+// Double tap: back to `default-value`. Hold without moving: swap with the
+// value before the last change (A/B compare).
 // ---------------------------------------------------------------------------
 export component Knob inherits Rectangle {
     in property <float> value: 0.5;
@@ -394,8 +396,23 @@ export component Knob inherits Rectangle {
     in property <bool> enabled: true;
     in property <length> size: 76px;
     in property <color> accent: Theme.accent;      // value arc (the block's colour)
+    in property <float> default-value: root.minimum;
     out property <bool> dragging: ta.pressed;
     callback changed(float);
+
+    // The value before the last change, for the A/B compare
+    private property <float> previous: root.value;
+    private property <bool> has-previous: false;
+    // The finger moved the knob: no double tap, no compare
+    private property <bool> moved: false;
+
+    function set(v: float) {
+        if (v != root.value) {
+            root.previous = root.value;
+            root.has-previous = true;
+            root.changed(v);
+        }
+    }
 
     private property <float> norm: (root.maximum - root.minimum) == 0 ? 0 :
         max(0, min(1, (root.shown-value - root.minimum) / (root.maximum - root.minimum)));
@@ -478,6 +495,11 @@ export component Knob inherits Rectangle {
                 root.live-value = root.value;
                 root.start-norm = root.norm;
                 root.start-y = self.mouse-y;
+                root.moved = false;
+            } else if (event.kind == PointerEventKind.up && root.moved) {
+                // The value before this drag
+                root.previous = root.minimum + (root.maximum - root.minimum) * root.start-norm;
+                root.has-previous = true;
             }
         }
         moved => {
@@ -489,10 +511,26 @@ export component Knob inherits Rectangle {
                     root.pending = round(root.pending);
                 }
                 if (root.pending != root.live-value) {
+                    root.moved = true;
                     root.live-value = root.pending;
                     root.changed(root.pending);
                 }
             }
+        }
+        double-clicked => {
+            if (!root.moved) {
+                root.set(root.default-value);
+            }
+        }
+    }
+
+    // Hold: A/B compare
+    Timer {
+        interval: 600ms;
+        running: ta.pressed && !root.moved && root.has-previous;
+        triggered => {
+            root.moved = true;  // the release must not count as a tap
+            root.set(root.previous);
         }
     }
 }
