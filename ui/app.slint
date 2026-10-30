@@ -17,6 +17,7 @@ import { SettingsView } from "pages/settings_view.slint";
 import { Tone3000View } from "pages/tone3000_view.slint";
 import { RoutingView } from "pages/routing_view.slint";
 import { Features } from "features.slint";
+import { Encoder } from "encoder.slint";
 import { TextEdit, TextEditing } from "components/virtual_keyboard.slint";
 // Components
 import { TopBar } from "components/top_bar.slint";
@@ -27,7 +28,7 @@ import { PowerDialog } from "components/power_dialog.slint";
 import { PlotEvents } from "components/plot.slint";
 
 // Re-export the data types used by the Rust side
-export { ChoiceSearch, Features, PlotEvents, TextEdit, TextEditing, Theme }
+export { ChoiceSearch, Encoder, Features, PlotEvents, TextEdit, TextEditing, Theme }
 export { PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot }
 
 export component App inherits Window {
@@ -52,9 +53,18 @@ export component App inherits Window {
     in-out property <int> focused-parameter: 0;
     // The editor's Remove button waits for a second press
     in-out property <bool> remove-armed: false;
-    // Its encoder focus: past the last parameter (a block with none keeps
-    // 0 for "back to the rack")
-    private property <int> remove-slot: max(1, root.selected-parameters.length);
+    // Encoder (Left/Right: turn, Return: press, Escape: long press). In the
+    // editor the focus goes through the parameters, then On/Off and Remove
+    private property <int> bypass-slot: root.selected-parameters.length;
+    private property <int> remove-slot: root.bypass-slot + 1;
+    // The focused parameter follows the encoder; its value before, for a
+    // long press
+    in-out property <bool> adjusting: false;
+    private property <float> adjust-from: 0;
+    // Page switcher, opened by a long press on a main page
+    in-out property <bool> pages-open: false;
+    in-out property <int> pages-index: 0;
+    private property <[int]> page-views: [0, 4, 9, 3, 5, 7];
     in-out property <int> browser-selected-index: 0;
 
     // Split chain insertion mode: 0 = main, 1 = top branch, 2 = bottom branch
@@ -404,6 +414,7 @@ export component App inherits Window {
         }
         if (!root.positioned-nodes[idx].is-split) {
             root.focused-parameter = 0;
+            root.adjusting = false;
             root.current-view = 1;
         }
     }
@@ -445,10 +456,29 @@ export component App inherits Window {
 
     forward-focus: keys;
 
+    function adjust(steps: int) {
+        if (root.focused-parameter < root.selected-parameters.length) {
+            root.set-parameter(root.selected-instance-id, root.selected-parameters[root.focused-parameter].index,
+                Encoder.step(root.selected-parameters[root.focused-parameter], steps));
+        }
+    }
+
+    function open-pages() {
+        root.pages-index = root.current-view == 4 ? 1 : root.current-view == 9 ? 2 : root.current-view == 3 ? 3
+            : root.current-view == 5 ? 4 : root.current-view == 7 ? 5 : 0;
+        root.pages-open = true;
+    }
+
+    function open-page(index: int) {
+        root.pages-open = false;
+        root.current-view = root.page-views[index];
+    }
+
     // Text fields (keyboard dialogs) take the focus: give it back to the
     // encoder / shortcut handler when the view changes
     changed current-view => {
         keys.focus();
+        root.adjusting = false;
         // Learning only makes sense in the block editor
         if (root.current-view != 1 && root.midi-learning) {
             root.midi-learn-toggled(false);
@@ -643,6 +673,8 @@ export component App inherits Window {
                 focused-param: root.focused-parameter;
                 remove-armed <=> root.remove-armed;
                 remove-focused: root.focused-parameter == root.remove-slot;
+                bypass-focused: root.focused-parameter == root.bypass-slot;
+                adjusting: root.adjusting;
                 remove-confirmed => {
                     root.remove-node-by-id(root.selected-instance-id);
                     root.selected-instance-id = -1;
@@ -1194,6 +1226,66 @@ export component App inherits Window {
         }
     }
 
+    // Page switcher (long press on a main page): turn, then press
+    if root.pages-open: Rectangle {
+        background: #000000a0;
+        TouchArea {
+            clicked => {
+                root.pages-open = false;
+            }
+        }
+        Rectangle {
+            width: min(parent.width - 2 * Theme.space-lg, 6 * 112px + 7 * Theme.space-sm);
+            height: 136px;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface-raised;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            TouchArea { }
+            HorizontalLayout {
+                padding: Theme.space-sm;
+                spacing: Theme.space-sm;
+                for page[i] in [
+                    { icon: "rack", label: "Rack" },
+                    { icon: "presets", label: "Presets" },
+                    { icon: "live", label: "Live" },
+                    { icon: "tuner", label: "Tuner" },
+                    { icon: "looper", label: "Looper" },
+                    { icon: "settings", label: "Settings" },
+                ]: Rectangle {
+                    border-radius: Theme.radius-md;
+                    background: i == root.pages-index ? Theme.accent.with-alpha(0.18) : transparent;
+                    border-width: i == root.pages-index ? 2px : 0px;
+                    border-color: Theme.accent;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: Theme.space-sm;
+                        HorizontalLayout {
+                            alignment: center;
+                            Icon {
+                                name: page.icon;
+                                size: 32px;
+                                color: i == root.pages-index ? Theme.accent : Theme.text-secondary;
+                            }
+                        }
+                        Text {
+                            text: page.label;
+                            horizontal-alignment: center;
+                            color: i == root.pages-index ? Theme.text-primary : Theme.text-secondary;
+                            font-size: Theme.font-body;
+                            overflow: elide;
+                        }
+                    }
+                    TouchArea {
+                        clicked => {
+                            root.open-page(i);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     PowerDialog {
         show <=> root.power-dialog;
         action <=> root.power-action;
@@ -1217,32 +1309,42 @@ export component App inherits Window {
         height: 0px;
 
         key-pressed(event) => {
-            if (event.text == Key.UpArrow && root.current-view == 2) {
-                root.browser-selected-index = max(0, root.browser-selected-index - 1);
-                return accept;
-            }
-            if (event.text == Key.DownArrow && root.current-view == 2) {
-                root.browser-selected-index = min(root.available-plugins.length - 1, root.browser-selected-index + 1);
-                return accept;
-            }
-            if (event.text == Key.LeftArrow || event.text == Key.RightArrow) {
-                if (root.current-view == 1) {
-                    // Past the last parameter: the Remove button
-                    root.focused-parameter = max(0, min(root.remove-slot,
-                        root.focused-parameter + (event.text == Key.LeftArrow ? -1 : 1)));
+            // Turn (and the arrows of a keyboard)
+            if (event.text == Key.LeftArrow || event.text == Key.RightArrow
+                    || event.text == Key.UpArrow || event.text == Key.DownArrow) {
+                let d = event.text == Key.LeftArrow || event.text == Key.UpArrow ? -1 : 1;
+                if (root.pages-open) {
+                    root.pages-index = max(0, min(root.page-views.length - 1, root.pages-index + d));
+                } else if (root.current-view == 1 && root.adjusting) {
+                    root.adjust(d);
+                } else if (root.current-view == 1) {
+                    root.focused-parameter = max(0, min(root.remove-slot, root.focused-parameter + d));
                     root.remove-armed = false;
                 } else if (root.current-view == 0 && root.positioned-nodes.length > 0) {
-                    root.select-node-at(max(0, min(root.positioned-nodes.length - 1,
-                        root.selected-plugin + (event.text == Key.LeftArrow ? -1 : 1))));
+                    root.select-node-at(max(0, min(root.positioned-nodes.length - 1, root.selected-plugin + d)));
+                } else if (root.current-view == 2) {
+                    root.browser-selected-index = max(0, min(root.available-plugins.length - 1, root.browser-selected-index + d));
                 }
                 return accept;
             }
+            // Press
             if (event.text == Key.Return) {
-                if (root.current-view == 0) {
+                if (root.pages-open) {
+                    root.open-page(root.pages-index);
+                } else if (root.current-view == 0) {
                     root.open-node(root.selected-plugin);
                 } else if (root.current-view == 1) {
-                    if (root.focused-parameter != root.remove-slot) {
-                        root.current-view = 0;
+                    if (root.adjusting) {
+                        root.adjusting = false;
+                    } else if (root.focused-parameter < root.selected-parameters.length) {
+                        if (root.selected-parameters[root.focused-parameter].kind == "toggle") {
+                            root.adjust(1);
+                        } else {
+                            root.adjust-from = root.selected-parameters[root.focused-parameter].value;
+                            root.adjusting = true;
+                        }
+                    } else if (root.focused-parameter == root.bypass-slot) {
+                        root.toggle-bypass(root.selected-instance-id);
                     } else if (root.remove-armed) {
                         root.remove-armed = false;
                         root.remove-node-by-id(root.selected-instance-id);
@@ -1267,17 +1369,37 @@ export component App inherits Window {
                 root.tap-tempo();
                 return accept;
             }
+            // Long press: back one level; on a main page, the page switcher
             if (event.text == Key.Escape) {
-                if (root.show-resources) {
+                if (root.pages-open) {
+                    root.pages-open = false;
+                } else if (root.show-resources) {
                     root.show-resources = false;
                 } else if (root.show-context-menu) {
                     root.show-context-menu = false;
+                } else if (root.power-dialog) {
+                    root.power-dialog = false;
+                } else if (root.current-view == 1 && root.adjusting) {
+                    // Back to the value before
+                    root.set-parameter(root.selected-instance-id,
+                        root.selected-parameters[root.focused-parameter].index, root.adjust-from);
+                    root.adjusting = false;
                 } else if (root.current-view == 8) {
                     root.current-view = root.t3k-return-view;
                 } else if (root.current-view == 10) {
                     root.current-view = 7;
-                } else if (root.current-view == 1 || root.current-view == 2 || root.current-view == 7) {
+                } else if (root.current-view == 11) {
+                    if (root.catalog-open >= 0) {
+                        root.catalog-open = -1;
+                    } else {
+                        root.current-view = 2;
+                    }
+                } else if (root.current-view == 6) {
+                    root.current-view = 4;
+                } else if (root.current-view == 1 || root.current-view == 2) {
                     root.current-view = 0;
+                } else {
+                    root.open-pages();
                 }
                 return accept;
             }

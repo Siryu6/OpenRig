@@ -36,7 +36,7 @@ use pedalboard::monitor::{self, Level, SystemMonitor};
 use pedalboard::plugins::scanner;
 use pedalboard::state::{AppState, EffectChainState, ModelPack};
 use pedalboard::ui::slint_bridge as views;
-use pedalboard::ui::{chain_layout, folders, text_edit};
+use pedalboard::ui::{chain_layout, encoder, folders, text_edit};
 
 slint::include_modules!();
 
@@ -1079,6 +1079,10 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
             .map(|c| c.location)
             .unwrap_or_default();
         folders::enter(&locations, &start).into()
+    });
+    app.global::<Encoder>().on_step(|p, steps| {
+        let options: Vec<f32> = p.option_values.iter().collect();
+        encoder::step(&p.kind, p.min, p.max, p.value, &options, steps)
     });
     app.global::<ChoiceSearch>().on_filter(|choices, query| {
         model(

@@ -145,8 +145,15 @@ What OpenRig does, in more technical detail than the
   See [MIDI.md](MIDI.md).
 - **Hardware** (feature `gpio`): footswitches follow the Live page mode
   (act when pressed; the tap switch also reads the hold), and keys `1`–`8`
-  and `t` do the same on a keyboard; the rotary encoder drives the UI like
-  the arrow and Return keys. Settings → Hardware sets what is wired: from
+  and `t` do the same on a keyboard. The rotary encoder drives the UI
+  without the touch screen (arrows, Return and Escape on a keyboard): turn
+  to move, press to open or adjust, hold to go back. In the rack it picks a
+  block and opens it; in the editor it goes through the parameters, On/Off
+  and Remove (press twice), a press makes the turns change the parameter
+  (in steps of 1/100 of its range, per octave for frequencies, one option
+  for lists; a toggle flips at once), another press keeps the value and
+  holding goes back to the value before. Holding on a main page opens a
+  page switcher (Rack, Presets, Live, Tuner, Looper, Settings). Settings → Hardware sets what is wired: from
   no footswitch to 8, the GPIO of each (with a LED that lights while it is
   pressed, to check the wiring), the encoder or none, its push button or
   none, its steps per detent. Kept in `hardware.json` in the data

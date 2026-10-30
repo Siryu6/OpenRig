@@ -419,6 +419,8 @@ export component PluginEditor {
     // Remove: the first press arms it, the second removes the block
     in-out property <bool> remove-armed: false;
     in property <bool> remove-focused: false;       // the encoder is on it
+    in property <bool> bypass-focused: false;       // the encoder is on On/Off
+    in property <bool> adjusting: false;            // the encoder turns the focused parameter
     callback remove-confirmed();
     // Blocks loading a model file (NAM, IR): current file, relative to models-dir
     in property <bool> uses-file: false;
@@ -637,6 +639,15 @@ export component PluginEditor {
                         border-radius: Theme.radius-md;
                         border-width: root.midi-learn-target == -1 ? 2px : 1px;
                         border-color: root.midi-learn-target == -1 ? Theme.accent : Theme.accent.with-alpha(0.35);
+                    }
+                    if root.bypass-focused: Rectangle {
+                        x: -3px;
+                        y: -3px;
+                        width: parent.width + 6px;
+                        height: parent.height + 6px;
+                        border-radius: Theme.radius-md + 3px;
+                        border-width: 2px;
+                        border-color: Theme.accent;
                     }
                     if root.bypass-midi != "": MidiTag {
                         x: parent.width - self.width - 4px;
@@ -1043,6 +1054,18 @@ export component PluginEditor {
             property <length> bottom: self.compact ? 26px : 40px;
             viewport-height: max(self.height, self.rows * (self.cell-height + root.gap) - root.gap);
             interactive: self.viewport-height > self.height;
+            // Keeps the encoder's parameter in sight
+            property <int> focused: root.focused-param;
+            changed focused => {
+                if (self.focused < root.parameters.length) {
+                    let y = floor(self.focused / root.columns) * (self.cell-height + root.gap);
+                    if (y < -self.viewport-y) {
+                        self.viewport-y = -y;
+                    } else if (y + self.cell-height > self.height - self.viewport-y) {
+                        self.viewport-y = self.height - y - self.cell-height;
+                    }
+                }
+            }
 
             for p[i] in root.parameters: Rectangle {
                 x: mod(i, root.columns) * (grid.cell-width + root.gap);
@@ -1054,7 +1077,9 @@ export component PluginEditor {
                 // Learning: only the control being learned is highlighted
                 border-color: root.midi-learning ? (root.midi-learn-target == p.index ? Theme.accent : Theme.border)
                     : i == root.focused-param ? Theme.accent : Theme.border;
-                border-width: root.midi-learning && root.midi-learn-target == p.index ? 2px : 1px;
+                // Adjusting with the encoder: a thicker frame
+                border-width: (root.midi-learning && root.midi-learn-target == p.index)
+                    || (root.adjusting && i == root.focused-param) ? 3px : 1px;
                 opacity: root.bypassed ? 0.6 : 1.0;
 
                 // Name

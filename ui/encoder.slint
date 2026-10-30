@@ -1,0 +1,7 @@
+import { ParameterInfo } from "types.slint";
+
+// The rotary encoder
+export global Encoder {
+    // A parameter's value `steps` detents away from its current one
+    pure callback step(ParameterInfo, int) -> float;
+}
