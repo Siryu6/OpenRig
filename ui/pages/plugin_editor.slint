@@ -357,6 +357,28 @@ export component PluginEditor {
 
     private property <int> columns: 5;
     private property <length> gap: Theme.space-md;
+
+    // Short screens (7" 800×480): smaller header and cards, and the graph
+    // gives way to the parameters, so a row of knobs always fits (#46)
+    private property <bool> short: root.height < 600px;
+    private property <length> pad: root.short ? Theme.space-md : Theme.space-lg;
+    private property <length> vgap: root.short ? Theme.space-sm : Theme.space-md;
+    private property <length> header-height: root.short ? 56px : 72px;
+    private property <length> card-height: root.short ? 52px : 64px;
+    private property <length> card-pad: root.short ? 4px : Theme.space-sm;
+    private property <int> cards: (root.uses-file ? 1 : 0) + (root.factory-presets.length > 0 ? 1 : 0) + root.file-slots.length;
+    private property <bool> has-graph: root.scope.shown || root.dyn.shown || root.eq.shown;
+    // Height left for the graph (and its bar) and the parameters
+    private property <length> room: root.height - 2 * root.pad - root.header-height - root.vgap
+        - root.cards * (root.card-height + root.vgap);
+    private property <length> graph-bar: 28px;
+    private property <length> graph-fit: min(240px, root.height * 0.36,
+        root.room - root.graph-bar - 2 * root.vgap - 112px);
+    // 0: shown when there is room, 1: shown, 2: hidden (bar on short screens)
+    private property <int> graph-choice: 0;
+    private property <bool> graph-open: !root.short || root.graph-choice == 1
+        || (root.graph-choice == 0 && root.graph-fit >= 96px);
+    private property <length> graph-height: root.short ? max(96px, root.graph-fit) : min(240px, root.height * 0.36);
     private property <int> picker-pos: -1;  // position in `parameters` of the open enum picker
     private property <bool> model-picker-open: false;
     private property <bool> preset-picker-open: false;
@@ -374,12 +396,12 @@ export component PluginEditor {
     }
 
     if root.instance-id >= 0 || root.plugin-name != "": VerticalLayout {
-        padding: Theme.space-lg;
-        spacing: Theme.space-md;
+        padding: root.pad;
+        spacing: root.vgap;
 
         // ---------------- Header ----------------
         Card {
-            height: 72px;
+            height: root.header-height;
             HorizontalLayout {
                 padding: Theme.space-md;
                 padding-left: Theme.space-lg;
@@ -628,9 +650,9 @@ export component PluginEditor {
 
         // ---------------- Model file ----------------
         if root.uses-file: Card {
-            height: 64px;
+            height: root.card-height;
             HorizontalLayout {
-                padding: Theme.space-sm;
+                padding: root.card-pad;
                 padding-left: root.file-t3k && root.file != "" ? Theme.space-sm : Theme.space-lg;
                 spacing: Theme.space-sm;
 
@@ -638,7 +660,7 @@ export component PluginEditor {
                 if root.file-t3k && root.file != "": VerticalLayout {
                     alignment: center;
                     T3kPicture {
-                        width: 48px;
+                        width: root.short ? 40px : 48px;
                         source: root.file-image;
                     }
                 }
@@ -709,9 +731,9 @@ export component PluginEditor {
 
         // ---------------- Presets of the plugin's bundle ----------------
         if root.factory-presets.length > 0: Card {
-            height: 64px;
+            height: root.card-height;
             HorizontalLayout {
-                padding: Theme.space-sm;
+                padding: root.card-pad;
                 padding-left: Theme.space-lg;
                 spacing: Theme.space-sm;
 
@@ -747,9 +769,9 @@ export component PluginEditor {
 
         // ---------------- Files of an LV2 plugin ----------------
         for slot[i] in root.file-slots: Card {
-            height: 64px;
+            height: root.card-height;
             HorizontalLayout {
-                padding: Theme.space-sm;
+                padding: root.card-pad;
                 padding-left: Theme.space-lg;
                 spacing: Theme.space-sm;
 
@@ -787,8 +809,49 @@ export component PluginEditor {
         }
 
         // ---------------- EQ curve, level curve or scope ----------------
-        if root.scope.shown: ScopeGraph {
-            height: min(240px, root.height * 0.36);
+        // Short screens: a bar shows or hides it
+        if root.short && root.has-graph: Rectangle {
+            height: root.graph-bar;
+            border-radius: Theme.radius-md;
+            background: graph-ta.pressed ? Theme.surface-hover : Theme.surface;
+            border-width: 1px;
+            border-color: Theme.border;
+            HorizontalLayout {
+                padding-left: Theme.space-md;
+                padding-right: Theme.space-md;
+                spacing: Theme.space-sm;
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.eq.shown ? "EQ CURVE" : root.dyn.shown ? "LEVEL CURVE" : "SCOPE";
+                    color: Theme.text-muted;
+                    font-size: Theme.font-small;
+                    font-weight: Theme.weight-semibold;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.graph-open ? "Hide" : "Show";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-small;
+                    vertical-alignment: center;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Icon {
+                        name: root.graph-open ? "chevron-up" : "chevron-down";
+                        size: 14px;
+                        color: Theme.text-secondary;
+                    }
+                }
+            }
+            graph-ta := TouchArea {
+                clicked => {
+                    root.graph-choice = root.graph-open ? 2 : 1;
+                }
+            }
+        }
+
+        if root.scope.shown && root.graph-open: ScopeGraph {
+            height: root.graph-height;
             vertical-stretch: 0;
             scope: root.scope;
             live: root.scope-live;
@@ -797,8 +860,8 @@ export component PluginEditor {
             bypassed: root.bypassed;
         }
 
-        if root.dyn.shown: DynamicsGraph {
-            height: min(240px, root.height * 0.36);
+        if root.dyn.shown && root.graph-open: DynamicsGraph {
+            height: root.graph-height;
             vertical-stretch: 0;
             dyn: root.dyn;
             live: root.dyn-live;
@@ -806,8 +869,8 @@ export component PluginEditor {
             bypassed: root.bypassed;
         }
 
-        if root.eq.shown: EqGraph {
-            height: min(240px, root.height * 0.36);
+        if root.eq.shown && root.graph-open: EqGraph {
+            height: root.graph-height;
             vertical-stretch: 0;
             eq: root.eq;
             points: root.eq-points;
@@ -830,9 +893,11 @@ export component PluginEditor {
             vertical-stretch: 1;
             property <length> cell-width: (self.width - (root.columns - 1) * root.gap) / root.columns;
             property <int> rows: ceil(root.parameters.length / root.columns);
-            // Two rows share the height (smaller knobs) rather than scroll
-            property <bool> compact: self.rows == 2 && self.height < 2 * 152px + root.gap;
-            property <length> cell-height: self.compact ? max(100px, (self.height - root.gap) / 2) : 152px;
+            // Up to two rows share the height (smaller knobs) rather than
+            // scroll; more rows scroll, each at most the visible height
+            property <length> fit: self.rows <= 2 ? (self.height - (self.rows - 1) * root.gap) / max(1, self.rows) : self.height;
+            property <length> cell-height: max(100px, min(152px, self.fit));
+            property <bool> compact: self.cell-height < 152px;
             // Space above and below the knob: name and value
             property <length> top: self.compact ? 24px : 30px;
             property <length> bottom: self.compact ? 26px : 40px;
