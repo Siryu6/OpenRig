@@ -14,6 +14,7 @@ mod midi_ui;
 mod plugin_view;
 mod routing_ui;
 mod scope_ui;
+mod strip_ui;
 #[cfg(feature = "tone3000")]
 mod tone3000_ui;
 #[cfg(feature = "update")]
@@ -1560,6 +1561,7 @@ fn main() -> Result<()> {
 
     // Footswitches and encoder, on the GPIO with the gpio feature
     hardware_ui::setup(&app, &state);
+    strip_ui::setup(&app);
 
     app.run()?;
 

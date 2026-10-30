@@ -1,4 +1,5 @@
-//! Settings → Hardware: the footswitches and encoder wired to the board.
+//! Settings → Hardware: the footswitches, encoder and external (I2C)
+//! encoders wired to the board.
 //! Changes apply at once: the inputs are opened again on their new GPIOs.
 
 use std::cell::RefCell;
@@ -8,7 +9,9 @@ use std::sync::Arc;
 use slint::{ComponentHandle, ModelRc, VecModel};
 use tracing::warn;
 
-use pedalboard::hardware::{Encoder, Hardware, ENCODER_STEPS, MAX_FOOTSWITCHES, MAX_PIN};
+use pedalboard::hardware::{
+    Encoder, Hardware, I2cEncoders, I2cModule, ENCODER_STEPS, MAX_FOOTSWITCHES, MAX_PIN,
+};
 use pedalboard::state::AppState;
 
 use crate::{App, Features};
@@ -54,6 +57,14 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
         });
         change(&app, &st, &mut board, hardware);
     });
+    let (weak, st, b) = (app.as_weak(), state.clone(), board.clone());
+    app.on_hardware_set_i2c(move |on| {
+        let Some(app) = weak.upgrade() else { return };
+        let mut board = b.borrow_mut();
+        let mut hardware = board.hardware.clone();
+        hardware.i2c_encoders = on.then(|| I2cEncoders::new(I2cModule::Seesaw));
+        change(&app, &st, &mut board, hardware);
+    });
     let (weak, st) = (app.as_weak(), state.clone());
     app.on_hardware_set_encoder_button(move |on| {
         let Some(app) = weak.upgrade() else { return };
@@ -69,7 +80,8 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
 
 /// One step of a setting: `what` is "footswitches" (how many),
 /// "footswitch" (the GPIO of switch `index`), "encoder-a", "encoder-b",
-/// "encoder-button" or "encoder-steps"
+/// "encoder-button", "encoder-steps", "i2c-module", "i2c-steps" or
+/// "i2c-reverse" (on when `delta` is positive)
 fn step(hardware: &mut Hardware, what: &str, index: i32, delta: i32) {
     let next_pin = |hardware: &Hardware, pin: u8| -> u8 {
         let used: Vec<u8> = hardware.pins().into_iter().map(|(p, _)| p).collect();
@@ -131,6 +143,26 @@ fn step(hardware: &mut Hardware, what: &str, index: i32, delta: i32) {
                 encoder.steps = ENCODER_STEPS[at as usize];
             }
         }
+        "i2c-module" | "i2c-steps" | "i2c-reverse" => {
+            let Some(i2c) = &mut hardware.i2c_encoders else {
+                return;
+            };
+            let next = |at: Option<usize>, len: usize| {
+                (at.unwrap_or(0) as i32 + delta).clamp(0, len as i32 - 1) as usize
+            };
+            match what {
+                "i2c-module" => {
+                    let at = I2cModule::ALL.iter().position(|&m| m == i2c.module);
+                    i2c.module = I2cModule::ALL[next(at, I2cModule::ALL.len())];
+                }
+                "i2c-steps" => {
+                    let steps = pedalboard::i2c_encoders::STEPS;
+                    i2c.steps =
+                        steps[next(steps.iter().position(|&s| s == i2c.steps), steps.len())];
+                }
+                _ => i2c.reverse = delta > 0,
+            }
+        }
         _ => {}
     }
 }
@@ -161,6 +193,13 @@ fn apply(app: &App, state: &Arc<AppState>, board: &mut Board) {
     app.set_hardware_encoder_b(encoder.b as i32);
     app.set_hardware_encoder_button(encoder.button.map_or(-1, i32::from));
     app.set_hardware_encoder_steps(encoder.steps as i32);
+    let i2c = hardware.i2c_encoders;
+    app.set_hardware_i2c(i2c.is_some());
+    let i2c = i2c.unwrap_or(I2cEncoders::new(I2cModule::Seesaw));
+    app.set_hardware_i2c_module(i2c.module.name().into());
+    app.set_hardware_i2c_steps(i2c.steps.into());
+    app.set_hardware_i2c_reverse(i2c.reverse);
+    app.set_hardware_i2c_found("".into());
     // A warning only: the bus may be unused on this board
     app.set_hardware_message(hardware.shared_pins().join("\n").into());
 
@@ -170,6 +209,9 @@ fn apply(app: &App, state: &Arc<AppState>, board: &mut Board) {
         board.gpio = None;
         match crate::gpio::Gpio::start(app.as_weak(), state.clone(), &board.hardware) {
             Ok((gpio, errors)) => {
+                if let Some(found) = gpio.i2c_found() {
+                    app.set_hardware_i2c_found(found.into());
+                }
                 board.gpio = Some(gpio);
                 let errors: Vec<String> = errors.iter().map(|e| format!("{e:#}")).collect();
                 if !errors.is_empty() {
@@ -235,5 +277,29 @@ mod tests {
         assert_eq!(h.encoder.unwrap().steps, 1);
         step(&mut h, "encoder-steps", 0, 1);
         assert_eq!(h.encoder.unwrap().steps, 2);
+    }
+
+    #[test]
+    fn i2c_encoders() {
+        let mut h = Hardware::default();
+        // Off: nothing to step
+        step(&mut h, "i2c-module", 0, 1);
+        assert_eq!(h.i2c_encoders, None);
+        h.i2c_encoders = Some(I2cEncoders::new(I2cModule::Seesaw));
+        for _ in 0..5 {
+            step(&mut h, "i2c-module", 0, 1);
+            step(&mut h, "i2c-steps", 0, 1);
+        }
+        step(&mut h, "i2c-reverse", 0, 1);
+        let i2c = h.i2c_encoders.unwrap();
+        assert_eq!(
+            (i2c.module, i2c.steps, i2c.reverse),
+            (I2cModule::M5Stack8, 4, true)
+        );
+        step(&mut h, "i2c-steps", 0, -1);
+        step(&mut h, "i2c-reverse", 0, -1);
+        let i2c = h.i2c_encoders.unwrap();
+        assert_eq!((i2c.steps, i2c.reverse), (2, false));
+        assert!(h.validate().is_ok());
     }
 }

@@ -170,6 +170,11 @@ export component App inherits Window {
     in-out property <int> hardware-encoder-b: 6;
     in-out property <int> hardware-encoder-button: 13;
     in-out property <int> hardware-encoder-steps: 4;
+    in-out property <bool> hardware-i2c: false;
+    in-out property <string> hardware-i2c-module: "";
+    in-out property <int> hardware-i2c-steps: 1;
+    in-out property <bool> hardware-i2c-reverse: false;
+    in-out property <string> hardware-i2c-found: "";
     in-out property <string> hardware-message: "";  // error
     // MIDI
     in property <bool> midi-available: false;    // built with MIDI and the system allows it
@@ -344,6 +349,13 @@ export component App inherits Window {
     // what: "footswitches" | "footswitch" (index) | "encoder-a" | "encoder-b"
     // | "encoder-button" | "encoder-steps"; delta: +1 / -1
     callback hardware-step(string, int, int);
+    callback hardware-set-i2c(bool);
+    // External encoders on the rack's knob strip: encoder, action (0 turn,
+    // 1 press, 2 long press), detents
+    callback strip-encoder(int, int, int);
+    in-out property <int> strip-page: 0;
+    in-out property <int> strip-list-row: -1;
+    in-out property <int> strip-list-focus: -1;
     callback hardware-set-encoder(bool);
     callback hardware-set-encoder-button(bool);
     callback midi-channel-changed(int);
@@ -660,6 +672,9 @@ export component App inherits Window {
                 chain-bottom: root.chain-bottom;
                 selected-instance-id: root.selected-instance-id;
                 selected-index <=> root.selected-plugin;
+                page <=> root.strip-page;
+                list-row <=> root.strip-list-row;
+                list-focus <=> root.strip-list-focus;
                 add-focused: root.add-focused;
                 stereo-mode <=> root.stereo-mode;
                 drop-slots: root.drop-slots;
@@ -1165,6 +1180,14 @@ export component App inherits Window {
                 hardware-encoder-button: root.hardware-encoder-button;
                 hardware-encoder-steps: root.hardware-encoder-steps;
                 hardware-message: root.hardware-message;
+                hardware-i2c: root.hardware-i2c;
+                hardware-i2c-module: root.hardware-i2c-module;
+                hardware-i2c-steps: root.hardware-i2c-steps;
+                hardware-i2c-reverse: root.hardware-i2c-reverse;
+                hardware-i2c-found: root.hardware-i2c-found;
+                hardware-set-i2c(on) => {
+                    root.hardware-set-i2c(on);
+                }
                 hardware-step(what, index, delta) => {
                     root.hardware-step(what, index, delta);
                 }
@@ -1416,6 +1439,13 @@ export component App inherits Window {
         width: 0px;
         height: 0px;
 
+        // Which of the six keys `key` is, -1 if none
+        pure function strip-key(key: string, k0: string, k1: string, k2: string,
+                k3: string, k4: string, k5: string) -> int {
+            return key == k0 ? 0 : key == k1 ? 1 : key == k2 ? 2
+                : key == k3 ? 3 : key == k4 ? 4 : key == k5 ? 5 : -1;
+        }
+
         key-pressed(event) => {
             // Turn (and the arrows of a keyboard)
             if (event.text == Key.LeftArrow || event.text == Key.RightArrow
@@ -1522,6 +1552,23 @@ export component App inherits Window {
             if (event.text == "t") {
                 root.tap-tempo();
                 return accept;
+            }
+            // External encoders 1-6 on the knob strip, from a computer
+            // keyboard: a s d f g h turn right (shifted: left), z x c v b n
+            // press (shifted: long press)
+            if (root.current-view == 0) {
+                let lower = event.text.to-lowercase();
+                let turn = self.strip-key(lower, "a", "s", "d", "f", "g", "h");
+                let press = self.strip-key(lower, "z", "x", "c", "v", "b", "n");
+                let shifted = event.text != lower;
+                if (turn >= 0) {
+                    root.strip-encoder(turn, 0, shifted ? -1 : 1);
+                    return accept;
+                }
+                if (press >= 0) {
+                    root.strip-encoder(press, shifted ? 2 : 1, 0);
+                    return accept;
+                }
             }
             // Long press: back one level; on a main page, the page switcher
             if (event.text == Key.Escape) {

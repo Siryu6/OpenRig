@@ -9,11 +9,15 @@
 //! - `PEDALBOARD_FOOTSWITCH_PINS`: footswitch GPIOs, empty for none
 //! - `PEDALBOARD_ENCODER_PINS`: A,B[,button], empty for no encoder
 //! - `PEDALBOARD_ENCODER_STEPS`: quadrature steps per detent
+//! - `PEDALBOARD_I2C_ENCODERS`: external encoders on I2C (`seesaw`,
+//!   `seesaw-quad` or `m5-stack8`), none by default
 
 use std::path::Path;
 
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
+
+pub use crate::i2c_encoders::{I2cEncoders, Module as I2cModule};
 
 const FILE: &str = "hardware.json";
 /// Footswitches the Live page and the keys 1–8 can drive
@@ -28,6 +32,9 @@ pub struct Hardware {
     /// GPIO of each footswitch, in order: as many switches as pins
     pub footswitches: Vec<u8>,
     pub encoder: Option<Encoder>,
+    /// External encoders on the I2C bus, for the knob strip
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub i2c_encoders: Option<I2cEncoders>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +52,7 @@ impl Default for Hardware {
         Self {
             footswitches: vec![17, 27, 22, 23],
             encoder: Some(Encoder::default()),
+            i2c_encoders: None,
         }
     }
 }
@@ -111,6 +119,18 @@ impl Hardware {
                 }
             };
         }
+        if let Some(module) = var("PEDALBOARD_I2C_ENCODERS") {
+            hardware.i2c_encoders = match module.trim() {
+                "" => None,
+                name => match serde_json::from_value(serde_json::Value::String(name.into())) {
+                    Ok(module) => Some(I2cEncoders::new(module)),
+                    Err(_) => {
+                        tracing::warn!("PEDALBOARD_I2C_ENCODERS: unknown board '{name}'");
+                        None
+                    }
+                },
+            };
+        }
         if let (Some(encoder), Some(steps)) = (
             &mut hardware.encoder,
             var("PEDALBOARD_ENCODER_STEPS").and_then(|s| s.parse().ok()),
@@ -146,6 +166,10 @@ impl Hardware {
                 pins.push((button, "encoder button".into()));
             }
         }
+        if self.i2c_encoders.is_some() {
+            pins.push((2, "I2C SDA (external encoders)".into()));
+            pins.push((3, "I2C SCL (external encoders)".into()));
+        }
         pins
     }
 
@@ -157,6 +181,11 @@ impl Hardware {
         if let Some(e) = &self.encoder {
             if !ENCODER_STEPS.contains(&e.steps) {
                 bail!("Encoder steps per detent: 1, 2 or 4");
+            }
+        }
+        if let Some(e) = &self.i2c_encoders {
+            if !crate::i2c_encoders::STEPS.contains(&e.steps) {
+                bail!("External encoders, counts per detent: 1, 2 or 4");
             }
         }
         let pins = self.pins();
@@ -176,6 +205,7 @@ impl Hardware {
     pub fn shared_pins(&self) -> Vec<String> {
         self.pins()
             .into_iter()
+            .filter(|(_, user)| !user.starts_with("I2C"))
             .filter_map(|(pin, user)| Some(format!("{user}: GPIO {pin} is also {}", bus(pin)?)))
             .collect()
     }
@@ -257,6 +287,24 @@ mod tests {
     }
 
     #[test]
+    fn i2c_encoders_take_the_i2c_pins() {
+        let mut h = Hardware {
+            i2c_encoders: Some(I2cEncoders::new(I2cModule::M5Stack8)),
+            ..Hardware::default()
+        };
+        assert!(h.validate().is_ok() && h.shared_pins().is_empty());
+        h.footswitches.push(3);
+        assert!(h.validate().is_err());
+        let from_env = Hardware::from_env(env(&[("PEDALBOARD_I2C_ENCODERS", "seesaw-quad")]));
+        assert_eq!(
+            from_env.i2c_encoders,
+            Some(I2cEncoders::new(I2cModule::SeesawQuad))
+        );
+        let unknown = Hardware::from_env(env(&[("PEDALBOARD_I2C_ENCODERS", "other")]));
+        assert_eq!(unknown.i2c_encoders, None);
+    }
+
+    #[test]
     fn free_pins() {
         let h = Hardware::default();
         assert_eq!(h.free_pin(17), Some(18));
@@ -269,6 +317,7 @@ mod tests {
                 button: Some(10),
                 steps: 4,
             }),
+            i2c_encoders: None,
         };
         assert_eq!(full.free_pin(26), Some(26));
         assert_eq!(h.free_pin(200), Some(26));
@@ -279,10 +328,14 @@ mod tests {
     #[test]
     fn save_and_load() {
         let dir = std::env::temp_dir().join(format!("hardware-test-{}", std::process::id()));
-        let h = Hardware {
+        let mut h = Hardware {
             footswitches: vec![26],
             encoder: None,
+            i2c_encoders: None,
         };
+        h.save(&dir).unwrap();
+        assert_eq!(Hardware::load(&dir), h);
+        h.i2c_encoders = Some(I2cEncoders::new(I2cModule::SeesawQuad));
         h.save(&dir).unwrap();
         assert_eq!(Hardware::load(&dir), h);
         std::fs::write(dir.join(FILE), "{").unwrap();

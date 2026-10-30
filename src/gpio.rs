@@ -10,16 +10,21 @@
 //! turned, Return when its button is pressed, Escape when it is held.
 //! Footswitches report both edges: what they do is chosen on the Live page,
 //! and holding the tap switch opens the tuner.
+//!
+//! External encoder boards on the I2C bus ([`pedalboard::i2c_encoders`])
+//! are polled from a thread and drive the rack's knob strip
+//! ([`crate::strip_ui`]).
 
 use anyhow::{Context, Result};
 use pedalboard::hardware::Hardware;
 use rppal::gpio::{Event, InputPin, Trigger};
 use slint::platform::{Key, WindowEvent};
 use slint::ComponentHandle;
-use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
-use tracing::info;
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+use tracing::{info, warn};
 
 use crate::App;
 use pedalboard::state::AppState;
@@ -44,10 +49,120 @@ fn press_key(app: &slint::Weak<App>, key: Key) {
     });
 }
 
-/// Keeps the pins (and their interrupt threads) alive: dropping it frees
-/// them
+/// Keeps the pins (and their interrupt threads) and the I2C polling alive:
+/// dropping it frees them
 pub struct Gpio {
     _pins: Vec<InputPin>,
+    i2c: Option<I2cPolling>,
+}
+
+/// How often the I2C encoders are read
+const I2C_POLL: Duration = Duration::from_millis(10);
+
+/// The I2C bus of the 40-pin header (GPIO 2 and 3)
+struct I2cBus(rppal::i2c::I2c);
+
+impl pedalboard::i2c_encoders::Bus for I2cBus {
+    fn write(&mut self, address: u8, data: &[u8]) -> std::io::Result<()> {
+        self.0
+            .set_slave_address(address.into())
+            .map_err(std::io::Error::other)?;
+        let written = self.0.write(data).map_err(std::io::Error::other)?;
+        if written != data.len() {
+            return Err(std::io::Error::other(format!(
+                "0x{address:02X}: short write"
+            )));
+        }
+        Ok(())
+    }
+
+    fn read(&mut self, address: u8, buffer: &mut [u8]) -> std::io::Result<()> {
+        self.0
+            .set_slave_address(address.into())
+            .map_err(std::io::Error::other)?;
+        let read = self.0.read(buffer).map_err(std::io::Error::other)?;
+        if read != buffer.len() {
+            return Err(std::io::Error::other(format!(
+                "0x{address:02X}: short read"
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// The thread reading the encoder boards; stopped when dropped
+struct I2cPolling {
+    found: String,
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl I2cPolling {
+    fn start(app: &slint::Weak<App>, settings: pedalboard::hardware::I2cEncoders) -> Result<Self> {
+        use pedalboard::i2c_encoders::{Encoders, Event};
+        let i2c =
+            rppal::i2c::I2c::new().context("Cannot open the I2C bus (enable it in config.txt)")?;
+        let mut bus = I2cBus(i2c);
+        let mut encoders = Encoders::open(&mut bus, settings)?;
+        let found = format!(
+            "{} encoder{} found ({})",
+            encoders.count(),
+            if encoders.count() == 1 { "" } else { "s" },
+            encoders.addresses()
+        );
+        info!("I2C: {found}");
+        let stop = Arc::new(AtomicBool::new(false));
+        let (app, halt) = (app.clone(), stop.clone());
+        let thread = std::thread::Builder::new()
+            .name("i2c-encoders".into())
+            .spawn(move || {
+                let mut failing = false;
+                while !halt.load(Ordering::Relaxed) {
+                    match encoders.poll(&mut bus, Instant::now()) {
+                        Ok(events) if !events.is_empty() => {
+                            let app = app.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                let Some(app) = app.upgrade() else { return };
+                                for event in events {
+                                    let (index, action, detents) = match event {
+                                        Event::Turn { index, detents } => (index, 0, detents),
+                                        Event::Press { index } => (index, 1, 0),
+                                        Event::LongPress { index } => (index, 2, 0),
+                                    };
+                                    app.invoke_strip_encoder(index as i32, action, detents);
+                                }
+                            });
+                            failing = false;
+                        }
+                        Ok(_) => failing = false,
+                        // A loose cable: said once, then tried again slower
+                        Err(e) => {
+                            if !failing {
+                                warn!("I2C encoders: {e}");
+                            }
+                            failing = true;
+                            std::thread::sleep(Duration::from_secs(1));
+                        }
+                    }
+                    std::thread::sleep(I2C_POLL);
+                }
+            })
+            .context("I2C polling thread")?;
+        Ok(Self {
+            found,
+            stop,
+            thread: Some(thread),
+        })
+    }
+}
+
+impl Drop for I2cPolling {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 impl Gpio {
@@ -106,7 +221,22 @@ impl Gpio {
                 errors.push(e);
             }
         }
-        Ok((Self { _pins: held }, errors))
+        let i2c =
+            hardware
+                .i2c_encoders
+                .and_then(|settings| match I2cPolling::start(&app, settings) {
+                    Ok(polling) => Some(polling),
+                    Err(e) => {
+                        errors.push(e.context("External encoders"));
+                        None
+                    }
+                });
+        Ok((Self { _pins: held, i2c }, errors))
+    }
+
+    /// The external encoders found: "5 encoders found (0x36, 0x49)"
+    pub fn i2c_found(&self) -> Option<&str> {
+        self.i2c.as_ref().map(|i2c| i2c.found.as_str())
     }
 
     /// The encoder needs both its pins; its button is apart
