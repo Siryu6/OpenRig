@@ -6,10 +6,11 @@
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
-use std::io::{BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use super::index::{valid_bundle, valid_relative, Artifact, Package};
+use crate::persist::{sync_dir, write_atomic};
 
 /// Receipt file in a bundle installed by the store
 pub const RECEIPT: &str = ".openrig.json";
@@ -106,7 +107,7 @@ pub fn install(
             plugins,
             installed: chrono::Utc::now().to_rfc3339(),
         };
-        write_synced(
+        write_atomic(
             &unpacked.join(RECEIPT),
             &serde_json::to_vec_pretty(&receipt)?,
         )?;
@@ -295,25 +296,6 @@ fn set_mode(path: &Path, executable: bool) {
 
 #[cfg(not(unix))]
 fn set_mode(_path: &Path, _executable: bool) {}
-
-pub(super) fn write_synced(path: &Path, bytes: &[u8]) -> Result<()> {
-    let part = path.with_extension("part");
-    let mut file =
-        File::create(&part).with_context(|| format!("Cannot write {}", part.display()))?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    fs::rename(&part, path)?;
-    Ok(())
-}
-
-fn sync_dir(dir: &Path) {
-    #[cfg(unix)]
-    if let Ok(dir) = File::open(dir) {
-        let _ = dir.sync_all();
-    }
-    #[cfg(not(unix))]
-    let _ = dir;
-}
 
 /// Where a bundle of the LV2 folder is
 pub fn bundle_path(lv2_dir: &Path, bundle: &str) -> PathBuf {

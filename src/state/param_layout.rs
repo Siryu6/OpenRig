@@ -4,7 +4,7 @@
 //! version of the plugin keeps it; parameters it does not name come after,
 //! in the plugin's order.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -74,26 +74,19 @@ impl Layouts {
     /// The saved layouts; none if the file is missing or unreadable
     pub fn load(data_dir: &Path) -> Self {
         let path = data_dir.join(FILE);
-        match std::fs::read(&path) {
-            Ok(json) => serde_json::from_slice(&json).unwrap_or_else(|e| {
-                tracing::warn!("{}: {e}; parameters in the plugins' order", path.display());
-                Self::default()
-            }),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
-            Err(e) => {
-                tracing::warn!("{}: {e}; parameters in the plugins' order", path.display());
-                Self::default()
-            }
-        }
+        crate::persist::load_json(&path)
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    "{}: {e:#}; parameters in the plugins' order",
+                    path.display()
+                );
+                None
+            })
+            .unwrap_or_default()
     }
 
     pub fn save(&self, data_dir: &Path) -> Result<()> {
-        std::fs::create_dir_all(data_dir)?;
-        let path = data_dir.join(FILE);
-        let tmp = data_dir.join(format!("{FILE}.tmp"));
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self)?)
-            .with_context(|| format!("Cannot write {}", tmp.display()))?;
-        std::fs::rename(&tmp, &path).with_context(|| format!("Cannot write {}", path.display()))
+        crate::persist::save_json(&data_dir.join(FILE), self)
     }
 
     pub fn get(&self, uri: &str) -> Layout {

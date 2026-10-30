@@ -10,9 +10,9 @@
 //! - `PEDALBOARD_ENCODER_PINS`: A,B[,button], empty for no encoder
 //! - `PEDALBOARD_ENCODER_STEPS`: quadrature steps per detent
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
 const FILE: &str = "hardware.json";
@@ -64,18 +64,14 @@ impl Hardware {
     /// The saved hardware, else the environment's, else the defaults
     pub fn load(data_dir: &Path) -> Self {
         let path = data_dir.join(FILE);
-        match std::fs::read(&path) {
-            Ok(json) => match serde_json::from_slice::<Self>(&json)
-                .map_err(anyhow::Error::from)
-                .and_then(|h| h.validate().map(|()| h))
-            {
-                Ok(hardware) => return hardware,
-                Err(e) => tracing::warn!("{}: {e:#}; using the defaults", path.display()),
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => tracing::warn!("{}: {e}; using the defaults", path.display()),
-        }
-        Self::from_env(|name| std::env::var(name).ok())
+        let hardware = crate::persist::load_json::<Self>(&path)
+            .and_then(|h| h.map(|h| h.validate().map(|()| h)).transpose());
+        hardware
+            .unwrap_or_else(|e| {
+                tracing::warn!("{}: {e:#}; using the defaults", path.display());
+                None
+            })
+            .unwrap_or_else(|| Self::from_env(|name| std::env::var(name).ok()))
     }
 
     fn from_env(var: impl Fn(&str) -> Option<String>) -> Self {
@@ -132,12 +128,7 @@ impl Hardware {
 
     pub fn save(&self, data_dir: &Path) -> Result<()> {
         self.validate()?;
-        std::fs::create_dir_all(data_dir)?;
-        let path = data_dir.join(FILE);
-        let tmp: PathBuf = data_dir.join(format!("{FILE}.tmp"));
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self)?)
-            .with_context(|| format!("Cannot write {}", tmp.display()))?;
-        std::fs::rename(&tmp, &path).with_context(|| format!("Cannot write {}", path.display()))
+        crate::persist::save_json(&data_dir.join(FILE), self)
     }
 
     /// Every GPIO used, with what uses it
