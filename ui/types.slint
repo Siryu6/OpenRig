@@ -173,6 +173,8 @@ export struct ModelChoice {
     current: bool,
     image: image,        // picture saved with a TONE3000 tone (empty otherwise)
     t3k: bool,           // a TONE3000 download
+    location: string,    // folder holding it, relative to the models dir ("" at the top)
+    folder: bool,        // a folder to open (file = its path), not a choice
 }
 
 // A file an LV2 plugin loads (its model, its impulse response…), chosen in
