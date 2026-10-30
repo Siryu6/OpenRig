@@ -7,7 +7,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{BufReader, Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::index::{valid_bundle, valid_relative, Artifact, Package};
 use crate::persist::{sync_dir, write_atomic};
@@ -302,6 +302,7 @@ mod tests {
     use super::*;
     use crate::store::index::Source;
     use std::collections::HashMap;
+    use std::path::PathBuf;
 
     fn temp() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("openrig-store-{}", uuid::Uuid::new_v4()));
