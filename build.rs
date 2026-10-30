@@ -1,5 +1,13 @@
 fn main() {
-    slint_build::compile("ui/app.slint").unwrap();
+    // Without a display backend (tests, headless checks) Slint has no image
+    // decoder for embedded images: embed them decoded instead
+    let headless = std::env::var_os("CARGO_FEATURE_WINIT").is_none()
+        && std::env::var_os("CARGO_FEATURE_KMS").is_none();
+    let mut config = slint_build::CompilerConfiguration::new();
+    if headless {
+        config = config.embed_resources(slint_build::EmbedResourcesKind::EmbedForSoftwareRenderer);
+    }
+    slint_build::compile_with_config("ui/app.slint", config).unwrap();
 
     #[cfg(feature = "nam")]
     build_nam();

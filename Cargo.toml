@@ -4,7 +4,7 @@ version = "0.8.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 # The rustc of the OS image (Buildroot): dependencies are resolved for it
-rust-version = "1.88"
+rust-version = "1.99"
 resolver = "3"
 
 [lib]
@@ -52,16 +52,16 @@ update = ["dep:ureq", "dep:ring", "dep:libc"]
 store = ["dep:ureq", "dep:ring", "dep:minisign-verify", "dep:tar", "dep:flate2", "dep:lzma-rs"]
 
 [dependencies]
-lilv = { version = "0.2.4", optional = true }
+lilv = { version = "0.3.1", optional = true }
 # femtovg (OpenGL): the UI draws icons and connectors with Path, which the
 # software renderer does not support. Qt is left out (aborts without a display).
 # The backend and the renderer come from the `winit` / `kms` features (without
 # either, the app builds but has no display: tests, headless checks).
-slint = { version = "1.9", default-features = false, features = ["std", "compat-1-2"] }
+slint = { version = "1.18", default-features = false, features = ["std", "compat-1-18"] }
 
 # Audio
 jack = "0.13"
-lv2_raw = { version = "0.2", optional = true }  # Same version as the one lilv uses, so LV2Feature types match
+lv2_raw = { version = "0.3", optional = true }  # Same major as the one lilv uses, so LV2Feature types match
 
 # Concurrency
 crossbeam-channel = "0.5"  # Lock-free channels for RT-safe communication
@@ -107,7 +107,7 @@ lzma-rs = { version = "0.3", optional = true }
 blake2 = "0.11"  # minisign signatures of the store test
 
 [build-dependencies]
-slint-build = "1.9"
+slint-build = "1.18"
 cmake = { version = "0.1.54", optional = true }
 
 # The convolution must keep up in real time even in debug builds
@@ -123,8 +123,6 @@ opt-level = 3
 lto = "thin"
 
 [patch.crates-io]
-# lilv 0.2.4 does not build where c_char is u8 (ARM Linux): fixed copy
-lilv = { path = "third_party/lilv" }
 # Slint's KMS backend asks for framebuffer modifiers even where the driver
 # takes none (virtio-gpu in QEMU…): copy that retries without them
 i-slint-backend-linuxkms = { path = "third_party/i-slint-backend-linuxkms" }

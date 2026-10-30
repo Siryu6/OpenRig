@@ -1557,10 +1557,10 @@ export component App inherits Window {
             // keyboard: a s d f g h turn right (shifted: left), z x c v b n
             // press (shifted: long press)
             if (root.current-view == 0) {
-                // (Not in a local: Slint 1.16 moves a string local passed on)
-                let turn = self.strip-key(event.text.to-lowercase(), "a", "s", "d", "f", "g", "h");
-                let press = self.strip-key(event.text.to-lowercase(), "z", "x", "c", "v", "b", "n");
-                let shifted = event.text != event.text.to-lowercase();
+                let lower = event.text.to-lowercase();
+                let turn = self.strip-key(lower, "a", "s", "d", "f", "g", "h");
+                let press = self.strip-key(lower, "z", "x", "c", "v", "b", "n");
+                let shifted = event.text != lower;
                 if (turn >= 0) {
                     root.strip-encoder(turn, 0, shifted ? -1 : 1);
                     return accept;

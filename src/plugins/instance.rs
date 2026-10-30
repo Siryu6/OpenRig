@@ -52,6 +52,7 @@ struct AtomPort {
     /// Takes MIDI events / the transport / patch messages
     midi: bool,
     time: bool,
+    #[cfg_attr(not(feature = "lv2"), allow(dead_code))]
     patch: bool,
 }
 

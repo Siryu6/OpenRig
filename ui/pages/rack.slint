@@ -88,8 +88,8 @@ export component PluginRack {
     private property <float> drop-x: root.dragged.x + root.cell-width / 2 + root.drag-dx / 1px;
     private property <float> drop-y: root.dragged.y + root.drag-dy / 1px;
     // The finger on the page, and whether it is over the trash
-    private property <length> finger-x: (root.drop-x + root.origin-x) * 1px + flick.viewport-x;
-    private property <length> finger-y: (root.drop-y + canvas-area.origin-y) * 1px + flick.viewport-y;
+    private property <length> finger-x: (root.drop-x + root.origin-x) * 1px + flick.content-x;
+    private property <length> finger-y: (root.drop-y + canvas-area.origin-y) * 1px + flick.content-y;
     private property <length> trash-width: 200px;
     private property <length> trash-height: 64px;
     private property <length> trash-y: root.height - root.trash-height - Theme.space-lg;
@@ -130,8 +130,8 @@ export component PluginRack {
                 (max(root.chain-width, 0) + root.origin-x + 96) * 1px);
 
             flick := Flickable {
-                viewport-width: canvas-area.content-width;
-                viewport-height: canvas-area.content-height;
+                content-width: canvas-area.content-width;
+                content-height: canvas-area.content-height;
                 interactive: !root.holding && (canvas-area.content-width > canvas-area.width
                     || canvas-area.content-height > canvas-area.height);
 
@@ -990,8 +990,8 @@ export component PluginRack {
                 y: Theme.space-xs;
                 width: parent.width - 2 * Theme.space-xs;
                 height: parent.height - 2 * Theme.space-xs;
-                viewport-height: pull.param.options.length * pull.row-height;
-                interactive: self.viewport-height > self.height;
+                content-height: pull.param.options.length * pull.row-height;
+                interactive: self.content-height > self.height;
                 // Keeps the encoder's option in view
                 property <int> focused: root.list-focus;
                 changed focused => {
@@ -1002,9 +1002,9 @@ export component PluginRack {
                 }
                 function show-focus() {
                     if (self.focused >= 0) {
-                        self.viewport-y = max(self.height - self.viewport-height,
+                        self.content-y = max(self.height - self.content-height,
                             min(0, max(-self.focused * pull.row-height,
-                                min(self.viewport-y, self.height - (self.focused + 1) * pull.row-height))));
+                                min(self.content-y, self.height - (self.focused + 1) * pull.row-height))));
                     }
                 }
 

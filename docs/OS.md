@@ -48,11 +48,11 @@ The app is built with `--no-default-features --features
 kms,lv2,nam,tone3000,midi,splash,update,store` (plus `gpio` on the Pi): no X11 /
 Wayland. Its
 dependencies are vendored from `Cargo.lock` at build time; the image's rustc
-is 1.88, which `rust-version` in `Cargo.toml` keeps the lockfile compatible
-with. Two dependencies are patched copies in `third_party/` (see their
-`PATCHED.md`): lilv, which does not build on ARM Linux, and Slint's KMS
-backend, which could not display on drivers without framebuffer modifiers
-(virtio-gpu in QEMU).
+is 1.99 (`RUST_BIN_VERSION` in `os/Makefile`, newer than Buildroot's own),
+which `rust-version` in `Cargo.toml` keeps the lockfile compatible with.
+Slint's KMS backend is a patched copy in `third_party/` (see its
+`PATCHED.md`): it could not display on drivers without framebuffer
+modifiers (virtio-gpu in QEMU).
 
 ### Test in QEMU
 

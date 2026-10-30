@@ -112,7 +112,7 @@ Last update: 2026-10-19.
   `autoboot.txt` tryboot; x86_64: GRUB `grubenv`.
 - 167 tests (`cargo test`, without `nam`), no clippy warning on the default, `lv2`,
   `lv2,nam`, `gpio`, `kms`, image (`kms,lv2,nam,tone3000,midi,gpio,splash,update,store`) and
-  no-feature builds. `rust-version` 1.88 (the image's rustc).
+  no-feature builds. `rust-version` 1.99 (the image's rustc).
 
 ## Not tested yet
 

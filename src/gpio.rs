@@ -276,9 +276,7 @@ impl Gpio {
                     if delta == 0 {
                         return;
                     }
-                    // `try_update` needs a newer Rust than the image's 1.88
-                    #[allow(deprecated)]
-                    let stepped = count.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                    let stepped = count.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
                         let total = n + delta;
                         Some(if total.abs() >= steps { 0 } else { total })
                     });
