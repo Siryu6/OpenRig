@@ -297,11 +297,6 @@ fn set_mode(path: &Path, executable: bool) {
 #[cfg(not(unix))]
 fn set_mode(_path: &Path, _executable: bool) {}
 
-/// Where a bundle of the LV2 folder is
-pub fn bundle_path(lv2_dir: &Path, bundle: &str) -> PathBuf {
-    lv2_dir.join(bundle)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
