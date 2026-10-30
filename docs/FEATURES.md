@@ -152,8 +152,12 @@ What OpenRig does, in more technical detail than the
   and Remove (press twice), a press makes the turns change the parameter
   (in steps of 1/100 of its range, per octave for frequencies, one option
   for lists; a toggle flips at once), another press keeps the value and
-  holding goes back to the value before. Holding on a main page opens a
-  page switcher (Rack, Presets, Live, Tuner, Looper, Settings). Settings → Hardware sets what is wired: from
+  holding goes back to the value before. Presets: turn to pick, press to
+  load. Live: the switches (a press acts like the footswitch), then the
+  tempo (press, then turn), tap and the mode. Looper: Record, Overdub,
+  Play, Stop, Undo, Clear and the level. Tuner: mute and the reference
+  pitch. Holding on a main page opens a page switcher (Rack, Presets,
+  Live, Tuner, Looper, Settings). Settings → Hardware sets what is wired: from
   no footswitch to 8, the GPIO of each (with a LED that lights while it is
   pressed, to check the wiring), the encoder or none, its push button or
   none, its steps per detent. Kept in `hardware.json` in the data

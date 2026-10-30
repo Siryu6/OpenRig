@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
 import { LiveTile, MenuItem } from "../types.slint";
-import { Button, Card, Display, EmptyState, Icon, Segmented } from "../components/controls.slint";
+import { Button, Card, Display, EmptyState, FocusRing, Icon, Segmented } from "../components/controls.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 
 export { LiveTile }
@@ -29,6 +29,7 @@ component SwitchTile inherits Rectangle {
     in property <LiveTile> tile;
     in property <int> number;      // 1-based
     in property <bool> assigning;  // waiting for a tap to choose its block
+    in property <bool> focused;    // the encoder is on it
     callback clicked();
 
     border-radius: Theme.radius-lg;
@@ -117,6 +118,10 @@ component SwitchTile inherits Rectangle {
             root.clicked();
         }
     }
+
+    if root.focused: FocusRing {
+        radius: Theme.radius-lg;
+    }
 }
 
 // Live: what the footswitches do, mirrored on screen. Scenes of the preset,
@@ -133,6 +138,9 @@ export component LiveView inherits Rectangle {
     in property <string> tap-switch-label; // "FS 4" when a footswitch taps
     in property <[MenuItem]> stomp-choices: [];
 
+    // Encoder focus: the switches, then the tempo, tap and mode
+    in property <int> focused: -1;
+    in property <bool> adjusting;         // the encoder sets the tempo
     callback mode-changed(string);
     callback tile-pressed(int);
     callback tap();
@@ -211,6 +219,10 @@ export component LiveView inherits Rectangle {
 
             Display {
                 width: 220px;
+                if root.focused == root.tiles.length: FocusRing {
+                    radius: Theme.radius-lg;
+                    strong: root.adjusting;
+                }
                 HorizontalLayout {
                     padding: Theme.space-xs;
                     VerticalLayout {
@@ -323,6 +335,9 @@ export component LiveView inherits Rectangle {
                         horizontal-alignment: center;
                     }
                 }
+                if root.focused == root.tiles.length + 1: FocusRing {
+                    radius: Theme.radius-lg;
+                }
                 tap-ta := TouchArea {
                     pointer-event(event) => {
                         if (event.kind == PointerEventKind.down) {
@@ -340,6 +355,7 @@ export component LiveView inherits Rectangle {
             Segmented {
                 width: 330px;
                 options: ["Scenes", "Stomp", "Setlist"];
+                focused: root.focused == root.tiles.length + 2;
                 current-index: root.mode == "scenes" ? 0 : root.mode == "stomp" ? 1 : 2;
                 activated(i) => {
                     root.assigning = false;
@@ -406,6 +422,7 @@ export component LiveView inherits Rectangle {
                 tile: tile;
                 number: i + 1;
                 assigning: root.assigning;
+                focused: i == root.focused;
                 clicked => {
                     if (root.assigning) {
                         root.assign-slot = i;
