@@ -244,6 +244,7 @@ impl Looper {
     }
 
     /// Number of overdubs on top of the first recording
+    #[cfg(test)]
     pub fn overdub_count(&self) -> usize {
         self.layers.len().saturating_sub(1)
     }

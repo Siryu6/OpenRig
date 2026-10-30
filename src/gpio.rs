@@ -130,22 +130,24 @@ impl Gpio {
                 let (levels, count, app) = (levels.clone(), count.clone(), app.clone());
                 pin.set_async_interrupt(Trigger::Both, None, move |event: Event| {
                     let high = event.trigger == Trigger::RisingEdge;
-                    let set = |old: u8| {
-                        if high {
-                            old | (1 << bit)
-                        } else {
-                            old & !(1 << bit)
-                        }
-                    };
                     // Each pin has its own interrupt thread: update the
                     // levels and the count atomically
-                    let old = levels
-                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |old| Some(set(old)))
-                        .unwrap_or_else(|old| old);
-                    let delta = QUADRATURE[((old << 2) | set(old)) as usize] as i32;
+                    let old = if high {
+                        levels.fetch_or(1 << bit, Ordering::Relaxed)
+                    } else {
+                        levels.fetch_and(!(1 << bit), Ordering::Relaxed)
+                    };
+                    let new = if high {
+                        old | (1 << bit)
+                    } else {
+                        old & !(1 << bit)
+                    };
+                    let delta = QUADRATURE[((old << 2) | new) as usize] as i32;
                     if delta == 0 {
                         return;
                     }
+                    // `try_update` needs a newer Rust than the image's 1.88
+                    #[allow(deprecated)]
                     let stepped = count.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
                         let total = n + delta;
                         Some(if total.abs() >= steps { 0 } else { total })

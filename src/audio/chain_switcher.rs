@@ -343,6 +343,7 @@ impl ChainSwitcher {
         }
     }
 
+    #[cfg(test)]
     pub fn is_crossfading(&self) -> bool {
         self.crossfade_state.is_active()
     }

@@ -821,6 +821,7 @@ impl PluginInstance {
     }
 
     /// True for blocks that keep ringing once bypassed (delays, reverbs)
+    #[cfg(test)]
     pub fn has_trails(&self) -> bool {
         self.trails
     }
