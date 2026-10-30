@@ -106,7 +106,10 @@ What OpenRig does, in more technical detail than the
   input / output LED meters with clip LEDs on the rack, knobs tinted with the block's colour, LED
   tuner ramp, footswitch tiles on the Live page. Tap to select:
   the block's controls show as knobs at the bottom of the rack (five per page)
-  for quick tweaks; double tap opens the full editor. Hold (0.35 s) and
+  for quick tweaks; double tap opens the full editor. Arrange, in the
+  editor, sets the order of a plugin's controls and which ones the knob
+  strip shows, for every instance of the plugin (Reset goes back to the
+  plugin's order). Hold (0.35 s) and
   release in place to bypass, hold and drag to move a block anywhere,
   including into a split branch. A quick swipe scrolls the rack.
 - **Real-time safe audio**: chains are built off the audio thread and swapped
@@ -149,7 +152,8 @@ What OpenRig does, in more technical detail than the
   without the touch screen (arrows, Return and Escape on a keyboard): turn
   to move, press to open or adjust, hold to go back. In the rack it picks a
   block and opens it; in the editor it goes through the parameters, On/Off
-  and Remove (press twice), a press makes the turns change the parameter
+  and Remove (press twice; while arranging, a press picks a control and
+  the turns move it, or puts it in or out of the strip), a press makes the turns change the parameter
   (in steps of 1/100 of its range, per octave for frequencies, one option
   for lists; a toggle flips at once), another press keeps the value and
   holding goes back to the value before. Presets: turn to pick, press to

@@ -23,6 +23,7 @@ export component PluginRack {
     callback node-double-tapped(int);
     // Parameters of the selected block (filled by the backend on selection)
     in property <[ParameterInfo]> parameters: [];
+    in property <int> strip-count;                  // parameters in the knob strip
     in property <Levels> levels;
     in property <bool> uses-file: false;
     in property <string> file-title: "";
@@ -58,7 +59,7 @@ export component PluginRack {
     // Quick controls: knobs per page, current page
     private property <int> per-page: 5;
     private property <int> page: 0;
-    private property <int> pages: max(1, ceil(root.parameters.length / root.per-page));
+    private property <int> pages: max(1, ceil(root.strip-count / root.per-page));
 
     changed selected-instance-id => {
         root.page = 0;
@@ -546,9 +547,10 @@ export component PluginRack {
                     opacity: root.sel.bypassed ? 0.6 : 1.0;
                     property <length> cell-width: self.width / root.per-page;
 
-                    if root.parameters.length == 0: Text {
+                    if root.strip-count == 0: Text {
                         text: root.uses-file
                             ? (root.file-title != "" ? root.file-title : "No model loaded") + " · double tap to edit"
+                            : root.parameters.length > 0 ? "Controls left out · double tap to edit"
                             : "No controls · double tap to edit";
                         color: Theme.text-secondary;
                         font-size: Theme.font-small;
@@ -557,8 +559,8 @@ export component PluginRack {
                     }
 
                     for p[i] in root.parameters: Rectangle {
-                        visible: floor(i / root.per-page) == root.page;
-                        x: mod(i, root.per-page) * knobs.cell-width;
+                        visible: p.strip-pos >= 0 && floor(p.strip-pos / root.per-page) == root.page;
+                        x: mod(max(0, p.strip-pos), root.per-page) * knobs.cell-width;
                         width: knobs.cell-width;
 
                         Text {

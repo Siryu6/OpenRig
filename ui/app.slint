@@ -55,7 +55,15 @@ export component App inherits Window {
     in-out property <bool> remove-armed: false;
     // Encoder (Left/Right: turn, Return: press, Escape: long press). In the
     // editor the focus goes through the parameters, then On/Off and Remove
-    private property <int> bypass-slot: root.selected-parameters.length;
+    // (and Arrange first, when there is something to arrange)
+    private property <int> arrange-slot: root.selected-parameters.length > 1 ? root.selected-parameters.length : -1;
+    private property <int> reset-slot: root.arranging ? root.selected-parameters.length + 1 : -1;
+    private property <int> bypass-slot: root.selected-parameters.length + (root.arrange-slot >= 0 ? 1 : 0)
+        + (root.arranging ? 1 : 0);
+    // Arranging the parameters; the encoder stops twice on each: move, strip
+    in-out property <bool> arranging: false;
+    in-out property <int> arrange-stop: 0;
+    in-out property <int> selected-strip-count: 0;
     private property <int> remove-slot: root.bypass-slot + 1;
     // The focused parameter follows the encoder; its value before, for a
     // long press
@@ -295,6 +303,9 @@ export component App inherits Window {
     callback set-color(int, string);                 // instance-id, colour name ("" = default)
     callback select-node(int);                       // instance-id
     callback set-parameter(int, int, float);         // instance-id, param index, value
+    callback arrange-parameter(int, int, int);       // instance-id, param index, places
+    callback toggle-parameter-strip(int, int);       // instance-id, param index
+    callback reset-parameter-layout(int);            // instance-id
     callback toggle-node-bypass(int);                // instance-id
     callback refresh-models();
     callback set-model(int, string);                 // instance-id, file ("" = none)
@@ -421,6 +432,7 @@ export component App inherits Window {
         if (!root.positioned-nodes[idx].is-split) {
             root.focused-parameter = 0;
             root.adjusting = false;
+            root.arranging = false;
             root.current-view = 1;
         }
     }
@@ -534,11 +546,17 @@ export component App inherits Window {
         root.current-view = root.page-views[index];
     }
 
+    changed arranging => {
+        root.adjusting = false;
+        root.arrange-stop = 0;
+    }
+
     // Text fields (keyboard dialogs) take the focus: give it back to the
     // encoder / shortcut handler when the view changes
     changed current-view => {
         keys.focus();
         root.adjusting = false;
+        root.arranging = false;
         root.page-focus = 0;
         // Learning only makes sense in the block editor
         if (root.current-view != 1 && root.midi-learning) {
@@ -638,6 +656,7 @@ export component App inherits Window {
                 stereo-mode <=> root.stereo-mode;
                 drop-slots: root.drop-slots;
                 parameters: root.selected-parameters;
+                strip-count: root.selected-strip-count;
                 uses-file: root.selected-uses-file;
                 file-title: root.selected-file-title;
 
@@ -736,6 +755,19 @@ export component App inherits Window {
                 remove-focused: root.focused-parameter == root.remove-slot;
                 bypass-focused: root.focused-parameter == root.bypass-slot;
                 adjusting: root.adjusting;
+                arrange-focused: root.focused-parameter == root.arrange-slot;
+                reset-focused: root.focused-parameter == root.reset-slot;
+                arranging <=> root.arranging;
+                arrange-stop: root.arrange-stop;
+                arrange-moved(index, places) => {
+                    root.arrange-parameter(root.selected-instance-id, index, places);
+                }
+                strip-toggled(index) => {
+                    root.toggle-parameter-strip(root.selected-instance-id, index);
+                }
+                arrange-reset => {
+                    root.reset-parameter-layout(root.selected-instance-id);
+                }
                 remove-confirmed => {
                     root.remove-node-by-id(root.selected-instance-id);
                     root.selected-instance-id = -1;
@@ -1383,8 +1415,22 @@ export component App inherits Window {
                 let d = event.text == Key.LeftArrow || event.text == Key.UpArrow ? -1 : 1;
                 if (root.pages-open) {
                     root.pages-index = max(0, min(root.page-views.length - 1, root.pages-index + d));
+                } else if (root.current-view == 1 && root.adjusting && root.arranging) {
+                    // Moves the picked parameter, the focus with it
+                    root.arrange-parameter(root.selected-instance-id,
+                        root.selected-parameters[root.focused-parameter].index, d);
+                    root.focused-parameter = max(0, min(root.selected-parameters.length - 1, root.focused-parameter + d));
                 } else if (root.current-view == 1 && root.adjusting) {
                     root.adjust(d);
+                } else if (root.current-view == 1 && root.arranging && root.focused-parameter < root.selected-parameters.length) {
+                    let stop = max(0, root.focused-parameter * 2 + root.arrange-stop + d);
+                    if (stop >= root.selected-parameters.length * 2) {
+                        root.focused-parameter = root.arrange-slot;
+                        root.arrange-stop = 0;
+                    } else {
+                        root.focused-parameter = floor(stop / 2);
+                        root.arrange-stop = mod(stop, 2);
+                    }
                 } else if (root.adjusting) {
                     root.set-page-value(round(root.page-value() * (root.current-view == 5 ? 20 : 1) + d)
                         / (root.current-view == 5 ? 20 : 1));
@@ -1392,6 +1438,8 @@ export component App inherits Window {
                     root.page-focus = max(0, min(root.page-slots - 1, root.page-focus + d));
                 } else if (root.current-view == 1) {
                     root.focused-parameter = max(0, min(root.remove-slot, root.focused-parameter + d));
+                    // Back into the parameters while arranging: on the last one's strip
+                    root.arrange-stop = root.arranging && root.focused-parameter < root.selected-parameters.length ? 1 : 0;
                     root.remove-armed = false;
                 } else if (root.current-view == 0 && root.positioned-nodes.length > 0) {
                     root.select-node-at(max(0, min(root.positioned-nodes.length - 1, root.selected-plugin + d)));
@@ -1409,6 +1457,19 @@ export component App inherits Window {
                 } else if (root.current-view == 1) {
                     if (root.adjusting) {
                         root.adjusting = false;
+                    } else if (root.arranging && root.focused-parameter < root.selected-parameters.length) {
+                        if (root.arrange-stop == 0) {
+                            // Picked: the turns move it
+                            root.adjusting = true;
+                        } else {
+                            root.toggle-parameter-strip(root.selected-instance-id,
+                                root.selected-parameters[root.focused-parameter].index);
+                        }
+                    } else if (root.focused-parameter == root.arrange-slot) {
+                        root.arranging = !root.arranging;
+                        root.arrange-stop = 0;
+                    } else if (root.focused-parameter == root.reset-slot) {
+                        root.reset-parameter-layout(root.selected-instance-id);
                     } else if (root.focused-parameter < root.selected-parameters.length) {
                         if (root.selected-parameters[root.focused-parameter].kind == "toggle") {
                             root.adjust(1);
@@ -1456,6 +1517,13 @@ export component App inherits Window {
                     root.show-context-menu = false;
                 } else if (root.power-dialog) {
                     root.power-dialog = false;
+                } else if (root.current-view == 1 && root.arranging) {
+                    // Drops the picked parameter, else leaves Arrange
+                    if (root.adjusting) {
+                        root.adjusting = false;
+                    } else {
+                        root.arranging = false;
+                    }
                 } else if (root.current-view == 1 && root.adjusting) {
                     // Back to the value before
                     root.set-parameter(root.selected-instance-id,
