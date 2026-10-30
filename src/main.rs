@@ -36,7 +36,7 @@ use pedalboard::monitor::{self, Level, SystemMonitor};
 use pedalboard::plugins::scanner;
 use pedalboard::state::{AppState, EffectChainState, ModelPack};
 use pedalboard::ui::slint_bridge as views;
-use pedalboard::ui::{chain_layout, text_edit};
+use pedalboard::ui::{chain_layout, folders, text_edit};
 
 slint::include_modules!();
 
@@ -193,6 +193,16 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
 /// Name of a block: blocks loading a file are named after its tone
 /// ("Boss MT-2")
 /// Picture saved with a downloaded tone (none without TONE3000)
+/// The folder holding a tone's folder, for the folder view of the lists
+fn pack_location(pack: &ModelPack) -> &str {
+    let dir = pack
+        .files
+        .first()
+        .and_then(|f| f.rsplit_once('/'))
+        .map_or("", |(dir, _)| dir);
+    dir.rsplit_once('/').map_or("", |(location, _)| location)
+}
+
 fn pack_picture(pack: Option<&ModelPack>) -> slint::Image {
     #[cfg(feature = "tone3000")]
     if let Some(path) = pack.and_then(|p| p.picture.as_deref()) {
@@ -361,6 +371,7 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
             t3k: false,
             file: f.as_str().into(),
             current: *f == view.file,
+            ..Default::default()
         })
         .collect();
     let preset_name = presets.iter().find(|p| p.current).map_or_else(
@@ -418,6 +429,7 @@ fn factory_presets(
             t3k: false,
             file: i.to_string().into(),
             current: false,
+            ..Default::default()
         })
         .collect()
 }
@@ -756,7 +768,9 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
                     current: pack.files.iter().any(|f| *f == current.as_str()),
                     // A tone loads its first preset; the others are in the editor
                     file: pack.files.first().cloned().unwrap_or_default().into(),
+                    location: pack_location(&pack).into(),
                     title: pack.title.into(),
+                    folder: false,
                 }
             })
             .collect();
@@ -785,6 +799,7 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
             .flat_map(|pack| {
                 let image = pack_picture(Some(&pack));
                 let labels = pack.preset_labels();
+                let location = SharedString::from(pack_location(&pack));
                 pack.files
                     .iter()
                     .zip(labels)
@@ -795,6 +810,8 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
                         t3k: pack.tone3000,
                         current: *file == current,
                         file: file.as_str().into(),
+                        location: location.clone(),
+                        folder: false,
                     })
                     .collect::<Vec<_>>()
             })
@@ -1006,6 +1023,44 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
     });
     editing.on_erase(move |text, start, end| edit(text_edit::erase(&text, start, end)));
 
+    // Folders of the model lists (pedalboard::ui::folders)
+    let locations = |choices: &ModelRc<ModelChoice>| -> Vec<SharedString> {
+        choices.iter().map(|c| c.location).collect()
+    };
+    app.global::<ChoiceSearch>()
+        .on_browse(move |choices, folder| {
+            let all: Vec<ModelChoice> = choices.iter().collect();
+            let level = folders::level(&locations(&choices), &folder);
+            let entries = level.folders.into_iter().map(|(name, count)| ModelChoice {
+                file: folders::join(&folder, &name).into(),
+                title: name.into(),
+                subtitle: match count {
+                    1 => "1 item".into(),
+                    n => format!("{n} items").into(),
+                },
+                folder: true,
+                ..Default::default()
+            });
+            model(
+                entries
+                    .chain(level.items.into_iter().map(|i| all[i].clone()))
+                    .collect(),
+            )
+        });
+    app.global::<ChoiceSearch>()
+        .on_enter(move |choices, folder| folders::enter(&locations(&choices), &folder).into());
+    app.global::<ChoiceSearch>()
+        .on_up(move |choices, folder| folders::up(&locations(&choices), &folder).into());
+    // Where a list opens: at its current choice
+    app.global::<ChoiceSearch>().on_start(move |choices| {
+        let locations = locations(&choices);
+        let start = choices
+            .iter()
+            .find(|c| c.current)
+            .map(|c| c.location)
+            .unwrap_or_default();
+        folders::enter(&locations, &start).into()
+    });
     app.global::<ChoiceSearch>().on_filter(|choices, query| {
         model(
             choices

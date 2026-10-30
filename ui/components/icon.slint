@@ -27,7 +27,7 @@ export component Icon {
         stroke-width: root.stroke;
         commands:
             root.name == "rack" ? "M4 7 H20 M4 17 H20 M9 4 V10 M15 14 V20" :
-            root.name == "presets" ? "M4 7 V18 Q4 19 5 19 H19 Q20 19 20 18 V9 Q20 8 19 8 H12 L10 5 H5 Q4 5 4 6 Z" :
+            root.name == "presets" || root.name == "folder" ? "M4 7 V18 Q4 19 5 19 H19 Q20 19 20 18 V9 Q20 8 19 8 H12 L10 5 H5 Q4 5 4 6 Z" :
             root.name == "scenes" ? "M4 4 H10 V10 H4 Z M14 4 H20 V10 H14 Z M4 14 H10 V20 H4 Z M14 14 H20 V20 H14 Z" :
             root.name == "tuner" ? "M3.5 17 A8.5 8.5 0 0 1 20.5 17 M12 17 L16 10 M3 20 H21" :
             root.name == "looper" ? "M17 3 L20 6 L17 9 M4 12 V11 Q4 6 9 6 H20 M7 21 L4 18 L7 15 M20 12 V13 Q20 18 15 18 H4" :
