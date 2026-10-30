@@ -306,6 +306,10 @@ export component PluginEditor {
     in property <ScopeLive> scope-live;
     in property <Spectrum> spectrum;                // the sound through it, for the EQ and scope
     in property <int> focused-param: 0;
+    // Remove: the first press arms it, the second removes the block
+    in-out property <bool> remove-armed: false;
+    in property <bool> remove-focused: false;       // the encoder is on it
+    callback remove-confirmed();
     // Blocks loading a model file (NAM, IR): current file, relative to models-dir
     in property <bool> uses-file: false;
     in property <string> file: "";
@@ -506,6 +510,43 @@ export component PluginEditor {
                         x: parent.width - self.width - 4px;
                         y: 3px;
                         text: root.bypass-midi;
+                    }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 0;
+                    width: root.remove-armed ? 140px : Theme.touch-target;
+                    Button {
+                        icon: "trash";
+                        text: root.remove-armed ? "Remove" : "";
+                        variant: root.remove-armed ? "danger" : "secondary";
+                        enabled: root.instance-id >= 0 && !root.midi-learning;
+                        clicked => {
+                            if (root.remove-armed) {
+                                root.remove-armed = false;
+                                root.remove-confirmed();
+                            } else {
+                                root.remove-armed = true;
+                            }
+                        }
+                    }
+                    // Encoder focus
+                    if root.remove-focused: Rectangle {
+                        x: -3px;
+                        y: -3px;
+                        width: parent.width + 6px;
+                        height: parent.height + 6px;
+                        border-radius: Theme.radius-md + 3px;
+                        border-width: 2px;
+                        border-color: Theme.accent;
+                    }
+                    // Disarms by itself
+                    Timer {
+                        interval: 4s;
+                        running: root.remove-armed;
+                        triggered => {
+                            root.remove-armed = false;
+                        }
                     }
                 }
             }

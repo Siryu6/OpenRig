@@ -867,6 +867,9 @@ pub struct AppState {
     /// Session changes so far, and when to save them
     changes: AtomicU64,
     autosave: Mutex<Autosave>,
+    /// The chain before the last block removed, and the change count right
+    /// after: the removal can be undone while nothing else changed
+    removed: Mutex<Option<(EffectChainState, u64)>>,
     session_file: crate::presets::BackgroundWriter,
     /// Tones already read, by block and directory, with the time their
     /// folder last changed (the rack shows them at every refresh)
@@ -981,6 +984,7 @@ impl AppState {
             data_dir,
             changes: AtomicU64::new(0),
             autosave: Mutex::default(),
+            removed: Mutex::default(),
             packs: Mutex::default(),
             live: Mutex::default(),
             midi: Mutex::default(),
@@ -1366,7 +1370,26 @@ impl AppState {
     }
 
     pub fn remove_node(&self, instance_id: usize) -> Result<()> {
-        self.edit(|c| c.remove(instance_id))
+        let before = self.effect_chain.lock().unwrap().clone();
+        self.edit(|c| c.remove(instance_id))?;
+        *self.removed.lock().unwrap() = Some((before, self.changes.load(Ordering::Relaxed)));
+        Ok(())
+    }
+
+    /// Put back the block removed last, with its settings, if nothing else
+    /// changed since. False when there is nothing to undo.
+    pub fn undo_remove(&self) -> Result<bool> {
+        let Some((before, changes)) = self.removed.lock().unwrap().take() else {
+            return Ok(false);
+        };
+        if self.changes.load(Ordering::Relaxed) != changes {
+            return Ok(false);
+        }
+        self.edit(|c| {
+            *c = before;
+            Ok(())
+        })?;
+        Ok(true)
     }
 
     /// Move a node anywhere in the chain (drag and drop in the rack)
@@ -2409,6 +2432,38 @@ mod tests {
         state.remove_node(amp).unwrap();
         assert!(state.chain().files.is_empty());
         assert!(state.set_plugin_file(amp, None).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn removing_a_block_can_be_undone() {
+        let host = Lv2Host::with_scanner(crate::plugins::scanner::PluginScanner::from_plugins([
+            fx_plugin(&[("gain", 0.0)]),
+        ]));
+        let dir = std::env::temp_dir().join(format!("pedalboard-test-{}", uuid::Uuid::new_v4()));
+        let state = AppState::with_host(Arc::new(host), dir.clone()).unwrap();
+        let first = state.add_plugin(FX).unwrap();
+        let second = state.add_plugin(FX).unwrap();
+        state.set_parameter(first, 0, 0.5).unwrap();
+        state.set_color(first, Some("red".into()));
+
+        assert!(!state.undo_remove().unwrap(), "nothing removed yet");
+        state.remove_node(first).unwrap();
+        assert!(state.chain().find(first).is_none());
+        assert!(state.undo_remove().unwrap());
+        let chain = state.chain();
+        // Back in its place, with its settings
+        assert_eq!(node_id(&chain.nodes[0]), first);
+        assert_eq!(node_id(&chain.nodes[1]), second);
+        assert_eq!(chain.params[&first], [0.5]);
+        assert_eq!(chain.colors[&first], "red");
+        assert!(!state.undo_remove().unwrap(), "undone once only");
+
+        // Not after another change
+        state.remove_node(second).unwrap();
+        state.set_parameter(first, 0, 0.25).unwrap();
+        assert!(!state.undo_remove().unwrap());
+        assert!(state.chain().find(second).is_none());
         let _ = std::fs::remove_dir_all(dir);
     }
 
