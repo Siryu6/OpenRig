@@ -61,8 +61,14 @@ export component PluginRack {
     private property <int> page: 0;
     private property <int> pages: max(1, ceil(root.strip-count / root.per-page));
 
+    // The strip's open option list: row in `parameters` (-1: none) and the
+    // field's x
+    private property <int> list-row: -1;
+    private property <length> list-x;
+
     changed selected-instance-id => {
         root.page = 0;
+        root.list-row = -1;
     }
 
     private property <bool> has-selection: root.selected-index >= 0
@@ -614,37 +620,33 @@ export component PluginRack {
                             }
                         }
 
-                        // Enumeration: tap for the next option
+                        // Enumeration: the current option, tap for the list
                         if p.kind == "enum": Rectangle {
                             x: Theme.space-xs;
                             y: 27px;
                             width: parent.width - 2 * Theme.space-xs;
                             height: Theme.touch-target;
                             border-radius: Theme.radius-md;
-                            background: Theme.surface-raised;
+                            background: option-ta.pressed ? Theme.surface-hover : Theme.surface-raised;
                             border-width: 1px;
-                            border-color: Theme.border-strong;
-                            // Only the current option is shown and takes the tap
-                            for v[k] in p.option-values: Rectangle {
+                            border-color: root.list-row == i ? root.sel.tint : Theme.border-strong;
+                            for v[k] in p.option-values: Text {
                                 visible: abs(v - p.value) < 0.0001;
-                                border-radius: Theme.radius-md;
-                                background: option-ta.pressed ? Theme.surface-hover : transparent;
-                                Text {
-                                    x: Theme.space-xs;
-                                    width: parent.width - 2 * Theme.space-xs;
-                                    text: k < p.options.length ? p.options[k] : "";
-                                    color: Theme.text-primary;
-                                    font-size: Theme.font-small;
-                                    font-weight: Theme.weight-semibold;
-                                    horizontal-alignment: center;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                }
-                                option-ta := TouchArea {
-                                    clicked => {
-                                        root.parameter-changed(p.index,
-                                            p.option-values[mod(k + 1, p.option-values.length)]);
-                                    }
+                                x: Theme.space-xs;
+                                width: parent.width - 2 * Theme.space-xs;
+                                text: k < p.options.length ? p.options[k] : "";
+                                color: Theme.text-primary;
+                                font-size: Theme.font-small;
+                                font-weight: Theme.weight-semibold;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            option-ta := TouchArea {
+                                clicked => {
+                                    root.list-x = self.absolute-position.x - root.absolute-position.x
+                                        + self.width / 2;
+                                    root.list-row = root.list-row == i ? -1 : i;
                                 }
                             }
                         }
@@ -663,6 +665,7 @@ export component PluginRack {
                             enabled: root.page > 0;
                             clicked => {
                                 root.page -= 1;
+                                root.list-row = -1;
                             }
                         }
                         Button {
@@ -671,6 +674,7 @@ export component PluginRack {
                             enabled: root.page < root.pages - 1;
                             clicked => {
                                 root.page += 1;
+                                root.list-row = -1;
                             }
                         }
                     }
@@ -940,6 +944,69 @@ export component PluginRack {
                     font-weight: Theme.weight-bold;
                     horizontal-alignment: right;
                     vertical-alignment: center;
+                }
+            }
+        }
+    }
+
+    // ---------------- Option list of a strip field ----------------
+    // Pulled up from the field, so it stays near the finger
+    if root.has-selection && root.list-row >= 0 && root.list-row < root.parameters.length: pull := Rectangle {
+        property <ParameterInfo> param: root.parameters[root.list-row];
+        property <length> row-height: Theme.touch-target;
+
+        TouchArea {
+            clicked => {
+                root.list-row = -1;
+            }
+        }
+
+        list := Rectangle {
+            width: 200px;
+            height: min(5.5, pull.param.options.length) * pull.row-height + 2 * Theme.space-xs;
+            x: clamp(root.list-x - self.width / 2, Theme.space-sm, root.width - self.width - Theme.space-sm);
+            y: root.height - root.strip-height - self.height - Theme.space-xs;
+            border-radius: Theme.radius-md;
+            background: Theme.surface-raised;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 12px;
+            drop-shadow-color: #00000080;
+
+            TouchArea { }
+
+            Flickable {
+                x: Theme.space-xs;
+                y: Theme.space-xs;
+                width: parent.width - 2 * Theme.space-xs;
+                height: parent.height - 2 * Theme.space-xs;
+                viewport-height: pull.param.options.length * pull.row-height;
+                interactive: self.viewport-height > self.height;
+
+                for label[k] in pull.param.options: opt := Rectangle {
+                    property <bool> current: k < pull.param.option-values.length
+                        && abs(pull.param.option-values[k] - pull.param.value) < 0.0001;
+                    y: k * pull.row-height;
+                    height: pull.row-height;
+                    border-radius: Theme.radius-sm;
+                    background: opt-ta.pressed ? Theme.surface-hover : self.current ? Theme.accent-soft : transparent;
+                    Text {
+                        x: Theme.space-sm;
+                        width: parent.width - 2 * Theme.space-sm;
+                        text: label;
+                        color: opt.current ? Theme.accent : Theme.text-primary;
+                        font-size: Theme.font-body;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    opt-ta := TouchArea {
+                        clicked => {
+                            if (k < pull.param.option-values.length) {
+                                root.parameter-changed(pull.param.index, pull.param.option-values[k]);
+                            }
+                            root.list-row = -1;
+                        }
+                    }
                 }
             }
         }

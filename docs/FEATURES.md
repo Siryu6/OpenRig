@@ -105,8 +105,9 @@ What OpenRig does, in more technical detail than the
   corners, amber accent, key-like buttons with status LEDs, recessed displays,
   input / output LED meters with clip LEDs on the rack, knobs tinted with the block's colour, LED
   tuner ramp, footswitch tiles on the Live page. Tap to select:
-  the block's controls show as knobs at the bottom of the rack (five per page)
-  for quick tweaks; double tap opens the full editor. Arrange, in the
+  the block's controls show at the bottom of the rack (five per page)
+  for quick tweaks: knobs, switches, and lists that open just above the
+  strip; double tap opens the full editor. Arrange, in the
   editor, sets the order of a plugin's controls and which ones the knob
   strip shows, for every instance of the plugin (Reset goes back to the
   plugin's order). Hold (0.35 s) and
