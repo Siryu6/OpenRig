@@ -42,6 +42,7 @@ component LabeledKnob inherits VerticalLayout {
     in property <float> value;
     in property <float> minimum;
     in property <float> maximum;
+    in property <float> default-value: 0;     // 0 dB, centre
     callback changed(float);
     spacing: 2px;
     alignment: start;
@@ -52,6 +53,7 @@ component LabeledKnob inherits VerticalLayout {
             value: root.value;
             minimum: root.minimum;
             maximum: root.maximum;
+            default-value: root.default-value;
             changed(v) => {
                 root.changed(v);
             }
