@@ -44,6 +44,7 @@ slint::include_modules!();
 const POLL_MS: u64 = 50;
 /// How long a status message stays visible
 const STATUS_SECONDS: f32 = 4.0;
+const STATUS_ACTION_SECONDS: f32 = 8.0;
 /// View indexes of the block editor, the tuner and the Live page
 #[cfg_attr(not(feature = "midi"), allow(dead_code))]
 const EDITOR_VIEW: i32 = 1;
@@ -105,7 +106,14 @@ thread_local! {
 
 /// Show a toast for `STATUS_SECONDS`
 pub(crate) fn show_status(app: &App, message: SharedString) {
+    show_status_action(app, message, "");
+}
+
+/// Show a toast with an action button (`STATUS_ACTION_SECONDS`, to leave
+/// time to reach it)
+pub(crate) fn show_status_action(app: &App, message: SharedString, action: &str) {
     STATUS_SHOWN.with(|n| n.set(n.get().wrapping_add(1)));
+    app.set_status_action(action.into());
     app.set_status_message(message);
 }
 
@@ -680,10 +688,21 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
             if let Some(instance_id) = id(instance_id) {
                 if report(&app, state.remove_node(instance_id)).is_some() {
                     refresh_chain(&app, state);
+                    show_status_action(&app, "Block removed".into(), "Undo");
                 }
             }
         }
     );
+
+    // The toast's action: undo the last removal
+    on!(app, state, on_status_action_clicked, |app, state| {
+        app.set_status_message(SharedString::new());
+        match report(&app, state.undo_remove()) {
+            Some(true) => refresh_chain(&app, state),
+            Some(false) => show_status(&app, "Nothing to undo".into()),
+            None => {}
+        }
+    });
 
     // === Bypass, splits and parameters (live, no chain rebuild) ===
     on!(
@@ -1148,7 +1167,12 @@ fn start_poll_timer(
                 status_age.set(0.0);
             } else if !app.get_status_message().is_empty() {
                 status_age.set(status_age.get() + POLL_MS as f32 / 1000.0);
-                if status_age.get() > STATUS_SECONDS {
+                let limit = if app.get_status_action().is_empty() {
+                    STATUS_SECONDS
+                } else {
+                    STATUS_ACTION_SECONDS
+                };
+                if status_age.get() > limit {
                     app.set_status_message(SharedString::new());
                 }
             }

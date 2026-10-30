@@ -21,7 +21,7 @@ import { TextEdit, TextEditing } from "components/virtual_keyboard.slint";
 // Components
 import { TopBar } from "components/top_bar.slint";
 import { ContextMenuOverlay } from "components/context_menu.slint";
-import { Icon } from "components/controls.slint";
+import { Button, Icon } from "components/controls.slint";
 import { ResourcePanel } from "components/resource_panel.slint";
 import { PowerDialog } from "components/power_dialog.slint";
 import { PlotEvents } from "components/plot.slint";
@@ -50,6 +50,11 @@ export component App inherits Window {
     private property <string> selected-split-type: root.selected-plugin >= 0 && root.selected-plugin < root.positioned-nodes.length
         ? root.positioned-nodes[root.selected-plugin].split-type : "";
     in-out property <int> focused-parameter: 0;
+    // The editor's Remove button waits for a second press
+    in-out property <bool> remove-armed: false;
+    // Its encoder focus: past the last parameter (a block with none keeps
+    // 0 for "back to the rack")
+    private property <int> remove-slot: max(1, root.selected-parameters.length);
     in-out property <int> browser-selected-index: 0;
 
     // Split chain insertion mode: 0 = main, 1 = top branch, 2 = bottom branch
@@ -255,6 +260,9 @@ export component App inherits Window {
 
     // Transient toast text set by Rust; empty = hidden
     in-out property <string> status-message: "";
+    // Label of the toast's action button (e.g. "Undo"); empty = none
+    in-out property <string> status-action: "";
+    callback status-action-clicked();
 
     // ------------------------------------------------------------ callbacks
     callback add-plugin-to-chain(string);
@@ -633,6 +641,13 @@ export component App inherits Window {
                 scope-live: root.selected-scope-live;
                 spectrum: root.selected-spectrum;
                 focused-param: root.focused-parameter;
+                remove-armed <=> root.remove-armed;
+                remove-focused: root.focused-parameter == root.remove-slot;
+                remove-confirmed => {
+                    root.remove-node-by-id(root.selected-instance-id);
+                    root.selected-instance-id = -1;
+                    root.current-view = 0;
+                }
                 uses-file: root.selected-uses-file;
                 file: root.selected-file;
                 file-label: root.selected-file-label;
@@ -1103,6 +1118,13 @@ export component App inherits Window {
         border-width: 1px;
         border-color: Theme.border-strong;
 
+        // A tap hides it (the action button above keeps its own taps)
+        TouchArea {
+            clicked => {
+                root.status-message = "";
+            }
+        }
+
         toast-row := HorizontalLayout {
             padding-left: Theme.space-lg;
             padding-right: Theme.space-lg;
@@ -1122,13 +1144,23 @@ export component App inherits Window {
                 vertical-alignment: center;
                 overflow: elide;
             }
-        }
-
-        TouchArea {
-            clicked => {
-                root.status-message = "";
+            if root.status-action != "": Rectangle {
+                width: Theme.space-sm;
+            }
+            if root.status-action != "": VerticalLayout {
+                alignment: center;
+                Button {
+                    height: 32px;
+                    text: root.status-action;
+                    font-size: Theme.font-small;
+                    variant: "primary";
+                    clicked => {
+                        root.status-action-clicked();
+                    }
+                }
             }
         }
+
     }
 
     ContextMenuOverlay {
@@ -1195,8 +1227,10 @@ export component App inherits Window {
             }
             if (event.text == Key.LeftArrow || event.text == Key.RightArrow) {
                 if (root.current-view == 1) {
-                    root.focused-parameter = max(0, min(root.selected-parameters.length - 1,
+                    // Past the last parameter: the Remove button
+                    root.focused-parameter = max(0, min(root.remove-slot,
                         root.focused-parameter + (event.text == Key.LeftArrow ? -1 : 1)));
+                    root.remove-armed = false;
                 } else if (root.current-view == 0 && root.positioned-nodes.length > 0) {
                     root.select-node-at(max(0, min(root.positioned-nodes.length - 1,
                         root.selected-plugin + (event.text == Key.LeftArrow ? -1 : 1))));
@@ -1207,7 +1241,16 @@ export component App inherits Window {
                 if (root.current-view == 0) {
                     root.open-node(root.selected-plugin);
                 } else if (root.current-view == 1) {
-                    root.current-view = 0;
+                    if (root.focused-parameter != root.remove-slot) {
+                        root.current-view = 0;
+                    } else if (root.remove-armed) {
+                        root.remove-armed = false;
+                        root.remove-node-by-id(root.selected-instance-id);
+                        root.selected-instance-id = -1;
+                        root.current-view = 0;
+                    } else {
+                        root.remove-armed = true;
+                    }
                 } else if (root.current-view == 2) {
                     if (root.browser-selected-index >= 0 && root.browser-selected-index < root.available-plugins.length) {
                         root.add-plugin(root.available-plugins[root.browser-selected-index].uri);
