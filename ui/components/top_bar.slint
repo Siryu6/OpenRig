@@ -81,7 +81,15 @@ export component TopBar inherits Rectangle {
     // The full bar (preset box, meter, labelled tabs, menu) needs about
     // 850px. Below that, the tabs drop their labels and the preset box
     // shrinks, so the menu button never leaves the screen (800x480 DSI).
-    property <bool> compact: root.width < 880px;
+    // Set when the width changes, not bound to it: the bar's width depends
+    // on its layout, which depends on this (binding loop).
+    property <bool> compact: false;
+    init => {
+        root.compact = root.width < 880px;
+    }
+    changed width => {
+        root.compact = root.width < 880px;
+    }
 
     HorizontalLayout {
         padding-left: Theme.space-sm;

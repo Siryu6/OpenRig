@@ -641,6 +641,15 @@ export component PluginEditor {
                         border-width: root.midi-learn-target == -1 ? 2px : 1px;
                         border-color: root.midi-learn-target == -1 ? Theme.accent : Theme.accent.with-alpha(0.35);
                     }
+                    if root.bypass-focused: Rectangle {
+                        x: -3px;
+                        y: -3px;
+                        width: parent.width + 6px;
+                        height: parent.height + 6px;
+                        border-radius: Theme.radius-md + 3px;
+                        border-width: 2px;
+                        border-color: Theme.accent;
+                    }
                     if root.bypass-midi != "": MidiTag {
                         x: parent.width - self.width - 4px;
                         y: 3px;
