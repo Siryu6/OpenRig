@@ -4,7 +4,7 @@ version = "0.8.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
 # The rustc of the OS image (Buildroot): dependencies are resolved for it
-rust-version = "1.88"
+rust-version = "1.99"
 resolver = "3"
 
 [lib]
