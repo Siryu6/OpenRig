@@ -14,6 +14,13 @@
 BR_VERSION = 2026.02.3
 BR_SHA256 = 5a59e7501b0b4ec52c41f4bfa79412320e0b37eae5f719605a258e8d0c6fc7fb
 
+# Rust used to build the app, newer than Buildroot's (rust-bin 1.88.0) for
+# the app's rust-version. rust-bin's version has no Kconfig option: it is set
+# on the command line of every Buildroot make below, which overrides the one
+# in package/rust-bin/rust-bin.mk. The tarballs' hashes are in
+# board/common/patches/rust-bin/rust-bin.hash.
+RUST_BIN_VERSION = 1.99.1
+
 OS_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 CACHE ?= $(OS_DIR)/.cache
 OUTPUT ?= $(OS_DIR)/output
@@ -23,7 +30,8 @@ BOARDS = rpi5 x86_64
 # Shared by the boards and kept across clean builds
 export BR2_DL_DIR ?= $(CACHE)/dl
 
-BR_MAKE = $(MAKE) -C $(BR_DIR) O=$(OUTPUT)/$(1) BR2_EXTERNAL=$(OS_DIR)
+BR_MAKE = $(MAKE) -C $(BR_DIR) O=$(OUTPUT)/$(1) BR2_EXTERNAL=$(OS_DIR) \
+	RUST_BIN_VERSION=$(RUST_BIN_VERSION)
 
 .PHONY: all $(BOARDS) buildroot help
 # docker-<board> and <board>-<target> are pattern rules: they cannot be .PHONY
