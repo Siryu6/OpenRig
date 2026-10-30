@@ -434,7 +434,7 @@ pub fn download(token: &str, models_dir: &Path, tone: &Tone, model: &Model) -> R
         image: tone.image().map(str::to_string),
         source: "Downloaded from TONE3000 (https://www.tone3000.com)".into(),
     };
-    crate::presets::store::write_atomic(
+    crate::persist::write_atomic(
         &dir.join(TONE_INFO_FILE),
         serde_json::to_string_pretty(&info)?.as_bytes(),
     )?;
@@ -459,7 +459,7 @@ pub fn save_picture(models_dir: &Path, tone: &Tone) -> bool {
     }
     let saved = super::images::fetch(url, PICTURE_SIDE)
         .and_then(|picture| super::images::encode_png(&picture))
-        .and_then(|data| crate::presets::store::write_atomic(&path, &data));
+        .and_then(|data| crate::persist::write_atomic(&path, &data));
     match saved {
         Ok(()) => true,
         Err(e) => {

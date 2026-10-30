@@ -7,29 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
-/// Write `contents` to `path` through a temporary file and a rename
-pub fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
-    let tmp = path.with_extension("json.tmp");
-    let file = (|| {
-        let mut file = fs::File::create(&tmp)?;
-        std::io::Write::write_all(&mut file, contents)?;
-        file.sync_all()
-    })();
-    file.with_context(|| format!("Failed to write {}", tmp.display()))?;
-    fs::rename(&tmp, path).with_context(|| format!("Failed to write {}", path.display()))?;
-    sync_dir(path);
-    Ok(())
-}
-
-/// Make a new, renamed or deleted file in the directory of `path` survive a
-/// power cut (best effort: directories cannot be synced on Windows)
-pub fn sync_dir(path: &Path) {
-    if let Some(dir) = path.parent() {
-        if let Ok(dir) = fs::File::open(dir) {
-            let _ = dir.sync_all();
-        }
-    }
-}
+pub use crate::persist::write_atomic;
 
 /// File of the item `id` in `dir`
 pub fn file_for(dir: &Path, id: &str) -> PathBuf {

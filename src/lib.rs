@@ -4,6 +4,7 @@ pub mod audio;
 pub mod hardware;
 pub mod midi;
 pub mod monitor;
+pub mod persist;
 pub mod plugins;
 pub mod presets;
 pub mod state;

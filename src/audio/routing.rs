@@ -13,10 +13,10 @@
 //! main mix plays on outputs 1 and 2, as before multi-channel interfaces were
 //! supported.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use crossbeam_channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 
@@ -143,28 +143,19 @@ impl Routing {
     /// The saved routing, else the default one
     pub fn load(data_dir: &Path) -> Self {
         let path = data_dir.join(FILE);
-        match std::fs::read(&path) {
-            Ok(json) => match serde_json::from_slice::<Self>(&json)
-                .map_err(anyhow::Error::from)
-                .and_then(|r| r.validate().map(|()| r))
-            {
-                Ok(routing) => return routing,
-                Err(e) => tracing::warn!("{}: {e:#}; using the default routing", path.display()),
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => tracing::warn!("{}: {e}; using the default routing", path.display()),
-        }
-        Self::default()
+        let routing = crate::persist::load_json::<Self>(&path)
+            .and_then(|r| r.map(|r| r.validate().map(|()| r)).transpose());
+        routing
+            .unwrap_or_else(|e| {
+                tracing::warn!("{}: {e:#}; using the default routing", path.display());
+                None
+            })
+            .unwrap_or_default()
     }
 
     pub fn save(&self, data_dir: &Path) -> Result<()> {
         self.validate()?;
-        std::fs::create_dir_all(data_dir)?;
-        let path = data_dir.join(FILE);
-        let tmp: PathBuf = data_dir.join(format!("{FILE}.tmp"));
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self)?)
-            .with_context(|| format!("Cannot write {}", tmp.display()))?;
-        std::fs::rename(&tmp, &path).with_context(|| format!("Cannot write {}", path.display()))
+        crate::persist::save_json(&data_dir.join(FILE), self)
     }
 
     /// An output used by two strips, or one that cannot exist

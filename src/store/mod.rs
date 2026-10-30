@@ -157,11 +157,11 @@ impl Store {
         }
         fs::create_dir_all(&self.dir)
             .with_context(|| format!("Cannot create {}", self.dir.display()))?;
-        install::write_synced(
+        crate::persist::write_atomic(
             &self.dir.join(format!("{INDEX_FILE}.minisig")),
             signature.as_bytes(),
         )?;
-        install::write_synced(&self.dir.join(INDEX_FILE), data)?;
+        crate::persist::write_atomic(&self.dir.join(INDEX_FILE), data)?;
         self.prune_cache(&index);
         Ok(index)
     }
@@ -249,7 +249,7 @@ impl Store {
                 bail!("checksum mismatch");
             }
             fs::create_dir_all(path.parent().unwrap())?;
-            install::write_synced(&path, &bytes)
+            crate::persist::write_atomic(&path, &bytes)
         })();
         match result {
             Ok(()) => Some(path),

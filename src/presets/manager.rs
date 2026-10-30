@@ -93,7 +93,9 @@ impl PresetManager {
             .unwrap_or_else(|| store::file_for(&self.presets_dir, id));
         if path.exists() {
             std::fs::remove_file(&path)?;
-            store::sync_dir(&path);
+            if let Some(dir) = path.parent() {
+                crate::persist::sync_dir(dir);
+            }
         }
         self.files.remove(id);
         let preset = self.presets.remove(id).expect("checked above");
