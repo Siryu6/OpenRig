@@ -1285,6 +1285,7 @@ fn start_audio_watch(app: &App, engine: Option<Rc<AudioEngine>>) -> slint::Timer
                         info!("JACK server stopped: quitting to restart");
                         let _ = slint::quit_event_loop();
                     } else {
+                        warn!("JACK server stopped");
                         show_status(&app, "Audio stopped: the JACK server shut down".into());
                     }
                 }

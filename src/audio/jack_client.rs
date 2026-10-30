@@ -76,7 +76,7 @@ impl JackClientBuilder {
         let mut in_ports = Vec::with_capacity(inputs);
         for i in 1..=inputs {
             let mut port = client
-                .register_port(&format!("in_{i}"), jack::AudioIn)
+                .register_port(&format!("in_{i}"), jack::AudioIn::default())
                 .with_context(|| format!("Failed to register input {i}"))?;
             if i == 1 {
                 // The name of the single input before multi-channel support
@@ -87,7 +87,7 @@ impl JackClientBuilder {
         let mut out_ports = Vec::with_capacity(outputs);
         for i in 1..=outputs {
             let mut port = client
-                .register_port(&format!("out_{i}"), jack::AudioOut)
+                .register_port(&format!("out_{i}"), jack::AudioOut::default())
                 .with_context(|| format!("Failed to register output {i}"))?;
             if let Some(side) = ["out_left", "out_right"].get(i - 1) {
                 let _ = port.set_alias(&format!("{}:{side}", self.client_name));
@@ -211,8 +211,9 @@ pub struct Notifications {
 }
 
 impl NotificationHandler for Notifications {
-    fn shutdown(&mut self, _status: jack::ClientStatus, reason: &str) {
-        warn!("JACK server stopped: {}", reason);
+    // Runs like a signal handler (async-signal-safe calls only): only set
+    // the flag, the UI loop reports it
+    unsafe fn shutdown(&mut self, _status: jack::ClientStatus, _reason: &str) {
         self.stopped.store(true, Ordering::Relaxed);
     }
 

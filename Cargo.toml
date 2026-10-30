@@ -60,7 +60,7 @@ lilv = { version = "0.2.4", optional = true }
 slint = { version = "1.9", default-features = false, features = ["std", "compat-1-2"] }
 
 # Audio
-jack = "0.11"
+jack = "0.13"
 lv2_raw = { version = "0.2", optional = true }  # Same version as the one lilv uses, so LV2Feature types match
 
 # Concurrency
@@ -73,20 +73,20 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 
 # Error handling
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2"
 
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # System directories
-dirs = "5.0"
+dirs = "7"
 
 # Date/time formatting
 chrono = "0.4"
 
 # GPIO (for Raspberry Pi hardware)
-rppal = { version = "0.19", optional = true }
+rppal = { version = "0.22", optional = true }
 fft-convolver = "0.4"
 # Spectrum of the EQ view (already used by fft-convolver)
 realfft = "3.5"
@@ -98,13 +98,13 @@ midir = { version = "0.11.0", optional = true }  # MIDI input: ALSA, CoreMIDI, W
 png = { version = "0.18", optional = true }
 zune-jpeg = { version = "0.5", optional = true }
 libc = { version = "0.2", optional = true }
-minisign-verify = { version = "0.2", optional = true }
+minisign-verify = { version = "0.3", optional = true }
 tar = { version = "0.4", default-features = false, optional = true }
 flate2 = { version = "1", optional = true }
 lzma-rs = { version = "0.3", optional = true }
 
 [dev-dependencies]
-blake2 = "0.10"  # minisign signatures of the store test
+blake2 = "0.11"  # minisign signatures of the store test
 
 [build-dependencies]
 slint-build = "1.9"
