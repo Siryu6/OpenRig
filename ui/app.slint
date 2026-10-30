@@ -65,6 +65,12 @@ export component App inherits Window {
     in-out property <bool> pages-open: false;
     in-out property <int> pages-index: 0;
     private property <[int]> page-views: [0, 4, 9, 3, 5, 7];
+    // Focus on the presets, Live, looper and tuner pages
+    in-out property <int> page-focus: 0;
+    private property <int> page-slots: root.current-view == 4 ? root.presets.length
+        : root.current-view == 9 ? root.live-tiles.length + 3
+        : root.current-view == 5 ? 7
+        : root.current-view == 3 ? 2 : 0;
     in-out property <int> browser-selected-index: 0;
 
     // Split chain insertion mode: 0 = main, 1 = top branch, 2 = bottom branch
@@ -463,6 +469,60 @@ export component App inherits Window {
         }
     }
 
+    // The value a page's encoder adjusts: tempo, looper level, reference pitch
+    function page-value() -> float {
+        root.current-view == 9 ? root.tempo : root.current-view == 5 ? root.looper-level : root.tuner-reference-pitch
+    }
+
+    function set-page-value(v: float) {
+        if (root.current-view == 9) {
+            root.set-tempo(max(40, min(240, v)));
+        } else if (root.current-view == 5) {
+            root.looper-level = max(0, min(1, v));
+            root.looper-level-changed(root.looper-level);
+        } else if (root.current-view == 3) {
+            root.tuner-reference-pitch = max(430, min(450, v));
+            root.tuner-reference-pitch-changed(root.tuner-reference-pitch);
+        }
+    }
+
+    function page-press() {
+        let i = root.page-focus;
+        if (root.current-view == 4) {
+            if (i < root.presets.length) {
+                root.load-preset(root.presets[i].id);
+                root.current-view = 0;
+            }
+        } else if (root.current-view == 9 && i < root.live-tiles.length) {
+            root.live-tile-pressed(i);
+        } else if (root.current-view == 9 && i == root.live-tiles.length + 1) {
+            root.tap-tempo();
+        } else if (root.current-view == 9 && i == root.live-tiles.length + 2) {
+            root.live-mode-changed(root.live-mode == "scenes" ? "stomp" : root.live-mode == "stomp" ? "setlist" : "scenes");
+        } else if (root.current-view == 5 && i < 6) {
+            if (i == 0) {
+                root.looper-record();
+            } else if (i == 1) {
+                root.looper-overdub();
+            } else if (i == 2) {
+                root.looper-play();
+            } else if (i == 3) {
+                root.looper-stop();
+            } else if (i == 4) {
+                root.looper-undo();
+            } else {
+                root.looper-clear();
+            }
+        } else if (root.current-view == 3 && i == 0) {
+            root.tuner-mute-enabled = !root.tuner-mute-enabled;
+            root.tuner-mute-toggled(root.tuner-mute-enabled);
+        } else {
+            // Tempo, looper level, reference pitch
+            root.adjust-from = root.page-value();
+            root.adjusting = true;
+        }
+    }
+
     function open-pages() {
         root.pages-index = root.current-view == 4 ? 1 : root.current-view == 9 ? 2 : root.current-view == 3 ? 3
             : root.current-view == 5 ? 4 : root.current-view == 7 ? 5 : 0;
@@ -479,6 +539,7 @@ export component App inherits Window {
     changed current-view => {
         keys.focus();
         root.adjusting = false;
+        root.page-focus = 0;
         // Learning only makes sense in the block editor
         if (root.current-view != 1 && root.midi-learning) {
             root.midi-learn-toggled(false);
@@ -799,6 +860,8 @@ export component App inherits Window {
             }
 
             if root.current-view == 3: TunerView {
+                focused: root.page-focus;
+                adjusting: root.adjusting;
                 frequency: root.tuner-frequency;
                 note-name: root.tuner-note;
                 octave: root.tuner-octave;
@@ -816,6 +879,7 @@ export component App inherits Window {
             }
 
             if root.current-view == 4: PresetManager {
+                focused: root.page-focus;
                 presets: root.presets;
                 current-preset-name: root.current-preset-name;
                 current-preset-id: root.current-preset-id;
@@ -843,6 +907,8 @@ export component App inherits Window {
             }
 
             if root.current-view == 5: LooperView {
+                focused: root.page-focus;
+                adjusting: root.adjusting;
                 state: root.looper-state;
                 loop-length: root.looper-length;
                 current-position: root.looper-position;
@@ -972,6 +1038,8 @@ export component App inherits Window {
             }
 
             if root.current-view == 9: LiveView {
+                focused: root.page-focus;
+                adjusting: root.adjusting;
                 mode: root.live-mode;
                 tiles: root.live-tiles;
                 preset-name: root.current-preset-name;
@@ -1317,6 +1385,11 @@ export component App inherits Window {
                     root.pages-index = max(0, min(root.page-views.length - 1, root.pages-index + d));
                 } else if (root.current-view == 1 && root.adjusting) {
                     root.adjust(d);
+                } else if (root.adjusting) {
+                    root.set-page-value(round(root.page-value() * (root.current-view == 5 ? 20 : 1) + d)
+                        / (root.current-view == 5 ? 20 : 1));
+                } else if (root.page-slots > 0) {
+                    root.page-focus = max(0, min(root.page-slots - 1, root.page-focus + d));
                 } else if (root.current-view == 1) {
                     root.focused-parameter = max(0, min(root.remove-slot, root.focused-parameter + d));
                     root.remove-armed = false;
@@ -1353,6 +1426,10 @@ export component App inherits Window {
                     } else {
                         root.remove-armed = true;
                     }
+                } else if (root.adjusting) {
+                    root.adjusting = false;
+                } else if (root.page-slots > 0) {
+                    root.page-press();
                 } else if (root.current-view == 2) {
                     if (root.browser-selected-index >= 0 && root.browser-selected-index < root.available-plugins.length) {
                         root.add-plugin(root.available-plugins[root.browser-selected-index].uri);
@@ -1383,6 +1460,9 @@ export component App inherits Window {
                     // Back to the value before
                     root.set-parameter(root.selected-instance-id,
                         root.selected-parameters[root.focused-parameter].index, root.adjust-from);
+                    root.adjusting = false;
+                } else if (root.adjusting) {
+                    root.set-page-value(root.adjust-from);
                     root.adjusting = false;
                 } else if (root.current-view == 8) {
                     root.current-view = root.t3k-return-view;

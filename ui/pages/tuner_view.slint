@@ -11,6 +11,8 @@ export component TunerView {
     in property <bool> is-tuned: false;          // within +-5 cents
     in-out property <bool> mute-enabled: false;
     in-out property <float> reference-pitch: 440.0;
+    in property <int> focused: -1;               // encoder: 0 mute, 1 reference
+    in property <bool> adjusting;
 
     callback mute-toggled(bool);
     callback reference-pitch-changed(float);
@@ -192,6 +194,7 @@ export component TunerView {
                         alignment: center;
                         Toggle {
                             checked: root.mute-enabled;
+                            focused: root.focused == 0;
                             toggled(on) => {
                                 root.mute-enabled = on;
                                 root.mute-toggled(on);
@@ -227,6 +230,8 @@ export component TunerView {
                         Stepper {
                             width: 168px;
                             text: round(root.reference-pitch) + " Hz";
+                            focused: root.focused == 1;
+                            adjusting: root.adjusting;
                             can-decrement: root.reference-pitch > 430;
                             can-increment: root.reference-pitch < 450;
                             decrement => {

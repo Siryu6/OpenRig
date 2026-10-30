@@ -4,6 +4,24 @@ import { Icon } from "icon.slint";
 export { Icon }
 
 // ---------------------------------------------------------------------------
+// Encoder focus: a frame around its parent (thicker while the encoder
+// adjusts it)
+// ---------------------------------------------------------------------------
+export component FocusRing inherits Rectangle {
+    in property <length> radius: Theme.radius-md;
+    in property <bool> strong: false;
+    Rectangle {
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: root.radius + 3px;
+        border-width: root.strong ? 3px : 2px;
+        border-color: Theme.accent;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Button: the single button used across the app.
 //   variant: "primary" | "secondary" | "ghost" | "danger" | "solid-danger"
 //            | "success" | "warning"
@@ -11,6 +29,7 @@ export { Icon }
 // Minimum size is the touch target (44x44); icon-only when text is empty.
 // ---------------------------------------------------------------------------
 export component Button inherits Rectangle {
+    in property <bool> focused: false;            // the encoder is on it
     in property <string> text;
     in property <string> icon;
     in property <string> variant: "secondary";
@@ -116,6 +135,10 @@ export component Button inherits Rectangle {
                 root.clicked();
             }
         }
+    }
+
+    if root.focused: FocusRing {
+        radius: root.border-radius;
     }
 }
 
@@ -237,6 +260,7 @@ export component Chip inherits Rectangle {
 // and updates it in response to `toggled(new-value)`.
 // ---------------------------------------------------------------------------
 export component Toggle inherits Rectangle {
+    in property <bool> focused: false;
     in property <bool> checked: false;
     in property <bool> enabled: true;
     in property <color> accent: Theme.accent;
@@ -293,6 +317,10 @@ export component Toggle inherits Rectangle {
             root.toggled(!root.checked);
         }
     }
+
+    if root.focused: FocusRing {
+        radius: Theme.touch-target / 2;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -300,6 +328,8 @@ export component Toggle inherits Rectangle {
 // drag value while pressed, then `value` (owned by the parent / backend).
 // ---------------------------------------------------------------------------
 export component Slider inherits Rectangle {
+    in property <bool> focused: false;
+    in property <bool> adjusting: false;          // the encoder moves it
     in property <float> value: 0.5;
     out property <bool> dragging: ta.pressed;
     out property <float> shown-value: ta.pressed ? root.live-value : root.value;
@@ -376,6 +406,11 @@ export component Slider inherits Rectangle {
                 self.update(self.mouse-x);
             }
         }
+    }
+
+    if root.focused: FocusRing {
+        radius: Theme.radius-md;
+        strong: root.adjusting;
     }
 }
 
@@ -540,6 +575,7 @@ export component Knob inherits Rectangle {
 // `current-index` in response to `activated(index)`.
 // ---------------------------------------------------------------------------
 export component Segmented inherits Rectangle {
+    in property <bool> focused: false;
     in property <[string]> options;
     in property <int> current-index: 0;
     in property <length> font-size: Theme.font-small;
@@ -587,12 +623,18 @@ export component Segmented inherits Rectangle {
             }
         }
     }
+
+    if root.focused: FocusRing {
+        radius: root.border-radius;
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Stepper: [-] value [+]
 // ---------------------------------------------------------------------------
 export component Stepper inherits Rectangle {
+    in property <bool> focused: false;
+    in property <bool> adjusting: false;
     in property <string> text;
     in property <bool> can-decrement: true;
     in property <bool> can-increment: true;
@@ -632,6 +674,11 @@ export component Stepper inherits Rectangle {
                 root.increment();
             }
         }
+    }
+
+    if root.focused: FocusRing {
+        radius: root.border-radius;
+        strong: root.adjusting;
     }
 }
 

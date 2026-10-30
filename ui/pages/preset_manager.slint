@@ -11,6 +11,7 @@ export component PresetManager inherits Rectangle {
     in property <[PresetInfo]> presets: [];
     in property <string> current-preset-name: "Default";
     in property <string> current-preset-id: ""; // empty: unsaved
+    in property <int> focused: -1;                // the encoder's preset
 
     callback preset-selected(string); // preset id
     callback save-preset(string);     // name, as a new preset
@@ -95,6 +96,18 @@ export component PresetManager inherits Rectangle {
             min-height: 0px;
             viewport-height: max(self.height, list.preferred-height);
             interactive: list.preferred-height > self.height;
+            // Keeps the encoder's preset in sight (rows of 64px)
+            property <int> focused: root.focused;
+            changed focused => {
+                if (self.focused >= 0) {
+                    let y = self.focused * (64px + Theme.space-sm);
+                    if (y < -self.viewport-y) {
+                        self.viewport-y = -y;
+                    } else if (y + 64px > self.height - self.viewport-y) {
+                        self.viewport-y = self.height - y - 64px;
+                    }
+                }
+            }
 
             list := VerticalLayout {
                 spacing: Theme.space-sm;
@@ -105,8 +118,8 @@ export component PresetManager inherits Rectangle {
                     height: 64px;
                     border-radius: Theme.radius-lg;
                     background: self.confirming ? Theme.danger-soft : row-ta.pressed ? Theme.surface-hover : Theme.panel;
-                    border-width: 1px;
-                    border-color: self.confirming ? Theme.danger : self.is-current ? Theme.accent : Theme.border;
+                    border-width: i == root.focused ? 2px : 1px;
+                    border-color: self.confirming ? Theme.danger : self.is-current || i == root.focused ? Theme.accent : Theme.border;
 
                     row-ta := TouchArea {
                         enabled: !row.confirming;

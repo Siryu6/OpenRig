@@ -627,6 +627,7 @@ export component PluginEditor {
                         text: root.bypassed ? "Off" : "On";
                         active: !root.bypassed;
                         enabled: root.instance-id >= 0;
+                        focused: root.bypass-focused;
                         clicked => {
                             if (root.midi-learning) {
                                 root.midi-learn-touch(-1);
@@ -663,6 +664,7 @@ export component PluginEditor {
                         icon: "trash";
                         text: root.remove-armed ? "Remove" : "";
                         variant: root.remove-armed ? "danger" : "secondary";
+                        focused: root.remove-focused;
                         enabled: root.instance-id >= 0 && !root.midi-learning;
                         clicked => {
                             if (root.remove-armed) {
@@ -672,16 +674,6 @@ export component PluginEditor {
                                 root.remove-armed = true;
                             }
                         }
-                    }
-                    // Encoder focus
-                    if root.remove-focused: Rectangle {
-                        x: -3px;
-                        y: -3px;
-                        width: parent.width + 6px;
-                        height: parent.height + 6px;
-                        border-radius: Theme.radius-md + 3px;
-                        border-width: 2px;
-                        border-color: Theme.accent;
                     }
                     // Disarms by itself
                     Timer {

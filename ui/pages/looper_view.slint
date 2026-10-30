@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
 import { LooperState } from "../types.slint";
-import { Button, Display, Icon, Slider } from "../components/controls.slint";
+import { Button, Display, FocusRing, Icon, Slider } from "../components/controls.slint";
 
 export { LooperState }
 
@@ -11,6 +11,7 @@ component TransportButton inherits Rectangle {
     in property <string> label;
     in property <color> tone: Theme.text-primary;
     in property <bool> active: false;
+    in property <bool> focused: false;
     callback clicked();
 
     min-height: Theme.touch-large;
@@ -69,6 +70,10 @@ component TransportButton inherits Rectangle {
             root.clicked();
         }
     }
+
+    if root.focused: FocusRing {
+        radius: Theme.radius-lg;
+    }
 }
 
 export global TimeFormat {
@@ -96,6 +101,9 @@ export component LooperView inherits Rectangle {
     callback undo-clicked();
     callback clear-clicked();
     callback level-changed(float);
+    // Encoder focus: Record, Overdub, Play, Stop, Undo, Clear, level
+    in property <int> focused: -1;
+    in property <bool> adjusting;
 
     private property <color> state-color:
         root.state == LooperState.Recording ? Theme.danger :
@@ -194,6 +202,7 @@ export component LooperView inherits Rectangle {
             TransportButton {
                 horizontal-stretch: 1;
                 icon: "record";
+                focused: root.focused == 0;
                 label: "Record";
                 tone: Theme.danger;
                 active: root.state == LooperState.Recording;
@@ -204,6 +213,7 @@ export component LooperView inherits Rectangle {
             TransportButton {
                 horizontal-stretch: 1;
                 icon: "overdub";
+                focused: root.focused == 1;
                 label: "Overdub";
                 tone: Theme.warning;
                 active: root.state == LooperState.Overdubbing;
@@ -214,6 +224,7 @@ export component LooperView inherits Rectangle {
             TransportButton {
                 horizontal-stretch: 1;
                 icon: "play";
+                focused: root.focused == 2;
                 label: "Play";
                 tone: Theme.success;
                 active: root.state == LooperState.Playing;
@@ -224,6 +235,7 @@ export component LooperView inherits Rectangle {
             TransportButton {
                 horizontal-stretch: 1;
                 icon: "stop";
+                focused: root.focused == 3;
                 label: "Stop";
                 tone: Theme.text-primary;
                 clicked => {
@@ -237,6 +249,7 @@ export component LooperView inherits Rectangle {
             spacing: Theme.space-md;
             Button {
                 icon: "undo";
+                focused: root.focused == 4;
                 text: "Undo";
                 enabled: root.layer-count > 0;
                 clicked => {
@@ -245,6 +258,7 @@ export component LooperView inherits Rectangle {
             }
             Button {
                 icon: "trash";
+                focused: root.focused == 5;
                 text: "Clear";
                 variant: "danger";
                 enabled: root.loop-length > 0 || root.layer-count > 0;
@@ -265,6 +279,8 @@ export component LooperView inherits Rectangle {
             level-slider := Slider {
                 horizontal-stretch: 1;
                 value: root.level;
+                focused: root.focused == 6;
+                adjusting: root.adjusting;
                 changed(v) => {
                     root.level-changed(v);
                 }
