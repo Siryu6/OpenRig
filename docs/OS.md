@@ -174,7 +174,12 @@ address shown in Settings → Wi-Fi (Ethernet included):
 ssh root@192.168.1.42         # the address your router gave it
 tail -f /var/log/messages     # jackd, pedalboard, storage messages
 cat /etc/pedalboard-release   # version of the image
+pedalboard-report > /tmp/report.txt   # everything a bug report needs
 ```
+
+`pedalboard-report` gathers the versions, settings, sound cards and how
+JACK opened them, the HAT and `extra.txt` (Pi), the kernel's audio
+messages and the log of jackd and the app. Attach its output to an issue.
 
 `/var/log` is in RAM: the logs start again at each boot.
 
@@ -203,14 +208,15 @@ to the user: `chown -R pedalboard:pedalboard /data/pedalboard`.
   interfaces and HATs). At start the app logs the interface ports it sees
   and what it connected (`grep -E "Interface|Connected|connect" /var/log/messages`):
   if `pedalboard:out_3 → system:playback_3` is there, the signal leaves
-  OpenRig and the silence is past JACK. `jack_lsp -c` shows the live
-  connections. Many multi-channel cards and HATs have mixer controls per
-  channel that start muted or at zero: check them with
-  `amixer -c <card> contents` (card number from `cat /proc/asound/cards`).
-  To test the card without OpenRig, free it from jackd and play a test on
-  every channel, in one line: `killall jackd; speaker-test -D hw:<card>
-  -c 8 -t wav`. Init starts jackd again 2 s later; it waits for the card
-  until the test ends (Ctrl+C).
+  OpenRig and the silence is past JACK. `cat /proc/asound/card<card>/pcm0p/sub0/hw_params`
+  shows how many channels JACK opened the card with. Many multi-channel
+  cards and HATs have mixer controls per channel that start muted or at
+  zero: check them with `amixer -c <card> contents` (card number from
+  `cat /proc/asound/cards`). To test the card without OpenRig, free it
+  from jackd and play a test on every channel, in one line:
+  `killall jackd; speaker-test -D hw:<card> -c 8 -t wav`. Init starts
+  jackd again 2 s later; it waits for the card until the test ends
+  (Ctrl+C).
 
 ## Updates
 

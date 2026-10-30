@@ -46,5 +46,5 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: The app's output on a desktop; on the OS image, the relevant lines of `/var/log/messages` (over SSH). Remove anything private (Wi-Fi names, account details).
+      description: The app's output on a desktop; on the OS image, the output of `pedalboard-report` (over SSH, as root), or the relevant lines of `/var/log/messages` on older versions. Remove anything private (Wi-Fi names, account details).
       render: text

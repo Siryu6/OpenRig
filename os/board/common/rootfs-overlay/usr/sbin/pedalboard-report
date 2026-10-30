@@ -1,0 +1,79 @@
+#!/bin/sh
+#
+# What to paste in a bug report: versions, settings, the audio interface,
+# its driver and how JACK opened it, and the log of JACK and the app.
+# Read-only. Run as root over SSH, e.g.
+#
+#   pedalboard-report > /tmp/report.txt
+
+section() {
+	printf '\n===== %s\n' "$1"
+}
+
+section "Versions"
+/usr/sbin/pedalboard-update status 2>&1
+uname -a
+[ -r /proc/device-tree/model ] && tr -d '\0' </proc/device-tree/model && echo
+cat /proc/cmdline
+
+section "Settings (pedalboard.txt and defaults)"
+cat /run/pedalboard/config 2>/dev/null || cat /etc/pedalboard/defaults
+
+# Raspberry Pi: the HAT's EEPROM and the firmware settings added to the
+# running boot partition (extra.txt), which is not mounted
+if [ -d /proc/device-tree/hat ]; then
+	section "HAT EEPROM"
+	for f in vendor product product_id product_ver; do
+		[ -r "/proc/device-tree/hat/$f" ] &&
+			printf '%s: %s\n' "$f" "$(tr -d '\0' <"/proc/device-tree/hat/$f")"
+	done
+fi
+case "$(cat /proc/cmdline)" in
+*rauc.slot=B*) boot=/dev/disk/by-partuuid/5eda1b0a-b007-4000-8000-00000000000b ;;
+*) boot=/dev/disk/by-partuuid/5eda1b0a-b007-4000-8000-00000000000a ;;
+esac
+if [ -e "$boot" ] && dir=$(mktemp -d); then
+	if mount -t vfat -o ro "$boot" "$dir" 2>/dev/null; then
+		section "Firmware settings (extra.txt)"
+		grep -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$dir/extra.txt" 2>/dev/null ||
+			echo "(none)"
+		umount "$dir"
+	fi
+	rmdir "$dir"
+fi
+
+section "Sound cards"
+cat /proc/asound/cards
+aplay -l 2>&1
+arecord -l 2>&1
+
+# Format, rate and number of channels each open stream was set up with
+section "Open streams (hw_params)"
+open=
+for f in /proc/asound/card[0-9]*/pcm*/sub*/hw_params; do
+	[ -r "$f" ] || continue
+	case "$(cat "$f")" in
+	closed) ;;
+	*) echo "$f:" && cat "$f" && open=1 ;;
+	esac
+done
+[ -n "$open" ] || echo "(none: is jackd running?)"
+
+section "Mixer controls"
+for card in /proc/asound/card[0-9]*; do
+	n=${card##*card}
+	grep -q "^ *$n \[.*[Hh][Dd][Mm][Ii]" /proc/asound/cards && continue
+	echo "card $n:"
+	amixer -c "$n" scontents 2>&1 | head -100
+done
+
+section "Kernel messages (audio)"
+dmesg | grep -i -E 'snd|asoc|i2s|codec|dac|adc|hifiberry|audio|dma|xrun|underrun|usb.*(audio|midi)' | tail -80
+
+section "JACK and app log"
+grep -E ' (jackd|pedalboard|pedalboard-update|S00storage)(\[[0-9]+\])?: ' /var/log/messages 2>/dev/null | tail -200
+
+section "Processes"
+# BusyBox pgrep has no -a
+# shellcheck disable=SC2009
+ps | grep -E 'jackd|pedalboard' | grep -v grep
