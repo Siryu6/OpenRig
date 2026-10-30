@@ -401,6 +401,12 @@ export component App inherits Window {
 
     // -------------------------------------------------------------- helpers
 
+    // The encoder is on the rack's add button, past the last block
+    private property <bool> add-focused: false;
+    changed selected-plugin => {
+        root.add-focused = false;
+    }
+
     // Select a node of the rack (its parameters are loaded for the quick controls)
     function select-node-at(idx: int) {
         if (idx < 0 || idx >= root.positioned-nodes.length) {
@@ -556,6 +562,7 @@ export component App inherits Window {
     changed current-view => {
         keys.focus();
         root.adjusting = false;
+        root.add-focused = false;
         root.arranging = false;
         root.page-focus = 0;
         // Learning only makes sense in the block editor
@@ -653,6 +660,7 @@ export component App inherits Window {
                 chain-bottom: root.chain-bottom;
                 selected-instance-id: root.selected-instance-id;
                 selected-index <=> root.selected-plugin;
+                add-focused: root.add-focused;
                 stereo-mode <=> root.stereo-mode;
                 drop-slots: root.drop-slots;
                 parameters: root.selected-parameters;
@@ -1441,8 +1449,14 @@ export component App inherits Window {
                     // Back into the parameters while arranging: on the last one's strip
                     root.arrange-stop = root.arranging && root.focused-parameter < root.selected-parameters.length ? 1 : 0;
                     root.remove-armed = false;
-                } else if (root.current-view == 0 && root.positioned-nodes.length > 0) {
-                    root.select-node-at(max(0, min(root.positioned-nodes.length - 1, root.selected-plugin + d)));
+                } else if (root.current-view == 0) {
+                    // The blocks, then the add button
+                    let n = root.positioned-nodes.length;
+                    let next = max(0, min(n, (root.add-focused ? n : root.selected-plugin) + d));
+                    if (next < n) {
+                        root.select-node-at(next);
+                    }
+                    root.add-focused = next == n;
                 } else if (root.current-view == 2) {
                     root.browser-selected-index = max(0, min(root.available-plugins.length - 1, root.browser-selected-index + d));
                 }
@@ -1452,6 +1466,8 @@ export component App inherits Window {
             if (event.text == Key.Return) {
                 if (root.pages-open) {
                     root.open-page(root.pages-index);
+                } else if (root.current-view == 0 && root.add-focused) {
+                    root.open-browser(0, -1);
                 } else if (root.current-view == 0) {
                     root.open-node(root.selected-plugin);
                 } else if (root.current-view == 1) {

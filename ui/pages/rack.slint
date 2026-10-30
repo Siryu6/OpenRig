@@ -24,6 +24,7 @@ export component PluginRack {
     // Parameters of the selected block (filled by the backend on selection)
     in property <[ParameterInfo]> parameters: [];
     in property <int> strip-count;                  // parameters in the knob strip
+    in property <bool> add-focused;                 // the encoder is on the add button
     in property <Levels> levels;
     in property <bool> uses-file: false;
     in property <string> file-title: "";
@@ -444,6 +445,7 @@ export component PluginRack {
                     width: Theme.touch-target;
                     icon: "plus";
                     variant: "primary";
+                    focused: root.add-focused;
                     clicked => {
                         root.add-plugin-clicked();
                     }
