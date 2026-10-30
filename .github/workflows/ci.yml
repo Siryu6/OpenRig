@@ -62,3 +62,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked
+        env:
+          # Full debug info for the Slint-generated UI code gets the job
+          # killed for lack of memory; line tables keep useful backtraces
+          CARGO_PROFILE_DEV_DEBUG: line-tables-only
