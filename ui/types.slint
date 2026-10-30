@@ -67,6 +67,7 @@ export struct ParameterInfo {
     has-off: bool,           // off-value is shown as "Off"
     off-value: float,
     midi: string,            // "CC 11" when a MIDI controller drives it
+    strip-pos: int,          // place in the rack's knob strip, -1 when left out
 }
 
 export struct PluginItem {

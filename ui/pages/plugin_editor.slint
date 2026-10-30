@@ -420,7 +420,15 @@ export component PluginEditor {
     in-out property <bool> remove-armed: false;
     in property <bool> remove-focused: false;       // the encoder is on it
     in property <bool> bypass-focused: false;       // the encoder is on On/Off
+    in property <bool> arrange-focused: false;      // the encoder is on Arrange
+    in property <bool> reset-focused: false;        // on Reset (while arranging)
     in property <bool> adjusting: false;            // the encoder turns the focused parameter
+    // Arrange: order of the parameters and which go in the rack's knob strip
+    in-out property <bool> arranging: false;
+    in property <int> arrange-stop: 0;              // encoder on the focused one: 0 move, 1 strip
+    callback arrange-moved(int, int);               // parameter index, places (negative: earlier)
+    callback strip-toggled(int);                    // parameter index
+    callback arrange-reset();
     callback remove-confirmed();
     // Blocks loading a model file (NAM, IR): current file, relative to models-dir
     in property <bool> uses-file: false;
@@ -567,8 +575,31 @@ export component PluginEditor {
                     }
                 }
 
+                if root.parameters.length > 1: Button {
+                    horizontal-stretch: 0;
+                    width: root.arranging ? 112px : Theme.touch-target;
+                    icon: "arrange";
+                    text: root.arranging ? "Done" : "";
+                    active: root.arranging;
+                    focused: root.arrange-focused;
+                    enabled: !root.midi-learning;
+                    clicked => {
+                        root.arranging = !root.arranging;
+                    }
+                }
+                if root.arranging: Button {
+                    horizontal-stretch: 0;
+                    width: 112px;
+                    icon: "refresh";
+                    text: "Reset";
+                    focused: root.reset-focused;
+                    clicked => {
+                        root.arrange-reset();
+                    }
+                }
+
                 // Colour of the block in the rack
-                if root.colors.length > 0: Rectangle {
+                if root.colors.length > 0 && !root.arranging: Rectangle {
                     width: 96px;
                     border-radius: Theme.radius-md;
                     background: color-ta.pressed ? Theme.surface-hover : Theme.surface-raised;
@@ -606,7 +637,7 @@ export component PluginEditor {
                     }
                 }
 
-                if root.midi-available: Button {
+                if root.midi-available && !root.arranging: Button {
                     horizontal-stretch: 0;
                     width: 112px;
                     icon: "midi";
@@ -1198,6 +1229,55 @@ export component PluginEditor {
                 if root.midi-learning: TouchArea {
                     clicked => {
                         root.midi-learn-touch(p.index);
+                    }
+                }
+
+                // Arrange: move it (arrows), put it in or leave it out of the
+                // strip (its number, lit when in it)
+                if root.arranging: Rectangle {
+                    y: grid.top;
+                    height: parent.height - grid.top - 4px;
+                    background: Theme.surface;
+                    TouchArea { }
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        HorizontalLayout {
+                            alignment: center;
+                            spacing: Theme.space-xs;
+                            Button {
+                                icon: "chevron-left";
+                                variant: "ghost";
+                                enabled: i > 0;
+                                clicked => {
+                                    root.arrange-moved(p.index, -1);
+                                }
+                            }
+                            Button {
+                                width: 56px;
+                                text: i + 1;
+                                variant: p.strip-pos >= 0 ? "secondary" : "ghost";
+                                active: p.strip-pos >= 0;
+                                focused: i == root.focused-param && root.arrange-stop == 1;
+                                clicked => {
+                                    root.strip-toggled(p.index);
+                                }
+                            }
+                            Button {
+                                icon: "chevron-right";
+                                variant: "ghost";
+                                enabled: i < root.parameters.length - 1;
+                                clicked => {
+                                    root.arrange-moved(p.index, 1);
+                                }
+                            }
+                        }
+                        Text {
+                            text: p.strip-pos >= 0 ? "In strip" : "Left out";
+                            color: p.strip-pos >= 0 ? Theme.accent : Theme.text-muted;
+                            font-size: Theme.font-caption;
+                            horizontal-alignment: center;
+                        }
                     }
                 }
             }

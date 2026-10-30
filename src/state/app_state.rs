@@ -877,6 +877,8 @@ pub struct AppState {
     live: Mutex<LiveSettings>,
     midi: Mutex<MidiSettings>,
     tap: Mutex<TapTempo>,
+    /// Parameter order and knob strip of each plugin, as arranged
+    param_layouts: Mutex<super::param_layout::Layouts>,
     light_theme: AtomicBool,
 }
 
@@ -971,6 +973,7 @@ impl AppState {
             "Initializing application state (data in {})",
             data_dir.display()
         );
+        let param_layouts = Mutex::new(super::param_layout::Layouts::load(&data_dir));
         Ok(Self {
             lv2_host,
             effect_chain: Arc::new(Mutex::new(EffectChainState::new())),
@@ -989,8 +992,21 @@ impl AppState {
             live: Mutex::default(),
             midi: Mutex::default(),
             tap: Mutex::default(),
+            param_layouts,
             light_theme: AtomicBool::new(false),
         })
+    }
+
+    /// How the editor and the knob strip show the parameters of `uri`
+    pub fn param_layout(&self, uri: &str) -> super::param_layout::Layout {
+        self.param_layouts.lock().unwrap().get(uri)
+    }
+
+    /// Sets and saves it (every instance of the plugin)
+    pub fn set_param_layout(&self, uri: &str, layout: super::param_layout::Layout) -> Result<()> {
+        let mut layouts = self.param_layouts.lock().unwrap();
+        layouts.set(uri, layout);
+        layouts.save(&self.data_dir)
     }
 
     /// Where the files loaded by blocks (NAM models, impulse responses) are
