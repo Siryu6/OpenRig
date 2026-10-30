@@ -105,8 +105,9 @@ What OpenRig does, in more technical detail than the
   corners, amber accent, key-like buttons with status LEDs, recessed displays,
   input / output LED meters with clip LEDs on the rack, knobs tinted with the block's colour, LED
   tuner ramp, footswitch tiles on the Live page. Tap to select:
-  the block's controls show as knobs at the bottom of the rack (five per page)
-  for quick tweaks; double tap opens the full editor. Hold (0.35 s) and
+  the block's controls show at the bottom of the rack (five per page)
+  for quick tweaks: knobs, switches, and lists that open just above the
+  strip; double tap opens the full editor. Hold (0.35 s) and
   release in place to bypass, hold and drag to move a block anywhere,
   including into a split branch. A quick swipe scrolls the rack.
 - **Real-time safe audio**: chains are built off the audio thread and swapped
