@@ -3,17 +3,17 @@
 
 //! This module contains the window adapter implementation to communicate between Slint and Vulkan + libinput
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::pin::Pin;
 use std::rc::Rc;
 
+use i_slint_core::Property;
 use i_slint_core::api::{LogicalPosition, PhysicalSize as PhysicalWindowSize};
-use i_slint_core::graphics::{euclid, Image};
+use i_slint_core::graphics::{Image, euclid};
 use i_slint_core::item_rendering::ItemRenderer;
 use i_slint_core::lengths::LogicalRect;
 use i_slint_core::platform::WindowEvent;
 use i_slint_core::slice::Slice;
-use i_slint_core::Property;
 use i_slint_core::{platform::PlatformError, window::WindowAdapter};
 
 use crate::display::RenderingRotation;
@@ -33,6 +33,7 @@ pub struct FullscreenWindowAdapter {
     renderer: Box<dyn FullscreenRenderer>,
     redraw_requested: Cell<bool>,
     rotation: RenderingRotation,
+    loop_signal: RefCell<Option<calloop::LoopSignal>>,
 }
 
 impl WindowAdapter for FullscreenWindowAdapter {
@@ -49,16 +50,18 @@ impl WindowAdapter for FullscreenWindowAdapter {
     }
 
     fn request_redraw(&self) {
-        self.redraw_requested.set(true)
+        self.redraw_requested.set(true);
+        if let Some(signal) = self.loop_signal.borrow().as_ref() {
+            signal.wakeup();
+        }
     }
 
     fn set_visible(&self, visible: bool) -> Result<(), PlatformError> {
-        if visible {
-            if let Some(scale_factor) =
+        if visible
+            && let Some(scale_factor) =
                 std::env::var("SLINT_SCALE_FACTOR").ok().and_then(|sf| sf.parse().ok())
-            {
-                self.window.try_dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor })?;
-            }
+        {
+            self.window.try_dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor })?;
         }
         Ok(())
     }
@@ -86,7 +89,12 @@ impl FullscreenWindowAdapter {
             renderer,
             redraw_requested: Cell::new(true),
             rotation,
+            loop_signal: RefCell::new(None),
         }))
+    }
+
+    pub fn set_loop_signal(&self, signal: calloop::LoopSignal) {
+        *self.loop_signal.borrow_mut() = Some(signal);
     }
 
     pub fn render_if_needed(
@@ -152,6 +160,6 @@ fn mouse_cursor_image() -> Image {
 
             mouse_pointer_pixel_image.into()
         }
-        cached_image @ _ => cached_image.clone().into(),
+        cached_image => cached_image.clone().into(),
     }
 }

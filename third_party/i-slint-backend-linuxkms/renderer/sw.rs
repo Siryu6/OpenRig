@@ -1,12 +1,12 @@
 // Copyright © SixtyFPS GmbH <info@slint.dev>
 // SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
 
-//! Delegate the rendering to the [`i_slint_core::software_renderer::SoftwareRenderer`]
+//! Delegate the rendering to the [`i_slint_renderer_software::SoftwareRenderer`]
 
 use i_slint_core::api::PhysicalSize as PhysicalWindowSize;
 use i_slint_core::platform::PlatformError;
-pub use i_slint_core::software_renderer::SoftwareRenderer;
-use i_slint_core::software_renderer::{PremultipliedRgbaColor, RepaintBufferType, TargetPixel};
+pub use i_slint_renderer_software::SoftwareRenderer;
+use i_slint_renderer_software::{PremultipliedRgbaColor, RepaintBufferType, TargetPixel};
 use std::sync::Arc;
 
 use crate::display::RenderingRotation;
@@ -22,7 +22,7 @@ const SOFTWARE_RENDER_SUPPORTED_DRM_FOURCC_FORMATS: &[drm::buffer::DrmFourcc] = 
     // Preferred formats
     drm::buffer::DrmFourcc::Xrgb8888,
     drm::buffer::DrmFourcc::Argb8888,
-    // drm::buffer::DrmFourcc::Bgra8888,
+    drm::buffer::DrmFourcc::Bgra8888,
     // drm::buffer::DrmFourcc::Rgba8888,
 
     // 16-bit formats
@@ -61,6 +61,10 @@ const SOFTWARE_RENDER_SUPPORTED_DRM_FOURCC_FORMATS: &[drm::buffer::DrmFourcc] = 
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct DumbBufferPixelXrgb888(pub u32);
 
+#[repr(transparent)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct DumbBufferPixelBgra8888(pub u32);
+
 impl From<DumbBufferPixelXrgb888> for PremultipliedRgbaColor {
     #[inline]
     fn from(pixel: DumbBufferPixelXrgb888) -> Self {
@@ -68,7 +72,7 @@ impl From<DumbBufferPixelXrgb888> for PremultipliedRgbaColor {
         PremultipliedRgbaColor {
             red: (v >> 16) as u8,
             green: (v >> 8) as u8,
-            blue: (v >> 0) as u8,
+            blue: v as u8,
             alpha: (v >> 24) as u8,
         }
     }
@@ -82,6 +86,31 @@ impl From<PremultipliedRgbaColor> for DumbBufferPixelXrgb888 {
                 | ((pixel.red as u32) << 16)
                 | ((pixel.green as u32) << 8)
                 | (pixel.blue as u32),
+        )
+    }
+}
+
+impl From<DumbBufferPixelBgra8888> for PremultipliedRgbaColor {
+    #[inline]
+    fn from(pixel: DumbBufferPixelBgra8888) -> Self {
+        let v = pixel.0;
+        PremultipliedRgbaColor {
+            red: (v >> 8) as u8,
+            green: (v >> 16) as u8,
+            blue: (v >> 24) as u8,
+            alpha: v as u8,
+        }
+    }
+}
+
+impl From<PremultipliedRgbaColor> for DumbBufferPixelBgra8888 {
+    #[inline]
+    fn from(pixel: PremultipliedRgbaColor) -> Self {
+        Self(
+            pixel.alpha as u32
+                | ((pixel.red as u32) << 8)
+                | ((pixel.green as u32) << 16)
+                | ((pixel.blue as u32) << 24),
         )
     }
 }
@@ -102,9 +131,25 @@ impl TargetPixel for DumbBufferPixelXrgb888 {
     }
 }
 
+impl TargetPixel for DumbBufferPixelBgra8888 {
+    fn blend(&mut self, color: PremultipliedRgbaColor) {
+        let mut x = PremultipliedRgbaColor::from(*self);
+        x.blend(color);
+        *self = x.into();
+    }
+    fn from_rgb(r: u8, g: u8, b: u8) -> Self {
+        Self(0x000000ff | ((r as u32) << 8) | ((g as u32) << 16) | ((b as u32) << 24))
+    }
+    fn background() -> Self {
+        Self(0)
+    }
+}
+
 impl SoftwareRendererAdapter {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(
         device_opener: &crate::DeviceOpener,
+        _requested_graphics_api: Option<&i_slint_core::graphics::RequestedGraphicsAPI>,
     ) -> Result<Box<dyn crate::fullscreenwindowadapter::FullscreenRenderer>, PlatformError> {
         let display = crate::display::swdisplay::new(
             device_opener,
@@ -146,35 +191,39 @@ impl crate::fullscreenwindowadapter::FullscreenRenderer for SoftwareRendererAdap
 
             self.renderer.set_rendering_rotation(match rotation {
                 RenderingRotation::NoRotation => {
-                    i_slint_core::software_renderer::RenderingRotation::NoRotation
+                    i_slint_renderer_software::RenderingRotation::NoRotation
                 }
                 RenderingRotation::Rotate90 => {
-                    i_slint_core::software_renderer::RenderingRotation::Rotate90
+                    i_slint_renderer_software::RenderingRotation::Rotate90
                 }
                 RenderingRotation::Rotate180 => {
-                    i_slint_core::software_renderer::RenderingRotation::Rotate180
+                    i_slint_renderer_software::RenderingRotation::Rotate180
                 }
                 RenderingRotation::Rotate270 => {
-                    i_slint_core::software_renderer::RenderingRotation::Rotate270
+                    i_slint_renderer_software::RenderingRotation::Rotate270
                 }
             });
 
             match format {
                 drm::buffer::DrmFourcc::Xrgb8888 | drm::buffer::DrmFourcc::Argb8888 => {
-                    let buffer: &mut [DumbBufferPixelXrgb888] =
-                        bytemuck::cast_slice_mut(pixels.as_mut());
+                    let buffer: &mut [DumbBufferPixelXrgb888] = bytemuck::cast_slice_mut(pixels);
+                    self.renderer.render(buffer, self.size.width as usize);
+                }
+
+                drm::buffer::DrmFourcc::Bgra8888 => {
+                    let buffer: &mut [DumbBufferPixelBgra8888] = bytemuck::cast_slice_mut(pixels);
                     self.renderer.render(buffer, self.size.width as usize);
                 }
                 drm::buffer::DrmFourcc::Rgb565 => {
-                    let buffer: &mut [i_slint_core::software_renderer::Rgb565Pixel] =
-                        bytemuck::cast_slice_mut(pixels.as_mut());
+                    let buffer: &mut [i_slint_renderer_software::Rgb565Pixel] =
+                        bytemuck::cast_slice_mut(pixels);
                     self.renderer.render(buffer, self.size.width as usize);
                 }
                 _ => {
                     return Err(format!(
                         "Unsupported frame buffer format {format} used with software renderer"
                     )
-                    .into())
+                    .into());
                 }
             }
 
