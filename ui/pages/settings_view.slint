@@ -68,8 +68,14 @@ export component SettingsView inherits Rectangle {
     in property <int> hardware-encoder-b: 6;
     in property <int> hardware-encoder-button: 13;  // -1: none
     in property <int> hardware-encoder-steps: 4;
+    in property <bool> hardware-i2c: false;
+    in property <string> hardware-i2c-module: "";
+    in property <int> hardware-i2c-steps: 1;
+    in property <bool> hardware-i2c-reverse: false;
+    in property <string> hardware-i2c-found: "";   // boards found, or why not
     in property <string> hardware-message: "";
     callback tap-switch-changed(bool);
+    callback hardware-set-i2c(bool);
     callback hardware-step(string, int, int);
     callback hardware-set-encoder(bool);
     callback hardware-set-encoder-button(bool);
@@ -319,6 +325,71 @@ export component SettingsView inherits Rectangle {
                         }
                         Text {
                             text: "Turning moves the focus like the arrow keys, the button confirms like Return. Lower the steps per detent if it takes several clicks to move.";
+                            color: Theme.text-muted;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
+                        }
+                    }
+
+                    if Features.gpio: SettingRow {
+                        label: "EXTERNAL ENCODERS (I2C)";
+                        Toggle {
+                            checked: root.hardware-i2c;
+                            toggled(on) => {
+                                root.hardware-set-i2c(on);
+                            }
+                        }
+                    }
+                    if Features.gpio && root.hardware-i2c: VerticalLayout {
+                        spacing: Theme.space-sm;
+                        SettingRow {
+                            label: "BOARD";
+                            label-color: Theme.text-primary;
+                            Stepper {
+                                width: 220px;
+                                text: root.hardware-i2c-module;
+                                decrement => {
+                                    root.hardware-step("i2c-module", 0, -1);
+                                }
+                                increment => {
+                                    root.hardware-step("i2c-module", 0, 1);
+                                }
+                            }
+                        }
+                        SettingRow {
+                            label: "STEPS PER DETENT";
+                            label-color: Theme.text-primary;
+                            Stepper {
+                                width: 180px;
+                                text: root.hardware-i2c-steps;
+                                can-decrement: root.hardware-i2c-steps > 1;
+                                can-increment: root.hardware-i2c-steps < 4;
+                                decrement => {
+                                    root.hardware-step("i2c-steps", 0, -1);
+                                }
+                                increment => {
+                                    root.hardware-step("i2c-steps", 0, 1);
+                                }
+                            }
+                        }
+                        SettingRow {
+                            label: "REVERSE";
+                            label-color: Theme.text-primary;
+                            Toggle {
+                                checked: root.hardware-i2c-reverse;
+                                toggled(on) => {
+                                    root.hardware-step("i2c-reverse", 0, on ? 1 : -1);
+                                }
+                            }
+                        }
+                        if root.hardware-i2c-found != "": Text {
+                            text: root.hardware-i2c-found;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: "On SDA/SCL (GPIO 2 and 3). Encoders 1-5 turn the knobs of the rack's strip: press swaps with the value before turning, hold goes back to the default; on a list, press opens it and picks. A 6th encoder turns the strip's pages. Chain several boards with different addresses.";
                             color: Theme.text-muted;
                             font-size: Theme.font-small;
                             wrap: word-wrap;

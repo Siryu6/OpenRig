@@ -159,6 +159,7 @@ with audio disabled.
 | `PEDALBOARD_FOOTSWITCH_PINS` | `17,27,22,23` | Footswitch GPIOs (BCM), until set in Settings → Hardware (empty: none) |
 | `PEDALBOARD_ENCODER_PINS` | `5,6,13` | Encoder A, B and button, until set in Settings (`A,B`: no button; empty: no encoder) |
 | `PEDALBOARD_ENCODER_STEPS` | `4` | Quadrature steps per detent (1, 2 or 4), until set in Settings |
+| `PEDALBOARD_I2C_ENCODERS` | unset | External encoder boards on I2C (`seesaw`, `seesaw-quad`, `m5-stack8`), until set in Settings |
 | `PEDALBOARD_UPDATE_URL` | GitHub's latest release | Release read by "Check for updates", to test with another server (plain HTTP allowed) |
 | `LV2_PATH` | system | Where LV2 bundles are searched |
 | `RUST_LOG` | `info` | Log level |
@@ -167,7 +168,9 @@ with audio disabled.
 | `PEDALBOARD_ALIVE_FILE` | unset | File written again every second while the UI runs (set by the OS launcher, to tell an app update that hangs) |
 
 Switches and encoder are wired between the GPIO and ground (internal
-pull-ups); the GPIOs are set in Settings → Hardware.
+pull-ups); the GPIOs are set in Settings → Hardware. External encoder
+boards go on the I2C bus (SDA GPIO 2, SCL GPIO 3, 3.3 V), enabled in the
+OS image.
 
 Guitar-oriented LV2 packages: `guitarix-lv2`, `x42-plugins`, `calf-plugins`,
 `dragonfly-reverb-lv2`, `lsp-plugins-lv2`.
@@ -207,8 +210,9 @@ requests run `cargo fmt`, `cargo clippy` and `cargo test`
 src/
 ├── main.rs              UI wiring (callbacks, polling and monitor timers)
 ├── bin/splash.rs        Boot logo on the Linux framebuffer (feature splash, OS image)
-├── gpio.rs              Footswitches and encoder (feature gpio)
-├── hardware_ui.rs       Settings → Hardware (footswitches, encoder, their GPIOs), restarts the GPIO
+├── gpio.rs              Footswitches, encoder and I2C encoder polling (feature gpio)
+├── hardware_ui.rs       Settings → Hardware (footswitches, encoders, their GPIOs), restarts the GPIO
+├── strip_ui.rs          The rack's knob strip driven by external encoders
 ├── live_ui.rs           Live page: footswitch modes, tap tempo, hold → tuner
 ├── midi_io.rs           MIDI inputs (midir, feature midi): hot-plug, clock → tempo
 ├── midi_ui.rs           MIDI actions, learn in the block editor, Settings → MIDI
@@ -221,7 +225,8 @@ src/
 ├── store/               Plugin store: signed index, downloads, safe unpacking, receipts (feature store)
 ├── catalog_ui.rs        Store page (worker threads: index, pictures, install, removal)
 ├── monitor.rs           DSP meter, xruns, CPU / RAM / temperature / throttling
-├── hardware.rs          What is wired (footswitch / encoder GPIOs): hardware.json, environment defaults
+├── hardware.rs          What is wired (footswitch / encoder GPIOs, I2C boards): hardware.json, environment defaults
+├── i2c_encoders.rs      I2C encoder boards (seesaw, M5Stack 8Encoder): protocol, events, a simulated bus
 ├── audio/
 │   ├── jack_client.rs   JACK callback: tuner → effects → looper
 │   ├── chain_switcher.rs  Builder thread, crossfade, live commands

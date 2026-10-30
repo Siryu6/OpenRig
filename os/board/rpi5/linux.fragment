@@ -5,3 +5,7 @@ CONFIG_NLS_ISO8859_1=y
 # which neither kmod (built without xz) nor this kernel can load, so no
 # driver (display, USB audio, Wi-Fi) would load
 # CONFIG_MODULE_COMPRESS is not set
+
+# /dev/i2c-* for the external encoder boards: built in, as nothing would
+# load the module
+CONFIG_I2C_CHARDEV=y

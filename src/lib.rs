@@ -2,6 +2,7 @@
 
 pub mod audio;
 pub mod hardware;
+pub mod i2c_encoders;
 pub mod midi;
 pub mod monitor;
 pub mod persist;

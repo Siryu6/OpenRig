@@ -10,6 +10,9 @@ display_auto_detect=1
 camera_auto_detect=0
 disable_overscan=1
 
+# I2C on GPIO 2 and 3 (/dev/i2c-1): external encoder boards
+dtparam=i2c_arm=on
+
 # Quiet, fast boot
 disable_splash=1
 boot_delay=0

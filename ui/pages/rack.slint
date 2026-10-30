@@ -59,12 +59,13 @@ export component PluginRack {
     private property <color> cable: #4d535e;
     // Quick controls: knobs per page, current page
     private property <int> per-page: 5;
-    private property <int> page: 0;
+    in-out property <int> page: 0;
     private property <int> pages: max(1, ceil(root.strip-count / root.per-page));
 
-    // The strip's open option list: row in `parameters` (-1: none) and the
-    // field's x
-    private property <int> list-row: -1;
+    // The strip's open option list: row in `parameters` (-1: none), the
+    // option an external encoder is on (-1: none) and the field's x
+    in-out property <int> list-row: -1;
+    in-out property <int> list-focus: -1;
     private property <length> list-x;
 
     changed selected-instance-id => {
@@ -570,6 +571,14 @@ export component PluginRack {
                         visible: p.strip-pos >= 0 && floor(p.strip-pos / root.per-page) == root.page;
                         x: mod(max(0, p.strip-pos), root.per-page) * knobs.cell-width;
                         width: knobs.cell-width;
+                        // The list opens above the field, by touch or encoder
+                        property <bool> listed: root.list-row == i;
+                        changed listed => {
+                            if (self.listed) {
+                                root.list-x = self.absolute-position.x - root.absolute-position.x
+                                    + self.width / 2;
+                            }
+                        }
 
                         Text {
                             y: 0;
@@ -646,8 +655,7 @@ export component PluginRack {
                             }
                             option-ta := TouchArea {
                                 clicked => {
-                                    root.list-x = self.absolute-position.x - root.absolute-position.x
-                                        + self.width / 2;
+                                    root.list-focus = -1;
                                     root.list-row = root.list-row == i ? -1 : i;
                                 }
                             }
@@ -984,6 +992,21 @@ export component PluginRack {
                 height: parent.height - 2 * Theme.space-xs;
                 viewport-height: pull.param.options.length * pull.row-height;
                 interactive: self.viewport-height > self.height;
+                // Keeps the encoder's option in view
+                property <int> focused: root.list-focus;
+                changed focused => {
+                    self.show-focus();
+                }
+                init => {
+                    self.show-focus();
+                }
+                function show-focus() {
+                    if (self.focused >= 0) {
+                        self.viewport-y = max(self.height - self.viewport-height,
+                            min(0, max(-self.focused * pull.row-height,
+                                min(self.viewport-y, self.height - (self.focused + 1) * pull.row-height))));
+                    }
+                }
 
                 for label[k] in pull.param.options: opt := Rectangle {
                     property <bool> current: k < pull.param.option-values.length
@@ -991,6 +1014,8 @@ export component PluginRack {
                     y: k * pull.row-height;
                     height: pull.row-height;
                     border-radius: Theme.radius-sm;
+                    border-width: k == root.list-focus ? 2px : 0px;
+                    border-color: Theme.accent;
                     background: opt-ta.pressed ? Theme.surface-hover : self.current ? Theme.accent-soft : transparent;
                     Text {
                         x: Theme.space-sm;

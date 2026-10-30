@@ -168,6 +168,18 @@ What OpenRig does, in more technical detail than the
   pressed, to check the wiring), the encoder or none, its push button or
   none, its steps per detent. Kept in `hardware.json` in the data
   directory; changes apply at once.
+- **External encoders** (feature `gpio`): encoder boards on the I2C bus
+  (GPIO 2 and 3), one per knob of the rack's strip: Adafruit I2C rotary
+  encoders (seesaw, addresses 0x36–0x3D), the Adafruit Quad (0x49–0x50) or
+  the M5Stack 8Encoder (0x41); several boards of the same kind chain, in
+  address order. Encoders 1–5 turn the knobs of the strip's page shown;
+  pressing swaps a knob with its value before the turns (A/B), holding puts
+  it back to its default; a switch flips; a list opens on a press, the turns
+  then move through it and a press picks (holding closes it). A 6th encoder
+  turns the strip's pages. Settings → Hardware: the board, counts per
+  detent, reverse; it says which addresses answered. Without boards, keys
+  `a s d f g h` turn encoders 1–6 (shifted: the other way) and `z x c v b n`
+  press them (shifted: hold), on the rack page.
 - **OS image** (`os/`): Buildroot image for the Pi 5 and x86_64 mini PCs,
   `PREEMPT_RT` kernel, read-only system, boot logo, the UI full screen
   without X11 / Wayland, signed A/B updates (RAUC) that roll back when the
