@@ -46,6 +46,7 @@ impl ParameterKind {
 #[derive(Clone, Debug)]
 pub struct ParameterView {
     pub index: usize,
+    pub symbol: String,
     pub name: String,
     pub min: f32,
     pub max: f32,
@@ -57,6 +58,8 @@ pub struct ParameterView {
     pub option_values: Vec<f32>,
     /// Value shown as "Off"
     pub off_value: Option<f32>,
+    /// Shown in the rack's knob strip
+    pub in_strip: bool,
 }
 
 impl ParameterView {
@@ -72,6 +75,7 @@ impl ParameterView {
         };
         Self {
             index,
+            symbol: port.symbol.clone(),
             name: port.name.clone(),
             min: port.min,
             max: port.max,
@@ -86,6 +90,7 @@ impl ParameterView {
                 .collect(),
             option_values: port.scale_points.iter().map(|(_, v)| *v).collect(),
             off_value: port.off_value,
+            in_strip: true,
         }
     }
 }
@@ -94,6 +99,7 @@ impl ParameterView {
 #[derive(Clone, Debug, Default)]
 pub struct SelectedNodeView {
     pub instance_id: usize,
+    pub uri: String,
     pub name: String,
     pub category: String,
     pub bypassed: bool,
@@ -226,7 +232,7 @@ pub fn selected_node_view(state: &AppState, instance_id: usize) -> Option<Select
             let file = chain.files.get(&instance_id);
             // Quality only does something on a model holding several sizes
             let quality = file.is_some_and(|f| has_quality(&state.models_dir().join(f)));
-            let parameters = info
+            let mut parameters: Vec<ParameterView> = info
                 .map(|info| {
                     info.control_inputs()
                         .enumerate()
@@ -241,8 +247,15 @@ pub fn selected_node_view(state: &AppState, instance_id: usize) -> Option<Select
                         .collect()
                 })
                 .unwrap_or_default();
+            // As arranged in the editor
+            let layout = state.param_layout(uri);
+            parameters.sort_by_key(|p| layout.rank(&p.symbol));
+            for p in &mut parameters {
+                p.in_strip = layout.in_strip(&p.symbol);
+            }
             Some(SelectedNodeView {
                 instance_id,
+                uri: uri.clone(),
                 name: state.plugin_name(uri),
                 category: info
                     .map(|i| format!("{:?}", i.category))
@@ -268,6 +281,7 @@ pub fn selected_node_view(state: &AppState, instance_id: usize) -> Option<Select
             ..
         } => Some(SelectedNodeView {
             instance_id,
+            uri: String::new(),
             name: split_type.label().to_string(),
             category: "Split".to_string(),
             bypassed: !enabled,

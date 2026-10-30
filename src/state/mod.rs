@@ -1,5 +1,6 @@
 pub mod app_state;
 pub mod midi_map;
+pub mod param_layout;
 pub mod scenes;
 pub mod tempo;
 

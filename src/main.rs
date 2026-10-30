@@ -34,6 +34,7 @@ use pedalboard::audio::{jack_client, AudioEngine, ChainNode, SplitType};
 use pedalboard::midi::MidiTarget;
 use pedalboard::monitor::{self, Level, SystemMonitor};
 use pedalboard::plugins::scanner;
+use pedalboard::state::param_layout::Layout;
 use pedalboard::state::{AppState, EffectChainState, ModelPack};
 use pedalboard::ui::slint_bridge as views;
 use pedalboard::ui::{chain_layout, encoder, folders, text_edit};
@@ -324,10 +325,18 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
         }
         return;
     };
+    // Places in the knob strip, for those in it
+    let mut strip_count = 0;
     let parameters: Vec<ParameterInfo> = view
         .parameters
         .into_iter()
         .map(|p| ParameterInfo {
+            strip_pos: if p.in_strip {
+                strip_count += 1;
+                strip_count - 1
+            } else {
+                -1
+            },
             index: p.index as i32,
             name: p.name.into(),
             min: p.min,
@@ -356,6 +365,7 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
     app.set_selected_plugin_bypassed(view.bypassed);
     app.set_selected_bypass_midi(midi_label(chain, view.instance_id, MidiTarget::Bypass));
     app.set_selected_parameters(model(parameters));
+    app.set_selected_strip_count(strip_count);
     plugin_view::refresh(app, state);
     app.set_selected_uses_file(view.uses_file);
     let pack = match chain.find(view.instance_id) {
@@ -577,6 +587,31 @@ fn refresh_all(app: &App, state: &AppState) {
 
 /// Wire a callback that needs the app and the state:
 /// `on!(app, state, on_x, |app, state, arg1, arg2| { ... })`
+/// Changes the parameter layout of the plugin of `instance_id`, then shows it
+fn arrange(
+    app: &App,
+    state: &AppState,
+    instance_id: i32,
+    change: impl Fn(&views::SelectedNodeView, Layout) -> Layout,
+) {
+    let Some(view) = id(instance_id).and_then(|i| views::selected_node_view(state, i)) else {
+        return;
+    };
+    let layout = change(&view, state.param_layout(&view.uri));
+    if report(app, state.set_param_layout(&view.uri, layout)).is_some() {
+        refresh_editor(app, state, &state.chain());
+    }
+}
+
+/// Symbol of the parameter with port `index`
+fn param_symbol(view: &views::SelectedNodeView, index: i32) -> String {
+    view.parameters
+        .iter()
+        .find(|p| p.index as i32 == index)
+        .map(|p| p.symbol.clone())
+        .unwrap_or_default()
+}
+
 macro_rules! on {
     ($app:ident, $state:ident, $setter:ident, |$a:ident, $s:ident $(, $arg:ident)*| $body:block) => {{
         let weak = $app.as_weak();
@@ -925,14 +960,46 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
             // The row is updated in place so the control being dragged stays.
             if app.get_selected_instance_id() == instance_id {
                 let params = app.get_selected_parameters();
-                if let Some(mut param) = params.row_data(index) {
+                // Rows are in the arranged order
+                let row = params.iter().position(|p| p.index as usize == index);
+                if let Some((row, mut param)) = row.and_then(|r| Some((r, params.row_data(r)?))) {
                     if param.value != applied {
                         param.value = applied;
-                        params.set_row_data(index, param);
+                        params.set_row_data(row, param);
                     }
                 }
                 plugin_view::refresh(&app, state);
             }
+        }
+    );
+    // Arrange (pedalboard::state::param_layout): every instance of the plugin
+    on!(
+        app,
+        state,
+        on_arrange_parameter,
+        |app, state, instance_id, index, places| {
+            arrange(&app, state, instance_id, |view, layout| {
+                let shown: Vec<&str> = view.parameters.iter().map(|p| p.symbol.as_str()).collect();
+                layout.moved(&shown, &param_symbol(view, index), places)
+            });
+        }
+    );
+    on!(
+        app,
+        state,
+        on_toggle_parameter_strip,
+        |app, state, instance_id, index| {
+            arrange(&app, state, instance_id, |view, layout| {
+                layout.toggled(&param_symbol(view, index))
+            });
+        }
+    );
+    on!(
+        app,
+        state,
+        on_reset_parameter_layout,
+        |app, state, instance_id| {
+            arrange(&app, state, instance_id, |_, _| Layout::default());
         }
     );
     on!(app, state, on_set_stereo_mode, |app, state, stereo| {
