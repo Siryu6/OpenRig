@@ -5,8 +5,9 @@
 //! is wired where (BCM numbering) is set in Settings → Hardware
 //! ([`pedalboard::hardware`]).
 //!
-//! The encoder sends Left/Right/Return key presses to the UI, so it drives
-//! whatever page is shown (rack selection, parameter focus, browser...).
+//! The encoder sends key presses to the UI, so it drives whatever page is
+//! shown (rack selection, parameter focus, browser...): Left/Right when
+//! turned, Return when its button is pressed, Escape when it is held.
 //! Footswitches report both edges: what they do is chosen on the Live page,
 //! and holding the tap switch opens the tuner.
 
@@ -15,7 +16,7 @@ use pedalboard::hardware::Hardware;
 use rppal::gpio::{Event, InputPin, Trigger};
 use slint::platform::{Key, WindowEvent};
 use slint::ComponentHandle;
-use std::sync::atomic::{AtomicI32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
@@ -24,6 +25,9 @@ use crate::App;
 use pedalboard::state::AppState;
 
 const DEBOUNCE: Duration = Duration::from_millis(30);
+/// Holding the encoder's button this long goes back (Escape) instead of
+/// pressing (Return, on release)
+const LONG_PRESS: Duration = Duration::from_millis(600);
 /// Quadrature transitions: index = previous AB state << 2 | new AB state
 const QUADRATURE: [i8; 16] = [0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0];
 
@@ -167,9 +171,33 @@ impl Gpio {
             if let Some(button) = encoder.button {
                 let mut pin_button = input(button, "Encoder button")?;
                 let app = app.clone();
+                // Presses so far; the held one, until a long press consumes it
+                let presses = Arc::new(AtomicU32::new(0));
+                let held_press = Arc::new(AtomicU32::new(0));
                 pin_button
-                    .set_async_interrupt(Trigger::FallingEdge, Some(DEBOUNCE), move |_| {
-                        press_key(&app, Key::Return);
+                    .set_async_interrupt(Trigger::Both, Some(DEBOUNCE), move |event: Event| {
+                        if event.trigger == Trigger::FallingEdge {
+                            let press = presses.fetch_add(1, Ordering::Relaxed) + 1;
+                            held_press.store(press, Ordering::Relaxed);
+                            let (app, held_press) = (app.clone(), held_press.clone());
+                            let _ = slint::invoke_from_event_loop(move || {
+                                slint::Timer::single_shot(LONG_PRESS, move || {
+                                    if held_press
+                                        .compare_exchange(
+                                            press,
+                                            0,
+                                            Ordering::Relaxed,
+                                            Ordering::Relaxed,
+                                        )
+                                        .is_ok()
+                                    {
+                                        press_key(&app, Key::Escape);
+                                    }
+                                });
+                            });
+                        } else if held_press.swap(0, Ordering::Relaxed) != 0 {
+                            press_key(&app, Key::Return);
+                        }
                     })
                     .context("Encoder button")?;
                 info!("Encoder button on GPIO {}", button);
