@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/Siryu6/OpenRig/compare/v0.8.0...v0.9.0) - 2026-10-31
+
+### Added
+
+- *(ui)* presets and model fields in the strip, editor pages ([#76](https://github.com/Siryu6/OpenRig/pull/76))
+- *(hardware)* external I2C encoders on the rack's knob strip ([#72](https://github.com/Siryu6/OpenRig/pull/72))
+- *(ui)* add a block with the encoder alone ([#70](https://github.com/Siryu6/OpenRig/pull/70))
+- *(rack)* pick a list option from a pull-up list in the knob strip ([#66](https://github.com/Siryu6/OpenRig/pull/66))
+- *(editor)* arrange a plugin's parameters and its knob strip ([#65](https://github.com/Siryu6/OpenRig/pull/65))
+- *(ui)* presets, Live page, looper and tuner with the encoder alone ([#64](https://github.com/Siryu6/OpenRig/pull/64))
+- *(ui)* drive the editor and pages with the encoder alone ([#62](https://github.com/Siryu6/OpenRig/pull/62))
+- *(editor)* browse the model folders, TONE3000 first in the list ([#49](https://github.com/Siryu6/OpenRig/pull/49))
+- *(ui)* double tap a knob to reset it, hold it to compare A/B ([#51](https://github.com/Siryu6/OpenRig/pull/51))
+- *(rack)* undo a removed block, remove it from the editor or by dragging ([#47](https://github.com/Siryu6/OpenRig/pull/47))
+- *(os)* pedalboard-report for bug reports, speaker-test in the image
+
+### Fixed
+
+- *(ui)* break the top bar's compact/width binding loop
+- *(ui)* keep the plugin editor's parameters visible on 800x480 screens
+
+### Other
+
+- *(deps)* move to Slint 1.18.1 and lilv 0.3.1 ([#75](https://github.com/Siryu6/OpenRig/pull/75))
+- *(os)* build the app with Rust 1.99.1 ([#74](https://github.com/Siryu6/OpenRig/pull/74))
+- build the tests with line tables only to stay within the runner's memory ([#73](https://github.com/Siryu6/OpenRig/pull/73))
+- *(os)* move both images to Linux 6.18 ([#67](https://github.com/Siryu6/OpenRig/pull/67))
+- *(store)* drop the unused bundle_path ([#71](https://github.com/Siryu6/OpenRig/pull/71))
+- trim the UI's public surface and test-only helpers ([#69](https://github.com/Siryu6/OpenRig/pull/69))
+- one atomic JSON save and load for every settings file ([#68](https://github.com/Siryu6/OpenRig/pull/68))
+- Merge pull request #63 from Siryu6/fix/top-bar-binding-loop
+- Merge pull request #61 from Siryu6/chore/deps-majors
+- Merge pull request #60 from Siryu6/feat/model-folders
+- *(deps)* update jack, thiserror, dirs, rppal, minisign-verify and blake2
+- Merge pull request #57 from Siryu6/feat/delete-undo
+- Merge pull request #59 from Siryu6/feat/param-reset-compare
+- Merge pull request #58 from Siryu6/chore/neuralaudio-bump
+- *(deps)* update NeuralAudio to b98dfbdfdc
+- Merge pull request #56 from Siryu6/chore/deps-rust
+- *(deps)* update Rust dependencies within semver ranges
+- Merge pull request #55 from Siryu6/fix/editor-compact
+
 ## [0.8.0](https://github.com/Siryu6/OpenRig/compare/v0.7.0...v0.8.0) - 2026-10-28
 
 ### Added
