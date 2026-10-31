@@ -140,6 +140,13 @@ export component App inherits Window {
     in-out property <[FileSlot]> selected-file-slots: [];  // files of an LV2 plugin
     in-out property <[ModelChoice]> selected-factory-presets: [];  // presets of its bundle
     in-out property <string> selected-preset-name: "";
+    // The knob strip's list fields: factory presets, and the model's
+    // ("Choose another…", then the loaded tone's presets)
+    in-out property <[string]> selected-strip-factory: [];
+    in-out property <[string]> selected-strip-models: [];
+    in-out property <int> selected-strip-model-current: -1;
+    // The block editor opens on its model picker
+    in-out property <bool> editor-model-picker: false;
     in-out property <[ModelChoice]> available-packs: [];
     in-out property <bool> available-packs-pictures: false;  // TONE3000 tones among them
     in-out property <string> models-dir: "";
@@ -436,7 +443,25 @@ export component App inherits Window {
         root.selected-presets = [];
         root.selected-file-slots = [];
         root.selected-factory-presets = [];
+        root.selected-strip-factory = [];
+        root.selected-strip-models = [];
         root.select-node(root.positioned-nodes[idx].instance-id);
+    }
+
+    // The strip's list fields, by touch or encoder: a factory preset, and
+    // the model (row 0 opens the editor's model picker, the others load a
+    // preset of the loaded tone)
+    public function strip-factory-picked(preset: int) {
+        root.apply-factory-preset(root.selected-instance-id, preset);
+    }
+    public function strip-model-picked(row: int) {
+        if (row == 0) {
+            root.open-node(root.selected-plugin);
+            root.refresh-models();
+            root.editor-model-picker = true;
+        } else if (row - 1 < root.selected-presets.length) {
+            root.set-model(root.selected-instance-id, root.selected-presets[row - 1].file);
+        }
     }
 
     // Select a node and, for a plugin, open its editor
@@ -444,6 +469,7 @@ export component App inherits Window {
         if (idx < 0 || idx >= root.positioned-nodes.length) {
             return;
         }
+        root.editor-model-picker = false;
         if (idx != root.selected-plugin || root.positioned-nodes[idx].instance-id != root.selected-instance-id) {
             root.select-node-at(idx);
         }
@@ -682,6 +708,17 @@ export component App inherits Window {
                 strip-count: root.selected-strip-count;
                 uses-file: root.selected-uses-file;
                 file-title: root.selected-file-title;
+                file-label: root.selected-file-label;
+                preset-name: root.selected-preset-name;
+                factory-labels: root.selected-strip-factory;
+                model-labels: root.selected-strip-models;
+                model-current: root.selected-strip-model-current;
+                factory-preset-picked(preset) => {
+                    root.strip-factory-picked(preset);
+                }
+                model-picked(row) => {
+                    root.strip-model-picked(row);
+                }
 
                 drag-started(id) => {
                     root.drag-started(id);
@@ -810,6 +847,7 @@ export component App inherits Window {
                 packs-pictures: root.available-packs-pictures;
                 models-dir: root.models-dir;
                 file-slots: root.selected-file-slots;
+                model-picker-open <=> root.editor-model-picker;
                 factory-presets: root.selected-factory-presets;
                 factory-preset-chosen(preset) => {
                     root.apply-factory-preset(root.selected-instance-id, preset);

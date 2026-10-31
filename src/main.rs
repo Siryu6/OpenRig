@@ -321,6 +321,8 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
         app.set_selected_scope(ScopeView::default());
         app.set_selected_file_slots(model(Vec::new()));
         app.set_selected_factory_presets(model(Vec::new()));
+        app.set_selected_strip_factory(model(Vec::new()));
+        app.set_selected_strip_models(model(Vec::new()));
         if app.get_current_view() == 1 {
             app.set_current_view(0);
         }
@@ -412,13 +414,35 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
     );
     app.set_selected_file_t3k(pack.as_ref().is_some_and(|p| p.tone3000));
     app.set_selected_file_image(pack_picture(pack.as_ref()));
+    // The strip's model field: another model, then the tone's presets
+    let (strip_models, strip_model_current) = if !view.uses_file {
+        (Vec::new(), -1)
+    } else if presets.len() > 1 {
+        let current = presets
+            .iter()
+            .position(|p| p.current)
+            .map_or(-1, |i| i as i32 + 1);
+        let models = std::iter::once(SharedString::from(format!(
+            "Choose another {}…",
+            view.file_label.to_lowercase()
+        )))
+        .chain(presets.iter().map(|p| p.title.clone()))
+        .collect();
+        (models, current)
+    } else {
+        (vec![SharedString::from("Choose…")], -1)
+    };
+    app.set_selected_strip_models(model(strip_models));
+    app.set_selected_strip_model_current(strip_model_current);
     app.set_selected_preset_name(preset_name);
     app.set_selected_presets(model(presets));
     app.set_selected_file(view.file.into());
     app.set_selected_file_label(view.file_label.into());
     app.set_selected_file_types(view.file_types.into());
     app.set_selected_file_slots(model(file_slots(state, chain, view.instance_id)));
-    app.set_selected_factory_presets(model(factory_presets(state, chain, view.instance_id)));
+    let factory = factory_presets(state, chain, view.instance_id);
+    app.set_selected_strip_factory(model(factory.iter().map(|p| p.title.clone()).collect()));
+    app.set_selected_factory_presets(model(factory));
 }
 
 /// The presets an LV2 block's bundle ships, by position
