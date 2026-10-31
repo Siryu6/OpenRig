@@ -504,7 +504,7 @@ export component PluginEditor {
         || (root.graph-choice == 0 && root.graph-fit >= 96px);
     private property <length> graph-height: root.short ? max(96px, root.graph-fit) : min(240px, root.height * 0.36);
     private property <int> picker-pos: -1;  // position in `parameters` of the open enum picker
-    private property <bool> model-picker-open: false;
+    in-out property <bool> model-picker-open: false;
     private property <bool> preset-picker-open: false;
     private property <int> slot-picking: -1;   // file slot whose picker is open
     private property <bool> factory-picker-open: false;
@@ -1063,220 +1063,267 @@ export component PluginEditor {
             }
         }
 
-        if root.parameters.length > 0: grid := Flickable {
+        if root.parameters.length > 0: HorizontalLayout {
             vertical-stretch: 1;
-            property <length> cell-width: (self.width - (root.columns - 1) * root.gap) / root.columns;
-            property <int> rows: ceil(root.parameters.length / root.columns);
-            // Up to two rows share the height (smaller knobs) rather than
-            // scroll; more rows scroll, each at most the visible height
-            property <length> fit: self.rows <= 2 ? (self.height - (self.rows - 1) * root.gap) / max(1, self.rows) : self.height;
-            property <length> cell-height: max(100px, min(152px, self.fit));
-            property <bool> compact: self.cell-height < 152px;
-            // Space above and below the knob: name and value
-            property <length> top: self.compact ? 24px : 30px;
-            property <length> bottom: self.compact ? 26px : 40px;
-            content-height: max(self.height, self.rows * (self.cell-height + root.gap) - root.gap);
-            interactive: self.content-height > self.height;
-            // Keeps the encoder's parameter in sight
-            property <int> focused: root.focused-param;
-            changed focused => {
-                if (self.focused < root.parameters.length) {
-                    let y = floor(self.focused / root.columns) * (self.cell-height + root.gap);
-                    if (y < -self.content-y) {
-                        self.content-y = -y;
-                    } else if (y + self.cell-height > self.height - self.content-y) {
-                        self.content-y = self.height - y - self.cell-height;
-                    }
+            grid := Flickable {
+                property <length> cell-width: (self.width - (root.columns - 1) * root.gap) / root.columns;
+                property <int> rows: ceil(root.parameters.length / root.columns);
+                // Up to two rows share the height (smaller knobs) rather than
+                // scroll; more rows scroll, each at most the visible height
+                property <length> fit: self.rows <= 2 ? (self.height - (self.rows - 1) * root.gap) / max(1, self.rows) : self.height;
+                property <length> cell-height: max(100px, min(152px, self.fit));
+                property <bool> compact: self.cell-height < 152px;
+                // Pages of the rows shown, when they do not all fit
+                property <int> rows-shown: max(1, floor((self.height + root.gap) / (self.cell-height + root.gap)));
+                property <int> pages: ceil(self.rows / self.rows-shown);
+                property <length> page-height: self.rows-shown * (self.cell-height + root.gap);
+                property <int> page: self.content-y <= self.height - self.content-height + 1px ? self.pages - 1
+                    : min(self.pages - 1, round(-self.content-y / self.page-height));
+                function show-page(page: int) {
+                    self.content-y = -max(0px, min(self.content-height - self.height, page * self.page-height));
                 }
-            }
-
-            for p[i] in root.parameters: Rectangle {
-                x: mod(i, root.columns) * (grid.cell-width + root.gap);
-                y: floor(i / root.columns) * (grid.cell-height + root.gap);
-                width: grid.cell-width;
-                height: grid.cell-height;
-                border-radius: Theme.radius-lg;
-                background: Theme.surface;
-                // Learning: only the control being learned is highlighted
-                border-color: root.midi-learning ? (root.midi-learn-target == p.index ? Theme.accent : Theme.border)
-                    : i == root.focused-param ? Theme.accent : Theme.border;
-                // Adjusting with the encoder: a thicker frame
-                border-width: (root.midi-learning && root.midi-learn-target == p.index)
-                    || (root.adjusting && i == root.focused-param) ? 3px : 1px;
-                opacity: root.bypassed ? 0.6 : 1.0;
-
-                // Name
-                Text {
-                    x: Theme.space-sm;
-                    y: grid.compact ? 4px : Theme.space-sm;
-                    width: parent.width - 2 * Theme.space-sm;
-                    height: 20px;
-                    text: p.name.to-uppercase();
-                    color: Theme.text-secondary;
-                    font-size: Theme.font-caption;
-                    font-weight: Theme.weight-bold;
-                    letter-spacing: 0.8px;
-                    horizontal-alignment: center;
-                    overflow: elide;
-                }
-
-                // Continuous / stepped value: knob + live value
-                if p.kind == "float" || p.kind == "int" || p.kind == "": Rectangle {
-                    knob := Knob {
-                        x: (parent.width - self.width) / 2;
-                        y: grid.top;
-                        size: min(80px, parent.height - grid.top - grid.bottom);
-                        value: p.value;
-                        default-value: p.default;
-                        minimum: p.min;
-                        maximum: p.max;
-                        integer: p.kind == "int";
-                        focused: i == root.focused-param;
-                        accent: root.color-value;
-                        changed(v) => {
-                            root.parameter-changed(p.index, v);
+                // Space above and below the knob: name and value
+                property <length> top: self.compact ? 24px : 30px;
+                property <length> bottom: self.compact ? 26px : 40px;
+                content-height: max(self.height, self.rows * (self.cell-height + root.gap) - root.gap);
+                interactive: self.content-height > self.height;
+                // Keeps the encoder's parameter in sight
+                property <int> focused: root.focused-param;
+                changed focused => {
+                    if (self.focused < root.parameters.length) {
+                        let y = floor(self.focused / root.columns) * (self.cell-height + root.gap);
+                        if (y < -self.content-y) {
+                            self.content-y = -y;
+                        } else if (y + self.cell-height > self.height - self.content-y) {
+                            self.content-y = self.height - y - self.cell-height;
                         }
                     }
+                }
+
+                for p[i] in root.parameters: Rectangle {
+                    x: mod(i, root.columns) * (grid.cell-width + root.gap);
+                    y: floor(i / root.columns) * (grid.cell-height + root.gap);
+                    width: grid.cell-width;
+                    height: grid.cell-height;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface;
+                    // Learning: only the control being learned is highlighted
+                    border-color: root.midi-learning ? (root.midi-learn-target == p.index ? Theme.accent : Theme.border)
+                        : i == root.focused-param ? Theme.accent : Theme.border;
+                    // Adjusting with the encoder: a thicker frame
+                    border-width: (root.midi-learning && root.midi-learn-target == p.index)
+                        || (root.adjusting && i == root.focused-param) ? 3px : 1px;
+                    opacity: root.bypassed ? 0.6 : 1.0;
+
+                    // Name
                     Text {
+                        x: Theme.space-sm;
+                        y: grid.compact ? 4px : Theme.space-sm;
+                        width: parent.width - 2 * Theme.space-sm;
+                        height: 20px;
+                        text: p.name.to-uppercase();
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-caption;
+                        font-weight: Theme.weight-bold;
+                        letter-spacing: 0.8px;
+                        horizontal-alignment: center;
+                        overflow: elide;
+                    }
+
+                    // Continuous / stepped value: knob + live value
+                    if p.kind == "float" || p.kind == "int" || p.kind == "": Rectangle {
+                        knob := Knob {
+                            x: (parent.width - self.width) / 2;
+                            y: grid.top;
+                            size: min(80px, parent.height - grid.top - grid.bottom);
+                            value: p.value;
+                            default-value: p.default;
+                            minimum: p.min;
+                            maximum: p.max;
+                            integer: p.kind == "int";
+                            focused: i == root.focused-param;
+                            accent: root.color-value;
+                            changed(v) => {
+                                root.parameter-changed(p.index, v);
+                            }
+                        }
+                        Text {
+                            y: parent.height - (grid.compact ? 24px : 32px);
+                            width: parent.width;
+                            height: 22px;
+                            text: p.has-off && abs(knob.shown-value - p.off-value) < 0.5 ? "Off"
+                                : ParamFormat.format(knob.shown-value, p.kind, p.unit);
+                            color: knob.dragging ? Theme.accent : Theme.text-primary;
+                            font-size: Theme.font-body;
+                            font-weight: Theme.weight-semibold;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    // On/off switch
+                    if p.kind == "toggle": Toggle {
+                        accent: root.color-value;
+                        x: (parent.width - self.width) / 2;
+                        y: grid.top + (parent.height - grid.top - grid.bottom - self.height) / 2;
+                        checked: p.value > (p.min + p.max) / 2;
+                        toggled(on) => {
+                            root.parameter-changed(p.index, on ? p.max : p.min);
+                        }
+                    }
+                    if p.kind == "toggle": Text {
                         y: parent.height - (grid.compact ? 24px : 32px);
                         width: parent.width;
                         height: 22px;
-                        text: p.has-off && abs(knob.shown-value - p.off-value) < 0.5 ? "Off"
-                            : ParamFormat.format(knob.shown-value, p.kind, p.unit);
-                        color: knob.dragging ? Theme.accent : Theme.text-primary;
+                        text: p.value > (p.min + p.max) / 2 ? "On" : "Off";
+                        color: p.value > (p.min + p.max) / 2 ? Theme.text-primary : Theme.text-muted;
                         font-size: Theme.font-body;
                         font-weight: Theme.weight-semibold;
                         horizontal-alignment: center;
                     }
-                }
 
-                // On/off switch
-                if p.kind == "toggle": Toggle {
-                    accent: root.color-value;
-                    x: (parent.width - self.width) / 2;
-                    y: grid.top + (parent.height - grid.top - grid.bottom - self.height) / 2;
-                    checked: p.value > (p.min + p.max) / 2;
-                    toggled(on) => {
-                        root.parameter-changed(p.index, on ? p.max : p.min);
-                    }
-                }
-                if p.kind == "toggle": Text {
-                    y: parent.height - (grid.compact ? 24px : 32px);
-                    width: parent.width;
-                    height: 22px;
-                    text: p.value > (p.min + p.max) / 2 ? "On" : "Off";
-                    color: p.value > (p.min + p.max) / 2 ? Theme.text-primary : Theme.text-muted;
-                    font-size: Theme.font-body;
-                    font-weight: Theme.weight-semibold;
-                    horizontal-alignment: center;
-                }
-
-                // Enumeration: current label, tap to open the picker
-                if p.kind == "enum": Rectangle {
-                    x: Theme.space-sm;
-                    y: grid.top + (parent.height - grid.top - grid.bottom - self.height) / 2;
-                    width: parent.width - 2 * Theme.space-sm;
-                    height: 56px;
-                    border-radius: Theme.radius-md;
-                    background: enum-ta.pressed ? Theme.surface-hover : Theme.surface-raised;
-                    border-width: 1px;
-                    border-color: Theme.border-strong;
-
-                    for label[k] in p.options: Text {
-                        visible: k < p.option-values.length && abs(p.option-values[k] - p.value) < 0.0001;
+                    // Enumeration: current label, tap to open the picker
+                    if p.kind == "enum": Rectangle {
                         x: Theme.space-sm;
-                        width: parent.width - 28px;
-                        height: parent.height;
-                        text: label;
-                        color: Theme.text-primary;
-                        font-size: Theme.font-body;
-                        font-weight: Theme.weight-semibold;
-                        vertical-alignment: center;
-                        wrap: word-wrap;
-                        overflow: elide;
+                        y: grid.top + (parent.height - grid.top - grid.bottom - self.height) / 2;
+                        width: parent.width - 2 * Theme.space-sm;
+                        height: 56px;
+                        border-radius: Theme.radius-md;
+                        background: enum-ta.pressed ? Theme.surface-hover : Theme.surface-raised;
+                        border-width: 1px;
+                        border-color: Theme.border-strong;
+
+                        for label[k] in p.options: Text {
+                            visible: k < p.option-values.length && abs(p.option-values[k] - p.value) < 0.0001;
+                            x: Theme.space-sm;
+                            width: parent.width - 28px;
+                            height: parent.height;
+                            text: label;
+                            color: Theme.text-primary;
+                            font-size: Theme.font-body;
+                            font-weight: Theme.weight-semibold;
+                            vertical-alignment: center;
+                            wrap: word-wrap;
+                            overflow: elide;
+                        }
+                        Icon {
+                            x: parent.width - 22px;
+                            y: (parent.height - self.height) / 2;
+                            name: "chevron-down";
+                            size: 16px;
+                            color: Theme.text-secondary;
+                        }
+                        enum-ta := TouchArea {
+                            clicked => {
+                                root.picker-pos = i;
+                            }
+                        }
                     }
-                    Icon {
-                        x: parent.width - 22px;
-                        y: (parent.height - self.height) / 2;
-                        name: "chevron-down";
-                        size: 16px;
-                        color: Theme.text-secondary;
+                    if p.kind == "enum": Text {
+                        y: parent.height - (grid.compact ? 24px : 32px);
+                        width: parent.width;
+                        height: 22px;
+                        text: p.options.length + " options";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-small;
+                        horizontal-alignment: center;
                     }
-                    enum-ta := TouchArea {
+
+                    // Controller driving it
+                    if p.midi != "": MidiTag {
+                        x: parent.width - self.width - 4px;
+                        y: 4px;
+                        text: p.midi;
+                    }
+
+                    // Learning: a touch picks the control instead of moving it
+                    if root.midi-learning: TouchArea {
                         clicked => {
-                            root.picker-pos = i;
+                            root.midi-learn-touch(p.index);
                         }
                     }
-                }
-                if p.kind == "enum": Text {
-                    y: parent.height - (grid.compact ? 24px : 32px);
-                    width: parent.width;
-                    height: 22px;
-                    text: p.options.length + " options";
-                    color: Theme.text-muted;
-                    font-size: Theme.font-small;
-                    horizontal-alignment: center;
-                }
 
-                // Controller driving it
-                if p.midi != "": MidiTag {
-                    x: parent.width - self.width - 4px;
-                    y: 4px;
-                    text: p.midi;
-                }
-
-                // Learning: a touch picks the control instead of moving it
-                if root.midi-learning: TouchArea {
-                    clicked => {
-                        root.midi-learn-touch(p.index);
-                    }
-                }
-
-                // Arrange: move it (arrows), put it in or leave it out of the
-                // strip (its number, lit when in it)
-                if root.arranging: Rectangle {
-                    y: grid.top;
-                    height: parent.height - grid.top - 4px;
-                    background: Theme.surface;
-                    TouchArea { }
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: 2px;
-                        HorizontalLayout {
+                    // Arrange: move it (arrows), put it in or leave it out of the
+                    // strip (its number, lit when in it)
+                    if root.arranging: Rectangle {
+                        y: grid.top;
+                        height: parent.height - grid.top - 4px;
+                        background: Theme.surface;
+                        TouchArea { }
+                        VerticalLayout {
                             alignment: center;
-                            spacing: Theme.space-xs;
-                            Button {
-                                icon: "chevron-left";
-                                variant: "ghost";
-                                enabled: i > 0;
-                                clicked => {
-                                    root.arrange-moved(p.index, -1);
+                            spacing: 2px;
+                            HorizontalLayout {
+                                alignment: center;
+                                spacing: Theme.space-xs;
+                                Button {
+                                    icon: "chevron-left";
+                                    variant: "ghost";
+                                    enabled: i > 0;
+                                    clicked => {
+                                        root.arrange-moved(p.index, -1);
+                                    }
+                                }
+                                Button {
+                                    width: 56px;
+                                    text: i + 1;
+                                    variant: p.strip-pos >= 0 ? "secondary" : "ghost";
+                                    active: p.strip-pos >= 0;
+                                    focused: i == root.focused-param && root.arrange-stop == 1;
+                                    clicked => {
+                                        root.strip-toggled(p.index);
+                                    }
+                                }
+                                Button {
+                                    icon: "chevron-right";
+                                    variant: "ghost";
+                                    enabled: i < root.parameters.length - 1;
+                                    clicked => {
+                                        root.arrange-moved(p.index, 1);
+                                    }
                                 }
                             }
-                            Button {
-                                width: 56px;
-                                text: i + 1;
-                                variant: p.strip-pos >= 0 ? "secondary" : "ghost";
-                                active: p.strip-pos >= 0;
-                                focused: i == root.focused-param && root.arrange-stop == 1;
-                                clicked => {
-                                    root.strip-toggled(p.index);
-                                }
-                            }
-                            Button {
-                                icon: "chevron-right";
-                                variant: "ghost";
-                                enabled: i < root.parameters.length - 1;
-                                clicked => {
-                                    root.arrange-moved(p.index, 1);
-                                }
+                            Text {
+                                text: p.strip-pos >= 0 ? "In strip" : "Left out";
+                                color: p.strip-pos >= 0 ? Theme.accent : Theme.text-muted;
+                                font-size: Theme.font-caption;
+                                horizontal-alignment: center;
                             }
                         }
-                        Text {
-                            text: p.strip-pos >= 0 ? "In strip" : "Left out";
-                            color: p.strip-pos >= 0 ? Theme.accent : Theme.text-muted;
-                            font-size: Theme.font-caption;
-                            horizontal-alignment: center;
+                    }
+                }
+            }
+
+            // Room for it from three rows (those scroll), whatever the
+            // height: sized on the pages, the layout would loop
+            Rectangle {
+                width: grid.rows > 2 ? 40px + root.gap : 0px;
+                VerticalLayout {
+                    visible: grid.pages > 1;
+                    x: root.gap;
+                    width: 40px;
+                    alignment: center;
+                    spacing: Theme.space-xs;
+                    Button {
+                        width: 40px;
+                        icon: "chevron-up";
+                        enabled: grid.page > 0;
+                        clicked => {
+                            grid.show-page(grid.page - 1);
+                        }
+                    }
+                    Text {
+                        text: (grid.page + 1) + "/" + grid.pages;
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-caption;
+                        font-weight: Theme.weight-bold;
+                        horizontal-alignment: center;
+                    }
+                    Button {
+                        width: 40px;
+                        icon: "chevron-down";
+                        enabled: grid.page < grid.pages - 1;
+                        clicked => {
+                            grid.show-page(grid.page + 1);
                         }
                     }
                 }

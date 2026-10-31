@@ -6,7 +6,9 @@
 //!   turns (A/B), holding puts it back to its default;
 //! - switch: turning or pressing flips it, holding puts it back;
 //! - list: pressing opens it, turning then moves through it and pressing
-//!   picks; closed, turning steps through it and holding puts it back.
+//!   picks; closed, turning steps through it and holding puts it back;
+//! - factory presets and model, after the parameters: a press or a turn
+//!   opens their list, a press picks, holding closes it.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -22,6 +24,9 @@ const PER_PAGE: i32 = 5;
 const TURN: i32 = 0;
 const PRESS: i32 = 1;
 const LONG_PRESS: i32 = 2;
+/// `strip-list-row` of the list fields (the rack's)
+const FACTORY_ROW: i32 = -2;
+const MODEL_ROW: i32 = -3;
 
 /// A strip control and what an encoder event does to it
 struct Control<'a> {
@@ -166,7 +171,16 @@ fn event(
     if app.get_current_view() != 0 || instance < 0 {
         return;
     }
-    let pages = ((app.get_selected_strip_count() + PER_PAGE - 1) / PER_PAGE).max(1);
+    // The parameters in the strip, then the list fields
+    let strip_count = app.get_selected_strip_count();
+    let factory = app.get_selected_strip_factory().row_count() as i32;
+    let models = app.get_selected_strip_models().row_count() as i32;
+    let factory_pos = (factory > 0).then_some(strip_count);
+    let model_pos = app
+        .get_selected_uses_file()
+        .then_some(strip_count + i32::from(factory > 0));
+    let fields = strip_count + i32::from(factory_pos.is_some()) + i32::from(model_pos.is_some());
+    let pages = ((fields + PER_PAGE - 1) / PER_PAGE).max(1);
     let page = app.get_strip_page().clamp(0, pages - 1);
     if encoder == PER_PAGE {
         let next = (page + detents).clamp(0, pages - 1);
@@ -179,18 +193,56 @@ fn event(
     if !(0..PER_PAGE).contains(&encoder) {
         return;
     }
+    let slot = page * PER_PAGE + encoder;
+    let list_row = app.get_strip_list_row();
+    if Some(slot) == factory_pos || Some(slot) == model_pos {
+        let row = if Some(slot) == factory_pos {
+            FACTORY_ROW
+        } else {
+            MODEL_ROW
+        };
+        if list_row != -1 && list_row != row {
+            app.set_strip_list_row(-1);
+        }
+        if row == MODEL_ROW && models <= 1 {
+            // Nothing to list: a press opens the models
+            if action == PRESS {
+                app.invoke_strip_model_picked(0);
+            }
+            return;
+        }
+        let count = if row == FACTORY_ROW { factory } else { models };
+        let current = if row == MODEL_ROW {
+            app.get_selected_strip_model_current()
+        } else {
+            -1
+        };
+        let open = (list_row == row).then(|| app.get_strip_list_focus());
+        match list_field(count, current, action, detents, open) {
+            List::Keep => {}
+            List::Focus(option) => {
+                app.set_strip_list_focus(option);
+                app.set_strip_list_row(row);
+            }
+            List::Close => app.set_strip_list_row(-1),
+        }
+        if let (Some(focus), PRESS) = (open, action) {
+            let picked = if focus < 0 { current.max(0) } else { focus };
+            if row == FACTORY_ROW {
+                app.invoke_strip_factory_picked(picked);
+            } else {
+                app.invoke_strip_model_picked(picked);
+            }
+        }
+        return;
+    }
     let params = app.get_selected_parameters();
-    let Some((row, p)) = params
-        .iter()
-        .enumerate()
-        .find(|(_, p)| p.strip_pos == page * PER_PAGE + encoder)
-    else {
+    let Some((row, p)) = params.iter().enumerate().find(|(_, p)| p.strip_pos == slot) else {
         return;
     };
     let row = row as i32;
     // Another control closes the list
-    let list_row = app.get_strip_list_row();
-    if list_row >= 0 && list_row != row {
+    if list_row != -1 && list_row != row {
         app.set_strip_list_row(-1);
     }
     let options: Vec<f32> = p.option_values.iter().collect();
@@ -224,6 +276,24 @@ fn event(
     }
     if let Some(value) = response.value {
         app.invoke_set_parameter(instance, p.index, value);
+    }
+}
+
+/// What an encoder does to a list field (factory presets, model) of
+/// `count` rows, `current` the one loaded (-1: none): a press or a turn
+/// opens it, then the turns move and a press picks (the caller loads it),
+/// holding closes it. `open`: the focused row (-1: none yet), None when
+/// closed
+fn list_field(count: i32, current: i32, action: i32, detents: i32, open: Option<i32>) -> List {
+    let last = (count - 1).max(0);
+    match (action, open) {
+        (TURN, Some(focus)) => {
+            let from = if focus < 0 { current.max(0) } else { focus };
+            List::Focus((from + detents).clamp(0, last))
+        }
+        (PRESS | LONG_PRESS, Some(_)) => List::Close,
+        (TURN | PRESS, None) => List::Focus(current.clamp(0, last)),
+        _ => List::Keep,
     }
 }
 

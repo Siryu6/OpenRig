@@ -107,7 +107,10 @@ What OpenRig does, in more technical detail than the
   tuner ramp, footswitch tiles on the Live page. Tap to select:
   the block's controls show at the bottom of the rack (five per page)
   for quick tweaks: knobs, switches, and lists that open just above the
-  strip; double tap opens the full editor. Arrange, in the
+  strip, then the plugin's factory presets and its model (the NAM capture,
+  IR, sample…: the presets of the same file type to switch to, or the
+  file picker); double tap opens the full editor, whose parameter grid
+  goes by pages (arrows on the right) when it does not fit the screen. Arrange, in the
   editor, sets the order of a plugin's controls and which ones the knob
   strip shows, for every instance of the plugin (Reset goes back to the
   plugin's order). Hold (0.35 s) and
@@ -175,7 +178,8 @@ What OpenRig does, in more technical detail than the
   address order. Encoders 1–5 turn the knobs of the strip's page shown;
   pressing swaps a knob with its value before the turns (A/B), holding puts
   it back to its default; a switch flips; a list opens on a press, the turns
-  then move through it and a press picks (holding closes it). A 6th encoder
+  then move through it and a press picks (holding closes it); the factory
+  presets and model fields open on a press or a turn. A 6th encoder
   turns the strip's pages. Settings → Hardware: the board, counts per
   detent, reverse; it says which addresses answered. Without boards, keys
   `a s d f g h` turn encoders 1–6 (shifted: the other way) and `z x c v b n`
