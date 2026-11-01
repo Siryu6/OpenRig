@@ -1,11 +1,12 @@
 //! Presets and scenes on disk: one JSON file per item, named after its id
 //! (names can repeat), written atomically so a power cut keeps the previous
 //! version.
+use crate::sync::{CondvarExt, MutexExt};
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::warn;
+use tracing::{error, warn};
 
 pub use crate::persist::write_atomic;
 
@@ -39,7 +40,7 @@ pub fn load_dir<T: DeserializeOwned>(dir: &Path) -> Result<Vec<(PathBuf, T)>> {
             .and_then(|json| Ok(serde_json::from_str(&json)?));
         match item {
             Ok(item) => items.push((path, item)),
-            Err(e) => warn!("Skipping {}: {}", path.display(), e),
+            Err(e) => warn!(path = %path.display(), error = format_args!("{e:#}"), "File skipped"),
         }
     }
     Ok(items)
@@ -56,7 +57,10 @@ pub fn save<T: serde::Serialize>(
     let path = file_for(dir, id);
     write_atomic(&path, serde_json::to_string_pretty(item)?.as_bytes())?;
     if let Some(previous) = previous.filter(|p| *p != path) {
-        let _ = fs::remove_file(previous);
+        // Left behind, it would load as a duplicate of the same id
+        if let Err(e) = fs::remove_file(previous) {
+            warn!(path = %previous.display(), error = %e, "Cannot remove the previous file");
+        }
     }
     Ok(path)
 }
@@ -93,7 +97,7 @@ impl BackgroundWriter {
 
     /// Write `contents` soon, replacing whatever is still waiting
     pub fn queue(&self, contents: Vec<u8>) {
-        let mut state = self.shared.state.lock().unwrap();
+        let mut state = self.shared.state.locked();
         state.pending = Some(contents);
         if !state.started {
             state.started = true;
@@ -102,7 +106,11 @@ impl BackgroundWriter {
                 .name("writer".into())
                 .spawn(move || write_loop(&path, &shared));
             if let Err(e) = spawned {
-                warn!("Cannot start the writer for {}: {}", self.path.display(), e);
+                warn!(
+                    path = %self.path.display(),
+                    error = %e,
+                    "Cannot start the background writer; writing at flush"
+                );
                 state.started = false;
             }
         }
@@ -111,7 +119,7 @@ impl BackgroundWriter {
 
     /// Wait until everything queued is written; the error of the last write
     pub fn flush(&self) -> Result<()> {
-        let mut state = self.shared.state.lock().unwrap();
+        let mut state = self.shared.state.locked();
         if !state.started {
             // No thread (it could not start): write here
             if let Some(contents) = state.pending.take() {
@@ -119,7 +127,7 @@ impl BackgroundWriter {
             }
         }
         while state.pending.is_some() || state.writing {
-            state = self.shared.changed.wait(state).unwrap();
+            state = self.shared.changed.wait_locked(state);
         }
         match &state.error {
             Some(e) => Err(anyhow::anyhow!("{e}")),
@@ -129,7 +137,7 @@ impl BackgroundWriter {
 }
 
 fn write_loop(path: &Path, shared: &std::sync::Arc<Shared>) {
-    let mut state = shared.state.lock().unwrap();
+    let mut state = shared.state.locked();
     loop {
         let Some(contents) = state.pending.take() else {
             // Nobody else holds it: the writer is gone
@@ -138,18 +146,16 @@ fn write_loop(path: &Path, shared: &std::sync::Arc<Shared>) {
             }
             state = shared
                 .changed
-                .wait_timeout(state, std::time::Duration::from_secs(1))
-                .unwrap()
-                .0;
+                .wait_timeout_locked(state, std::time::Duration::from_secs(1));
             continue;
         };
         state.writing = true;
         drop(state);
         let result = write_atomic(path, &contents);
         if let Err(e) = &result {
-            warn!("{:#}", e);
+            error!(error = format_args!("{e:#}"), "Background write failed");
         }
-        state = shared.state.lock().unwrap();
+        state = shared.state.locked();
         state.writing = false;
         state.error = result.err().map(|e| format!("{e:#}"));
         shared.changed.notify_all();

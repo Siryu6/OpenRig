@@ -1,4 +1,5 @@
-// Integration test for preset save/load functionality
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // Tests: failing is their job
+                                                                   // Integration test for preset save/load functionality
 use std::fs;
 
 // Import necessary types from the main crate

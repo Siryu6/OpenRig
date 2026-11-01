@@ -8,6 +8,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
+use tracing::warn;
 
 pub const FILE: &str = "param-layout.json";
 
@@ -76,9 +77,10 @@ impl Layouts {
         let path = data_dir.join(FILE);
         crate::persist::load_json(&path)
             .unwrap_or_else(|e| {
-                tracing::warn!(
-                    "{}: {e:#}; parameters in the plugins' order",
-                    path.display()
+                warn!(
+                    path = %path.display(),
+                    error = format_args!("{e:#}"),
+                    "Parameter layouts unreadable; parameters in the plugins' order"
                 );
                 None
             })

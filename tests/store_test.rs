@@ -2,6 +2,7 @@
 //! here with a throwaway key the test trusts), an archive already in the
 //! cache, install into the LV2 folder, rescan, removal.
 //! Skipped when no C compiler or LV2 headers are available.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // Tests: failing is their job
 #![cfg(all(feature = "lv2", feature = "store"))]
 
 use blake2::{Blake2b512, Digest};

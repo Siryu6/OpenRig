@@ -19,7 +19,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::state::app_state::data_dir;
 
@@ -40,6 +40,10 @@ const SECRET_PREFIX: &str = "t3k_cs_";
 const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 /// Refresh the access token this long before it expires
 const EXPIRY_MARGIN_SECS: i64 = 60;
+/// Bounds of what TONE3000 says of the device flow: a code is shown at
+/// most this long, polled at most this far apart
+const MAX_CODE_SECS: u64 = 30 * 60;
+const MAX_POLL_SECS: u64 = 60;
 
 fn now() -> i64 {
     SystemTime::now()
@@ -96,15 +100,25 @@ impl Settings {
     pub fn load() -> Self {
         let path = Self::path();
         let mut settings = match std::fs::read_to_string(&path) {
+            // Only where the error is: serde's message may quote a token
             Ok(text) => serde_json::from_str(&text).unwrap_or_else(|e| {
-                warn!("Ignoring {}: {}", path.display(), e);
+                warn!(
+                    path = %path.display(),
+                    line = e.line(),
+                    column = e.column(),
+                    "Unreadable TONE3000 settings ignored"
+                );
                 Self::default()
             }),
-            Err(_) => Self::default(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
+            Err(e) => {
+                warn!(path = %path.display(), error = %e, "TONE3000 settings not read");
+                Self::default()
+            }
         };
         if settings.migrate() {
             if let Err(e) = settings.save() {
-                warn!("{:#}", e);
+                warn!(error = format_args!("{e:#}"), "TONE3000 settings not saved");
             }
         }
         if settings.client_id.is_empty() {
@@ -117,7 +131,8 @@ impl Settings {
             match check_client_id(&settings.client_id) {
                 Ok(key) => settings.client_id = key,
                 Err(e) => {
-                    warn!("TONE3000 key ignored: {e}");
+                    // The message never holds the key
+                    warn!(error = %e, "TONE3000 key ignored");
                     settings.client_id.clear();
                 }
             }
@@ -138,7 +153,7 @@ impl Settings {
             // Already the OpenRig application: the session stays
             self.client_id.clear();
         } else if !self.client_id.is_empty() || self.session.is_some() {
-            info!("TONE3000: OpenRig now has its own application, connect again");
+            info!("OpenRig now has its own TONE3000 application, connect again");
             self.client_id.clear();
             self.session = None;
         }
@@ -177,7 +192,7 @@ impl Settings {
     /// A valid access token, refreshed (and saved) when it expired
     pub fn access_token(&mut self) -> Result<String, AuthError> {
         let session = self.session.as_ref().ok_or(AuthError::SignedOut)?;
-        if session.expires_at - EXPIRY_MARGIN_SECS <= now() {
+        if session.expires_at.saturating_sub(EXPIRY_MARGIN_SECS) <= now() {
             return self.refresh();
         }
         Ok(session.access_token.clone())
@@ -203,10 +218,10 @@ impl Settings {
         session.refresh_token = token
             .refresh_token
             .unwrap_or_else(|| session.refresh_token.clone());
-        session.expires_at = now() + token.expires_in;
+        session.expires_at = now().saturating_add(token.expires_in);
         let access_token = session.access_token.clone();
         if let Err(e) = self.save() {
-            warn!("{:#}", e);
+            warn!(error = format_args!("{e:#}"), "TONE3000 settings not saved");
         }
         Ok(access_token)
     }
@@ -382,7 +397,10 @@ fn post_form(path: &str, form: &[(&str, &str)]) -> Result<(u16, String)> {
         .send_form(form.iter().copied())
         .map_err(|e| anyhow!("Cannot reach TONE3000: {e}"))?;
     let status = response.status().as_u16();
-    let body = response.body_mut().read_to_string()?;
+    let body = response
+        .body_mut()
+        .read_to_string()
+        .context("Unreadable answer from TONE3000")?;
     Ok((status, body))
 }
 
@@ -422,7 +440,9 @@ fn refresh_token(client_id: &str, refresh_token: &str) -> Result<TokenResponse, 
     )
     .map_err(|e| AuthError::Unavailable(e.to_string()))?;
     match status {
-        200..=299 => serde_json::from_str(&body).map_err(|e| AuthError::Unavailable(e.to_string())),
+        // Not serde's message: it may quote a token of the answer
+        200..=299 => serde_json::from_str(&body)
+            .map_err(|_| AuthError::Unavailable("unexpected answer to a token refresh".into())),
         400 | 401 | 403 => Err(AuthError::Revoked),
         _ => Err(AuthError::Unavailable(format!("HTTP {status}"))),
     }
@@ -490,6 +510,7 @@ impl Connection {
                 let last = run_device_flow(&client_id, &stop, &on_event);
                 on_event(last);
             })
+            .inspect_err(|e| error!(error = %e, "TONE3000 connection not started"))
             .ok();
         Self { cancel, thread }
     }
@@ -505,8 +526,8 @@ impl Drop for Connection {
 
 /// Sleep for `duration`, false if cancelled meanwhile
 fn wait(duration: Duration, cancel: &AtomicBool) -> bool {
-    let end = Instant::now() + duration;
-    while Instant::now() < end {
+    let start = Instant::now();
+    while start.elapsed() < duration {
         if cancel.load(Ordering::Relaxed) {
             return false;
         }
@@ -530,15 +551,16 @@ fn run_device_flow(
         Err(e) => return ConnectEvent::Failed(format!("{e:#}")),
     };
     let device_code = code.device_code.clone();
-    let mut interval = Duration::from_secs(code.interval.max(1));
-    let deadline = Instant::now() + Duration::from_secs(code.expires_in);
+    let mut interval = Duration::from_secs(code.interval.clamp(1, MAX_POLL_SECS));
+    let lifetime = Duration::from_secs(code.expires_in.min(MAX_CODE_SECS));
+    let start = Instant::now();
     on_event(ConnectEvent::Code(code));
 
     let grant = loop {
         if !wait(interval, cancel) {
             return ConnectEvent::Cancelled;
         }
-        if Instant::now() >= deadline {
+        if start.elapsed() >= lifetime {
             return ConnectEvent::Failed("The code expired, try again".into());
         }
         let poll = post_form(
@@ -551,11 +573,17 @@ fn run_device_flow(
         );
         match poll.map(|(status, body)| parse_poll(status, &body)) {
             Ok(Poll::Pending) => {}
-            Ok(Poll::SlowDown) => interval += Duration::from_secs(5),
+            Ok(Poll::SlowDown) => {
+                interval =
+                    (interval + Duration::from_secs(5)).min(Duration::from_secs(MAX_POLL_SECS))
+            }
             Ok(Poll::Granted(grant)) => break grant,
             Ok(Poll::Failed(message)) => return ConnectEvent::Failed(message),
             // Transient network trouble: keep polling until the deadline
-            Err(e) => warn!("TONE3000 poll: {:#}", e),
+            Err(e) => warn!(
+                error = format_args!("{e:#}"),
+                "TONE3000 poll failed, retrying"
+            ),
         }
     };
 
@@ -570,7 +598,7 @@ fn run_device_flow(
             username,
             access_token: grant.access_token,
             refresh_token: grant.refresh_token,
-            expires_at: now() + grant.expires_in,
+            expires_at: now().saturating_add(grant.expires_in),
         }),
     };
     if let Err(e) = settings.save() {

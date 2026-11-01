@@ -59,7 +59,10 @@ impl Looper {
     /// (left, right) of the loop at frame `position`
     fn loop_frame(&self, position: usize) -> (f32, f32) {
         let (l, r) = self.layers.iter().fold((0.0, 0.0), |(l, r), layer| {
-            (l + layer[2 * position], r + layer[2 * position + 1])
+            match layer.get(2 * position..2 * position + 2) {
+                Some(&[left, right]) => (l + left, r + right),
+                _ => (l, r),
+            }
         });
         (l * self.level, r * self.level)
     }
@@ -79,8 +82,12 @@ impl Looper {
                 LooperState::Stopped => {}
                 LooperState::Recording => {
                     if self.playhead < self.max_samples {
-                        let frame = &mut self.layers[0][2 * self.playhead..][..2];
-                        frame.copy_from_slice(&[*l, *r]);
+                        let at = 2 * self.playhead;
+                        if let Some(frame) =
+                            self.layers.first_mut().and_then(|f| f.get_mut(at..at + 2))
+                        {
+                            frame.copy_from_slice(&[*l, *r]);
+                        }
                         self.playhead += 1;
                     } else {
                         // Buffer full: the loop is as long as it can be
@@ -97,9 +104,14 @@ impl Looper {
                 }
                 LooperState::Overdubbing => {
                     let (loop_l, loop_r) = self.loop_frame(self.playhead);
-                    if let Some(layer) = self.layers.last_mut() {
-                        layer[2 * self.playhead] += *l * OVERDUB_GAIN;
-                        layer[2 * self.playhead + 1] += *r * OVERDUB_GAIN;
+                    let at = 2 * self.playhead;
+                    if let Some([left, right]) = self
+                        .layers
+                        .last_mut()
+                        .and_then(|layer| layer.get_mut(at..at + 2))
+                    {
+                        *left += *l * OVERDUB_GAIN;
+                        *right += *r * OVERDUB_GAIN;
                     }
                     *l += loop_l;
                     *r += loop_r;
@@ -222,7 +234,9 @@ impl Looper {
     }
 
     pub fn set_level(&mut self, level: f32) {
-        self.level = level.clamp(0.0, 2.0);
+        if level.is_finite() {
+            self.level = level.clamp(0.0, 2.0);
+        }
     }
 
     pub fn state(&self) -> LooperState {
@@ -265,8 +279,8 @@ fn new_layer(max_samples: usize) -> Box<[f32]> {
     let mut layer = vec![0.0f32; 2 * max_samples].into_boxed_slice();
     // One write per page (4 KiB is the smallest page size in use)
     for sample in layer.iter_mut().step_by(1024) {
-        // SAFETY: a valid, aligned element of the slice
-        unsafe { std::ptr::write_volatile(sample, 0.0) };
+        // An opaque zero: the compiler cannot drop the store as useless
+        *sample = std::hint::black_box(0.0);
     }
     layer
 }
@@ -274,6 +288,7 @@ fn new_layer(max_samples: usize) -> Box<[f32]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sync::MutexExt;
 
     /// Left output for `value` on the left and `value / 2` on the right;
     /// checks that the right side follows
@@ -340,14 +355,14 @@ mod tests {
         let looper = Mutex::new(Looper::new(1000.0));
         Looper::control(&looper, |l| l.record());
         // The next layer is ready, the recording has its own
-        assert!(looper.lock().unwrap().spare.is_none());
+        assert!(looper.locked().spare.is_none());
         Looper::control(&looper, |l| {
             assert!(l.spare.is_some());
             l.play();
             l.overdub();
         });
         Looper::control(&looper, |l| l.undo());
-        let l = looper.lock().unwrap();
+        let l = looper.locked();
         assert_eq!(l.layer_count(), 1);
         assert!(l.garbage.is_empty());
         assert!(l.spare.is_some());

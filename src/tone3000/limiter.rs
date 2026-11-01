@@ -3,6 +3,7 @@
 //! `PER_MINUTE` go out in a minute (as PiPedal does). Every API call and
 //! model download waits for its turn here.
 
+use crate::sync::MutexExt;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -51,7 +52,7 @@ static LIMITER: Mutex<Limiter> = Mutex::new(Limiter {
 pub fn acquire(cancel: Option<&AtomicBool>) -> bool {
     loop {
         let wait = {
-            let mut limiter = LIMITER.lock().unwrap();
+            let mut limiter = LIMITER.locked();
             let now = Instant::now();
             let wait = limiter.delay(now);
             if wait.is_zero() {

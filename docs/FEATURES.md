@@ -120,6 +120,15 @@ What OpenRig does, in more technical detail than the
   with a 20 ms equal-power crossfade. Parameters, bypass (10 ms ramp), A/B and
   mix changes are applied live without rebuilding. The JACK callback does no
   allocation and takes no blocking lock.
+- **Multi-core DSP**: a heavy rig runs on up to 8 cores (as many as the CPU has: one on a single core) with no added
+  latency and the same samples as on one core. The branches of a split play
+  at once on two cores; a long chain is cut into stages of about the same
+  cost, each on its core, that pass every period along in 8 slices (a stage
+  starts a slice as soon as the one before has finished it). During a preset
+  change, the old and new chains play on two cores. Light rigs stay on one
+  core; a block feeding a send bus stays on the audio thread. Settings →
+  Processing sets the cores (Auto: all of them). `pedalboard-bench` times a
+  rig of NAM blocks offline on 1 to 8 cores.
 - **Presets, scenes and setlists**: presets store the whole chain (splits,
   parameter values by port symbol, so plugin updates keep them, block
   colours) with 8 scenes and a tempo. A scene

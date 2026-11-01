@@ -60,9 +60,17 @@ extern "C"
 
 	// `frames` must not exceed the max_block given at load time
 	void pb_nam_process(NeuralAudio::NeuralModel* model, const float* input, float* output,
-		size_t frames)
+		size_t frames) noexcept
 	{
-		model->Process(input, output, frames);
+		try
+		{
+			model->Process(input, output, frames);
+		}
+		catch (...)
+		{
+			// Silence rather than an abort (unwinding into Rust)
+			std::memset(output, 0, frames * sizeof(float));
+		}
 	}
 
 	// Sample rate the model was trained at (-1 if unknown)
@@ -94,8 +102,14 @@ extern "C"
 
 	// 0 (lightest) to 1 (full). Real-time safe on a model with
 	// pb_nam_has_quality: it only switches the size used.
-	void pb_nam_set_quality(NeuralAudio::NeuralModel* model, float quality)
+	void pb_nam_set_quality(NeuralAudio::NeuralModel* model, float quality) noexcept
 	{
-		model->SetQualityScaleFactor(quality);
+		try
+		{
+			model->SetQualityScaleFactor(quality);
+		}
+		catch (...)
+		{
+		}
 	}
 }

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel, Weak};
-use tracing::warn;
+use tracing::{error, warn};
 
 use pedalboard::audio::routing::{Fold, PortMeter, Routing, RoutingControl, Source, MAX_PORTS};
 use pedalboard::audio::{AudioEngine, ChainNode};
@@ -49,7 +49,7 @@ impl Drop for Editor {
 
 fn save(routing: &Routing) {
     if let Err(e) = routing.save(&pedalboard::state::data_dir()) {
-        warn!("Could not save the routing: {e:#}");
+        error!(error = format_args!("{e:#}"), "Routing not saved");
     }
 }
 
@@ -66,7 +66,13 @@ impl Context {
         let Some(app) = self.app.upgrade() else {
             return;
         };
-        let editor = &mut *self.editor.borrow_mut();
+        // A change made from inside another (a Slint re-entry) is dropped
+        // rather than borrowing the editor twice
+        let Ok(mut editor) = self.editor.try_borrow_mut() else {
+            warn!("Routing editor in use, change skipped");
+            return;
+        };
+        let editor = &mut *editor;
         let (inputs, outputs) = (editor.control.inputs, editor.control.outputs);
         let before = editor.routing.clone();
         edit(&mut editor.routing, inputs, outputs);
@@ -334,6 +340,8 @@ fn start_meters(
     inputs: usize,
     outputs: usize,
 ) -> Timer {
+    // The meters have MAX_PORTS slots, the interface may have more ports
+    let (inputs, outputs) = (inputs.min(MAX_PORTS), outputs.min(MAX_PORTS));
     let timer = Timer::default();
     let weak = app.as_weak();
     let mut bars = ([0f32; MAX_PORTS], [0f32; MAX_PORTS]);

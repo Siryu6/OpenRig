@@ -4,6 +4,7 @@
 //! worker thread; once a bundle is in place the LV2 plugins are scanned
 //! again, so the new plugin can be added to the chain at once.
 
+use pedalboard::sync::MutexExt;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -18,7 +19,7 @@ use pedalboard::store::install::Installed;
 use pedalboard::store::{self, Status, Store};
 use pedalboard::ui::slint_bridge::block_color;
 
-use crate::{model, App, CatalogFamily, CatalogItem};
+use crate::{model, spawn, ui, App, CatalogFamily, CatalogItem};
 
 /// Families in the order of the Add effect page
 const FAMILIES: [&str; 8] = [
@@ -64,7 +65,14 @@ thread_local! {
 }
 
 fn with_page<R>(f: impl FnOnce(&mut Page) -> R) -> Option<R> {
-    PAGE.with(|p| p.borrow_mut().as_mut().map(f))
+    PAGE.with(|p| match p.try_borrow_mut() {
+        Ok(mut page) => page.as_mut().map(f),
+        // Called back from inside another `with_page`: skipped, not a crash
+        Err(_) => {
+            warn!("Store page in use, update skipped");
+            None
+        }
+    })
 }
 
 /// Pictures downloaded at once
@@ -79,16 +87,6 @@ pub fn picture_for(uri: &str) -> Option<(Image, bool)> {
         Some((image, plugin.media.picture.as_ref()?.block_face))
     })
     .flatten()
-}
-
-/// Run on the UI thread
-fn ui(app: &Weak<App>, f: impl FnOnce(&App) + Send + 'static) {
-    let app = app.clone();
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(app) = app.upgrade() {
-            f(&app);
-        }
-    });
 }
 
 /// "39.5 MB", "820 KB"
@@ -361,7 +359,7 @@ fn refresh(app: &App, state: &Arc<AppState>, rescan: bool) {
     redraw(app, state);
     let weak = app.as_weak();
     let st = state.clone();
-    std::thread::spawn(move || {
+    let started = spawn("store-refresh", move || {
         let result = store.refresh();
         if rescan {
             st.lv2_host.rescan();
@@ -372,13 +370,16 @@ fn refresh(app: &App, state: &Arc<AppState>, rescan: bool) {
                 p.installed = p.store.installed();
                 match result {
                     Ok(index) => {
-                        info!("Plugin catalog serial {} loaded", index.serial);
+                        info!(serial = %index.serial, "Plugin catalog loaded");
                         p.index = Some(index);
                         p.error = None;
                         p.refreshed = Some(Instant::now());
                     }
                     Err(e) => {
-                        warn!("Plugin catalog not refreshed: {e:#}");
+                        warn!(
+                            error = format_args!("{e:#}"),
+                            "Plugin catalog not refreshed"
+                        );
                         p.error = Some(format!("Cannot refresh the catalog: {e}"));
                     }
                 }
@@ -390,6 +391,13 @@ fn refresh(app: &App, state: &Arc<AppState>, rescan: bool) {
             load_pictures(app, &st);
         });
     });
+    if !started {
+        with_page(|p| {
+            p.busy = false;
+            p.error = Some("Cannot refresh the catalog now".into());
+        });
+        redraw(app, state);
+    }
 }
 
 /// Pictures of the entries: from the media cache, else downloaded by a few
@@ -420,10 +428,11 @@ fn load_pictures(app: &App, state: &Arc<AppState>) {
     }
     let workers = wanted.len().min(PICTURE_WORKERS);
     let queue = Arc::new(Mutex::new(VecDeque::from(wanted)));
+    let mut started = 0;
     for _ in 0..workers {
         let (queue, store, weak, st) = (queue.clone(), store.clone(), app.as_weak(), state.clone());
-        std::thread::spawn(move || loop {
-            let Some((plugin, here)) = queue.lock().unwrap().pop_front() else {
+        started += usize::from(spawn("store-pictures", move || loop {
+            let Some((plugin, here)) = queue.locked().pop_front() else {
                 return;
             };
             let path = store.picture(&plugin);
@@ -440,9 +449,18 @@ fn load_pictures(app: &App, state: &Arc<AppState>) {
                             crate::refresh_chain(app, &st);
                         }
                     }
-                    Err(_) => warn!("Store picture unreadable: {}", path.display()),
+                    Err(e) => warn!(path = %path.display(), error = %e, "Store picture unreadable"),
                 }
             });
+        }));
+    }
+    if started == 0 {
+        // Asked again the next time the pictures are loaded
+        let ids: Vec<String> = queue.locked().drain(..).map(|(p, _)| p.id).collect();
+        with_page(|p| {
+            for id in &ids {
+                p.loading.remove(id);
+            }
         });
     }
 }
@@ -464,7 +482,8 @@ fn install(app: &App, state: &Arc<AppState>, id: String) {
     redraw(app, state);
     let weak = app.as_weak();
     let st = state.clone();
-    std::thread::spawn(move || {
+    let job = id.clone();
+    let started = spawn("store-install", move || {
         let mut shown = -1i32;
         let result = store.install(&index, &id, |received, total| {
             let fraction = received as f32 / total.max(1) as f32;
@@ -484,6 +503,15 @@ fn install(app: &App, state: &Arc<AppState>, id: String) {
         }
         finish(&weak, &st, id, result, "installed");
     });
+    if !started {
+        finish(
+            &app.as_weak(),
+            state,
+            job,
+            Err(anyhow::anyhow!("cannot start the download")),
+            "installed",
+        );
+    }
 }
 
 /// Remove the bundle of entry `id`, on a worker thread
@@ -503,7 +531,8 @@ fn remove(app: &App, state: &Arc<AppState>, id: String) {
     redraw(app, state);
     let weak = app.as_weak();
     let st = state.clone();
-    std::thread::spawn(move || {
+    let job = id.clone();
+    let started = spawn("store-remove", move || {
         let result = store.remove(&index, &id);
         if result.is_ok() {
             // Blocks already in the chain keep running until it is rebuilt;
@@ -512,6 +541,15 @@ fn remove(app: &App, state: &Arc<AppState>, id: String) {
         }
         finish(&weak, &st, id, result, "removed");
     });
+    if !started {
+        finish(
+            &app.as_weak(),
+            state,
+            job,
+            Err(anyhow::anyhow!("cannot start the removal")),
+            "removed",
+        );
+    }
 }
 
 /// Back on the UI thread after an install or a removal
@@ -534,7 +572,7 @@ fn finish(
                 .map(|(_, e)| e.name.clone())
                 .unwrap_or_else(|| id.clone());
             if let Err(e) = &result {
-                warn!("Store: {id} not {done}: {e:#}");
+                warn!(id = %id, action = done, error = format_args!("{e:#}"), "Store job failed");
                 p.notes.insert(id.clone(), format!("{e}"));
             }
             name

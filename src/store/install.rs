@@ -6,8 +6,9 @@
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use tracing::warn;
 
 use super::index::{valid_bundle, valid_relative, Artifact, Package};
 use crate::persist::{sync_dir, write_atomic};
@@ -16,6 +17,8 @@ use crate::persist::{sync_dir, write_atomic};
 pub const RECEIPT: &str = ".openrig.json";
 /// Upper bound of what one bundle may unpack to
 const MAX_BUNDLE_BYTES: u64 = 512 * 1024 * 1024;
+/// Upper bound of a decompressed .tar.xz, written to the disk whole
+const MAX_TAR_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 /// What the store installed in a bundle
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -56,7 +59,13 @@ pub fn installed(lv2_dir: &Path) -> Vec<Installed> {
             }
             let receipt = fs::read(e.path().join(RECEIPT))
                 .ok()
-                .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+                .and_then(|bytes| match serde_json::from_slice(&bytes) {
+                    Ok(receipt) => Some(receipt),
+                    Err(e) => {
+                        warn!(bundle = %bundle, error = %e, "Unreadable store receipt, bundle taken as copied by hand");
+                        None
+                    }
+                });
             Some(Installed { bundle, receipt })
         })
         .collect();
@@ -87,7 +96,8 @@ pub fn install(
     let staging = lv2_dir.join(format!(".staging-{}", uuid::Uuid::new_v4()));
     let result = (|| {
         let unpacked = staging.join(bundle);
-        fs::create_dir_all(&unpacked)?;
+        fs::create_dir_all(&unpacked)
+            .with_context(|| format!("Cannot create {}", unpacked.display()))?;
         let prefix = match artifact.root.as_str() {
             "" => bundle.to_string(),
             root => format!("{root}/{bundle}"),
@@ -113,18 +123,32 @@ pub fn install(
         )?;
         // Replace: the old bundle steps aside, the new one moves in
         let old = lv2_dir.join(format!(".old-{}", uuid::Uuid::new_v4()));
-        if target.exists() {
-            fs::rename(&target, &old)?;
+        let replaced = target.exists();
+        if replaced {
+            fs::rename(&target, &old).with_context(|| format!("Cannot replace {bundle}"))?;
         }
         if let Err(e) = fs::rename(&unpacked, &target) {
-            let _ = fs::rename(&old, &target);
-            return Err(e.into());
+            if replaced {
+                if let Err(e) = fs::rename(&old, &target) {
+                    warn!(bundle = %bundle, error = %e, "Previous bundle not restored");
+                }
+            }
+            return Err(anyhow::Error::from(e).context(format!("Cannot install {bundle}")));
         }
         sync_dir(lv2_dir);
-        let _ = fs::remove_dir_all(&old);
+        if replaced {
+            if let Err(e) = fs::remove_dir_all(&old) {
+                // `clean` retries at the next start
+                warn!(path = %old.display(), error = %e, "Previous bundle not removed");
+            }
+        }
         Ok(())
     })();
-    let _ = fs::remove_dir_all(&staging);
+    if let Err(e) = fs::remove_dir_all(&staging) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            warn!(path = %staging.display(), error = %e, "Staging folder not removed");
+        }
+    }
     result
 }
 
@@ -157,7 +181,9 @@ pub fn clean(lv2_dir: &Path) {
             .iter()
             .any(|p| name.starts_with(p))
         {
-            let _ = fs::remove_dir_all(entry.path());
+            if let Err(e) = fs::remove_dir_all(entry.path()) {
+                warn!(path = %entry.path().display(), error = %e, "Store leftover not removed");
+            }
         }
     }
 }
@@ -170,7 +196,9 @@ fn read_receipt(bundle: &Path) -> Option<Receipt> {
 /// many. Only plain files and directories are taken, and only with clean
 /// relative paths: no links, devices, absolute paths or `..`.
 fn unpack(archive: &Path, format: &str, prefix: &str, dest: &Path) -> Result<usize> {
-    let file = BufReader::new(File::open(archive)?);
+    let file = BufReader::new(
+        File::open(archive).with_context(|| format!("Cannot read {}", archive.display()))?,
+    );
     match format {
         "tar.gz" => unpack_tar(flate2::read::GzDecoder::new(file), prefix, dest),
         "tar.xz" => unpack_tar_xz(file, prefix, dest),
@@ -198,14 +226,42 @@ fn unpack_tar_xz(xz: impl std::io::BufRead, prefix: &str, dest: &Path) -> Result
             .read(true)
             .write(true)
             .create_new(true)
-            .open(&tar_path)?;
-        lzma_rs::xz_decompress(&mut xz, &mut tar)
-            .map_err(|e| anyhow::anyhow!("The downloaded archive is damaged: {e}"))?;
+            .open(&tar_path)
+            .with_context(|| format!("Cannot write {}", tar_path.display()))?;
+        let mut limited = Limited {
+            inner: &mut tar,
+            left: MAX_TAR_BYTES,
+        };
+        lzma_rs::xz_decompress(&mut xz, &mut limited)
+            .map_err(|e| anyhow::anyhow!("The downloaded archive is damaged or too large: {e}"))?;
         tar.seek(SeekFrom::Start(0))?;
         unpack_tar(BufReader::new(tar), prefix, dest)
     })();
+    // Not there when it could not be created
     let _ = fs::remove_file(&tar_path);
     result
+}
+
+/// A writer that fails past `left` bytes: bounds what a hostile archive
+/// may decompress to
+struct Limited<W> {
+    inner: W,
+    left: u64,
+}
+
+impl<W: Write> Write for Limited<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if buf.len() as u64 > self.left {
+            return Err(std::io::Error::other("archive too large"));
+        }
+        let n = self.inner.write(buf)?;
+        self.left -= n as u64;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 /// The data.tar.* member of a Debian package (an `ar` archive): its name
@@ -265,23 +321,27 @@ fn unpack_tar(reader: impl Read, prefix: &str, dest: &Path) -> Result<usize> {
         }
         let out = dest.join(rest);
         match entry.header().entry_type() {
-            tar::EntryType::Directory => fs::create_dir_all(&out)?,
+            tar::EntryType::Directory => fs::create_dir_all(&out)
+                .with_context(|| format!("Cannot create {}", out.display()))?,
             tar::EntryType::Regular | tar::EntryType::Continuous => {
-                total += entry.header().size()?;
+                total = total.saturating_add(entry.header().size()?);
                 if total > MAX_BUNDLE_BYTES {
                     bail!("The bundle is too large");
                 }
                 if let Some(parent) = out.parent() {
-                    fs::create_dir_all(parent)?;
+                    fs::create_dir_all(parent)
+                        .with_context(|| format!("Cannot create {}", parent.display()))?;
                 }
-                let mut file = File::create(&out)?;
-                std::io::copy(&mut entry, &mut file)?;
-                file.sync_all()?;
+                let mut file = File::create(&out)
+                    .with_context(|| format!("Cannot write {}", out.display()))?;
+                std::io::copy(&mut entry, &mut file)
+                    .and_then(|_| file.sync_all())
+                    .with_context(|| format!("Cannot write {}", out.display()))?;
                 set_mode(&out, rest.ends_with(".so"));
                 files += 1;
             }
             // Links and special files are not taken
-            kind => tracing::warn!("Skipping {path} in the archive ({kind:?})"),
+            kind => warn!(path = %path, kind = ?kind, "Archive entry skipped"),
         }
     }
     Ok(files)
@@ -291,7 +351,9 @@ fn unpack_tar(reader: impl Read, prefix: &str, dest: &Path) -> Result<usize> {
 fn set_mode(path: &Path, executable: bool) {
     use std::os::unix::fs::PermissionsExt;
     let mode = if executable { 0o755 } else { 0o644 };
-    let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode));
+    if let Err(e) = fs::set_permissions(path, fs::Permissions::from_mode(mode)) {
+        warn!(path = %path.display(), error = %e, "File mode not set");
+    }
 }
 
 #[cfg(not(unix))]

@@ -57,7 +57,7 @@ impl Controls {
         let values = app
             .get_selected_parameters()
             .iter()
-            .map(|p| (p.index as usize, p.value))
+            .filter_map(|p| Some((usize::try_from(p.index).ok()?, p.value)))
             .collect();
         Some(Self {
             uri,
@@ -102,7 +102,12 @@ impl Controls {
         let Some((row, port)) = symbol.and_then(|s| self.ports.get(s)) else {
             return;
         };
-        let value = value.clamp(port.min.min(port.max), port.max.max(port.min));
+        let (low, high) = (port.min.min(port.max), port.max.max(port.min));
+        // A range from the plugin's metadata: clamp panics on NaN bounds
+        if low.is_nan() || high.is_nan() {
+            return;
+        }
+        let value = value.clamp(low, high);
         app.invoke_set_parameter(app.get_selected_instance_id(), *row as i32, value);
     }
 }

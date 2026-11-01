@@ -89,7 +89,9 @@ impl Tuner {
             output.fill(0.0);
         } else {
             // Pass through
-            output.copy_from_slice(input);
+            for (out, sample) in output.iter_mut().zip(input) {
+                *out = *sample;
+            }
         }
 
         result
@@ -172,7 +174,11 @@ impl Tuner {
 
         let rate = self.sample_rate / DECIMATION as f32;
         let min_period = ((rate / MAX_FREQ) as usize).max(2);
-        let max_period = self.correlation.len() - 2;
+        let max_period = self.correlation.len().saturating_sub(2);
+        // Too few samples for its range of periods (a very low sample rate)
+        if min_period > max_period || x.len() <= max_period + 1 {
+            return None;
+        }
         // Every period is compared over the same number of samples
         let n = x.len() - max_period - 1;
         let head: f32 = x[..n].iter().map(|&v| v * v).sum();
@@ -227,13 +233,13 @@ impl Tuner {
 
         // Round to nearest semitone
         let nearest_note = midi_note.round();
-        let note_index = (nearest_note as i32) % 12;
-        let octave = (nearest_note as i32) / 12 - 1;
+        let note_index = (nearest_note as i32).rem_euclid(12);
+        let octave = (nearest_note as i32).div_euclid(12) - 1;
 
         // Calculate cents offset (-50 to +50)
         let cents = (midi_note - nearest_note) * 100.0;
 
-        let note_name = NOTE_NAMES[note_index as usize];
+        let note_name = NOTE_NAMES.get(note_index as usize).copied().unwrap_or("A");
 
         (note_name, octave, cents)
     }

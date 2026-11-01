@@ -1,3 +1,4 @@
+use crate::sync::{MutexExt, RwLockExt};
 use anyhow::Result;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
@@ -49,7 +50,7 @@ impl Catalogue {
             };
             let plugins = discovery::scan(&world);
             if !plugins.is_empty() {
-                info!("LV2 host ready with {} plugins", plugins.len());
+                info!(plugins = plugins.len(), "LV2 host ready");
                 return Self {
                     scanner: PluginScanner::from_plugins(
                         plugins.into_iter().chain(super::scanner::builtin_plugins()),
@@ -57,13 +58,13 @@ impl Catalogue {
                     world: Some(world),
                 };
             }
-            warn!("No usable LV2 plugin found (check LV2_PATH); using demo plugins");
+            warn!("No usable LV2 plugin found (check LV2_PATH), using demo plugins");
         }
 
         #[cfg(not(feature = "lv2"))]
         {
             let _ = path;
-            warn!("Built without the `lv2` feature; using demo plugins");
+            warn!("Built without the `lv2` feature, using demo plugins");
         }
 
         Self::demo()
@@ -118,14 +119,14 @@ impl Lv2Host {
         info!("Rescanning LV2 plugins");
         let fresh = Arc::new(Catalogue::scan(self.path.as_deref()));
         let count = fresh.plugins().len();
-        let old = std::mem::replace(&mut *self.current.write().unwrap(), fresh);
-        self.retired.lock().unwrap().push(old);
+        let old = std::mem::replace(&mut *self.current.write_locked(), fresh);
+        self.retired.locked().push(old);
         count
     }
 
     /// The plugins of the latest scan
     pub fn scanner(&self) -> Arc<Catalogue> {
-        self.current.read().unwrap().clone()
+        self.current.read_locked().clone()
     }
 
     /// True when only demo plugins are available
@@ -194,12 +195,6 @@ impl Lv2Host {
 
         let _ = sample_rate;
         Err(anyhow::anyhow!("No LV2 world to instantiate {}", uri))
-    }
-}
-
-impl Default for Lv2Host {
-    fn default() -> Self {
-        Self::new().expect("Failed to initialize LV2 host")
     }
 }
 
@@ -431,7 +426,7 @@ mod discovery {
         'plugins: for plugin in world.plugins().iter() {
             let plugin_uri = plugin.uri().as_uri().unwrap_or_default().to_string();
             if !plugin.verify() {
-                debug!("Skipping invalid plugin {}", plugin_uri);
+                debug!(uri = %plugin_uri, "Invalid plugin skipped");
                 continue;
             }
 
@@ -440,8 +435,9 @@ mod discovery {
                 if !SUPPORTED_FEATURES.contains(&feature) {
                     // Not debug: someone who copied the plugin wants to know
                     warn!(
-                        "Skipping {}: needs unsupported feature {}",
-                        plugin_uri, feature
+                        uri = %plugin_uri,
+                        feature,
+                        "Plugin skipped, it needs an unsupported feature"
                     );
                     continue 'plugins;
                 }
@@ -477,23 +473,27 @@ mod discovery {
                 } else if port.has_property(&optional) {
                     continue;
                 } else {
-                    debug!("Skipping {}: unknown port type", plugin_uri);
+                    debug!(uri = %plugin_uri, "Plugin skipped, it has a port of unknown type");
                     continue 'plugins;
                 };
 
+                // Plugin data: NaN, infinite or reversed ranges are made sane
                 let range = port.range();
-                let min = range.minimum.as_ref().and_then(number).unwrap_or(0.0);
-                let max = range.maximum.as_ref().and_then(number).unwrap_or(1.0);
-                let default = range
-                    .default
-                    .as_ref()
-                    .and_then(number)
-                    .unwrap_or(min)
-                    .clamp(min.min(max), max.max(min));
+                let finite =
+                    |n: &Option<Node>| n.as_ref().and_then(number).filter(|v| v.is_finite());
+                let (a, b) = (
+                    finite(&range.minimum).unwrap_or(0.0),
+                    finite(&range.maximum).unwrap_or(1.0),
+                );
+                let (min, max) = (a.min(b), a.max(b));
+                let default = finite(&range.default).unwrap_or(min).min(max).max(min);
                 let scale_points = port
                     .scale_points()
                     .iter()
-                    .filter_map(|sp| Some((sp.label().as_str()?.to_string(), number(&sp.value())?)))
+                    .filter_map(|sp| {
+                        let value = number(&sp.value()).filter(|v| v.is_finite())?;
+                        Some((sp.label().as_str()?.to_string(), value))
+                    })
                     .collect();
 
                 let unit_name = port.get(&unit).and_then(|u| unit_symbol(world, &u));
@@ -531,7 +531,7 @@ mod discovery {
             let count = |t: PortType| ports.iter().filter(|p| p.port_type == t).count();
             let (audio_in, audio_out) = (count(PortType::AudioInput), count(PortType::AudioOutput));
             if audio_in == 0 || audio_out == 0 {
-                debug!("Skipping {}: not an audio effect", plugin_uri);
+                debug!(uri = %plugin_uri, "Plugin skipped, not an audio effect");
                 continue;
             }
 

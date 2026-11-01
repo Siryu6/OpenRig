@@ -1,10 +1,11 @@
+use crate::sync::MutexExt;
 use anyhow::{anyhow, Result};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::tempo::TapTempo;
 use crate::audio::{ChainControl, ChainNode, Looper, SplitType, Tuner};
@@ -108,14 +109,17 @@ impl ModelPack {
                 .last()
                 .map_or(0, |((i, a), _)| i + a.len_utf8())
         });
-        // Cut at a word boundary only
-        common = first[..common]
-            .rfind(char::is_whitespace)
-            .map_or(0, |i| i + 1);
+        // Cut at a word boundary only (after the whole space: some take
+        // more than a byte)
+        common = first
+            .get(..common)
+            .and_then(|f| f.char_indices().rev().find(|(_, c)| c.is_whitespace()))
+            .map_or(0, |(i, c)| i + c.len_utf8());
         let trimmed: Vec<String> = names
             .iter()
             .map(|n| {
-                n[common..]
+                n.get(common..)
+                    .unwrap_or(n)
                     .trim_start_matches([' ', '-', '_', ':', '·'])
                     .to_string()
             })
@@ -377,7 +381,7 @@ impl EffectChainState {
 
     fn new_id(&mut self) -> usize {
         let id = self.next_instance_id;
-        self.next_instance_id += 1;
+        self.next_instance_id = self.next_instance_id.saturating_add(1);
         id
     }
 
@@ -492,10 +496,9 @@ impl EffectChainState {
             .ok_or_else(|| anyhow!("Node {} not found", instance_id))?;
         if let Some((split_id, _)) = place.parent {
             let mut inside = Vec::new();
-            collect_ids(
-                std::slice::from_ref(self.find(instance_id).unwrap()),
-                &mut inside,
-            );
+            if let Some(node) = self.find(instance_id) {
+                collect_ids(std::slice::from_ref(node), &mut inside);
+            }
             if inside.contains(&split_id) {
                 return Err(anyhow!("Cannot move a split into itself"));
             }
@@ -509,10 +512,13 @@ impl EffectChainState {
         if from.parent == place.parent && from.index < place.index {
             place.index -= 1;
         }
-        let node = remove_in(&mut self.nodes, instance_id).unwrap();
-        container_mut(&mut self.nodes, place.parent)
-            .unwrap()
-            .insert(place.index, node);
+        let node = remove_in(&mut self.nodes, instance_id)
+            .ok_or_else(|| anyhow!("Node {} not found", instance_id))?;
+        match container_mut(&mut self.nodes, place.parent) {
+            Some(nodes) => nodes.insert(place.index.min(nodes.len()), node),
+            // Cannot happen (checked above); never lose the node
+            None => self.nodes.push(node),
+        }
         Ok(())
     }
 
@@ -684,7 +690,7 @@ impl EffectChainState {
         };
         let mut ids = Vec::new();
         collect_ids(&state.nodes, &mut ids);
-        state.next_instance_id = ids.iter().max().map_or(0, |m| m + 1);
+        state.next_instance_id = ids.iter().max().map_or(0, |m| m.saturating_add(1));
 
         let scanner = host.scanner();
         let infos = state.plugin_infos(&scanner);
@@ -778,7 +784,7 @@ impl EffectChainState {
                     .parameters
                     .keys()
                     .max()
-                    .map_or(0, |m| m + 1)
+                    .map_or(0, |m| m.saturating_add(1))
                     .min(MAX_PARAMETERS);
                 values = vec![0.0; count];
             }
@@ -788,6 +794,7 @@ impl EffectChainState {
                 }
             }
             let id = state.add_plugin(&config.uri, values);
+            // Cannot fail: the block was just added
             let _ = state.set_enabled(id, !config.bypassed);
         }
         state
@@ -838,6 +845,8 @@ struct Autosave {
 
 /// Parameters kept for a plugin that is not installed
 const MAX_PARAMETERS: usize = 1024;
+/// Stomp switches a block can be assigned to (bounds an index from the UI)
+const MAX_STOMP_SWITCHES: usize = 64;
 
 fn default_parameters(host: &Lv2Host, uri: &str) -> Vec<f32> {
     host.scanner()
@@ -880,6 +889,8 @@ pub struct AppState {
     /// Parameter order and knob strip of each plugin, as arranged
     param_layouts: Mutex<super::param_layout::Layouts>,
     light_theme: AtomicBool,
+    /// Cores the effect chain runs on (0: as many as useful)
+    dsp_cores: AtomicUsize,
 }
 
 /// What the footswitches do
@@ -960,6 +971,9 @@ struct Session {
     /// Light theme instead of the dark one
     #[serde(default)]
     light_theme: bool,
+    /// Cores for the effect chain, 0 for all
+    #[serde(default)]
+    dsp_cores: usize,
 }
 
 impl AppState {
@@ -969,10 +983,7 @@ impl AppState {
     }
 
     pub fn with_host(lv2_host: Arc<Lv2Host>, data_dir: PathBuf) -> Result<Self> {
-        info!(
-            "Initializing application state (data in {})",
-            data_dir.display()
-        );
+        info!(dir = %data_dir.display(), "Initializing application state");
         let param_layouts = Mutex::new(super::param_layout::Layouts::load(&data_dir));
         Ok(Self {
             lv2_host,
@@ -994,17 +1005,18 @@ impl AppState {
             tap: Mutex::default(),
             param_layouts,
             light_theme: AtomicBool::new(false),
+            dsp_cores: AtomicUsize::new(0),
         })
     }
 
     /// How the editor and the knob strip show the parameters of `uri`
     pub fn param_layout(&self, uri: &str) -> super::param_layout::Layout {
-        self.param_layouts.lock().unwrap().get(uri)
+        self.param_layouts.locked().get(uri)
     }
 
     /// Sets and saves it (every instance of the plugin)
     pub fn set_param_layout(&self, uri: &str, layout: super::param_layout::Layout) -> Result<()> {
-        let mut layouts = self.param_layouts.lock().unwrap();
+        let mut layouts = self.param_layouts.locked();
         layouts.set(uri, layout);
         layouts.save(&self.data_dir)
     }
@@ -1024,14 +1036,25 @@ impl AppState {
     /// Files of the models directory (subdirectories included) that
     /// `accepts` takes, as paths relative to it, sorted
     fn list_files_where(&self, accepts: impl Fn(&Path) -> bool) -> Vec<String> {
-        fn walk(dir: &Path, root: &Path, accepts: &dyn Fn(&Path) -> bool, out: &mut Vec<String>) {
+        /// Deeper folders are left out (a symbolic link to a parent folder
+        /// would otherwise recurse until the stack overflows)
+        const MAX_DEPTH: usize = 16;
+        fn walk(
+            dir: &Path,
+            root: &Path,
+            depth: usize,
+            accepts: &dyn Fn(&Path) -> bool,
+            out: &mut Vec<String>,
+        ) {
             let Ok(entries) = std::fs::read_dir(dir) else {
                 return;
             };
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() {
-                    walk(&path, root, accepts, out);
+                    if depth < MAX_DEPTH {
+                        walk(&path, root, depth + 1, accepts, out);
+                    }
                 } else if accepts(&path) {
                     if let Ok(relative) = path.strip_prefix(root) {
                         out.push(portable(relative));
@@ -1041,7 +1064,7 @@ impl AppState {
         }
         let root = self.models_dir();
         let mut models = Vec::new();
-        walk(&root, &root, &accepts, &mut models);
+        walk(&root, &root, 0, &accepts, &mut models);
         models.sort_by_key(|m| m.to_lowercase());
         models
     }
@@ -1099,7 +1122,7 @@ impl AppState {
             let changed =
                 modified(&root.join(&dir)).max(modified(&root.join(&dir).join("tone.json")));
             let key = (uri.to_string(), dir.clone());
-            if let Some((time, pack)) = self.packs.lock().unwrap().get(&key) {
+            if let Some((time, pack)) = self.packs.locked().get(&key) {
                 if changed.is_some() && *time == changed {
                     return Some(pack.clone());
                 }
@@ -1113,10 +1136,7 @@ impl AppState {
                 .collect();
             files.sort_by_key(|f| f.to_lowercase());
             let pack = ModelPack::new(&root, &dir, files);
-            self.packs
-                .lock()
-                .unwrap()
-                .insert(key, (changed, pack.clone()));
+            self.packs.locked().insert(key, (changed, pack.clone()));
             return Some(pack);
         };
         Some(ModelPack::new(&self.models_dir(), &dir, files))
@@ -1132,7 +1152,7 @@ impl AppState {
         let changes = self.changes.load(Ordering::Relaxed);
         self.session_file.queue(self.session_json()?);
         self.session_file.flush()?;
-        self.autosave.lock().unwrap().saved = changes;
+        self.autosave.locked().saved = changes;
         Ok(())
     }
 
@@ -1143,14 +1163,14 @@ impl AppState {
             stereo_mode: chain.stereo_mode,
             preset_id: self
                 .preset_manager
-                .lock()
-                .unwrap()
+                .locked()
                 .current_preset()
                 .map(|p| p.id.clone()),
             scene_id: self.current_scene_id(),
             live: self.live_settings(),
             midi: self.midi_settings(),
             light_theme: self.light_theme(),
+            dsp_cores: self.dsp_cores(),
         };
         std::fs::create_dir_all(&self.data_dir)?;
         Ok(serde_json::to_vec_pretty(&session)?)
@@ -1163,7 +1183,7 @@ impl AppState {
     pub fn autosave(&self) -> Result<()> {
         let changes = self.changes.load(Ordering::Relaxed);
         let now = std::time::Instant::now();
-        let mut autosave = self.autosave.lock().unwrap();
+        let mut autosave = self.autosave.locked();
         if changes == autosave.saved {
             autosave.waiting_since = None;
             return Ok(());
@@ -1172,7 +1192,9 @@ impl AppState {
             autosave.seen = changes;
             autosave.last_change = Some(now);
         }
-        let since = |t: Option<std::time::Instant>| t.map_or(Duration::ZERO, |t| now - t);
+        let since = |t: Option<std::time::Instant>| {
+            t.map_or(Duration::ZERO, |t| now.saturating_duration_since(t))
+        };
         let waiting = since(Some(*autosave.waiting_since.get_or_insert(now)));
         if since(autosave.last_change) < AUTOSAVE_QUIET && waiting < AUTOSAVE_MAX_DELAY {
             return Ok(());
@@ -1191,22 +1213,33 @@ impl AppState {
             return Ok(false);
         }
         let session: Session = serde_json::from_str(&std::fs::read_to_string(path)?)?;
-        *self.live.lock().unwrap() = session.live;
+        *self.live.locked() = session.live;
         self.light_theme
             .store(session.light_theme, Ordering::Relaxed);
+        self.dsp_cores.store(session.dsp_cores, Ordering::Relaxed);
         let mut midi = session.midi;
         if midi.channel > 16 {
             midi.channel = crate::midi::OMNI;
         }
-        *self.midi.lock().unwrap() = midi;
+        *self.midi.locked() = midi;
         if let Some(scene_id) = &session.scene_id {
             if let Err(e) = self.load_scene(scene_id) {
-                warn!("Could not restore scene: {}", e);
+                warn!(
+                    id = %scene_id,
+                    error = format_args!("{e:#}"),
+                    "Setlist of the last session not restored"
+                );
             }
         }
         if let Some(preset_id) = &session.preset_id {
             // Only marks it as current; the chain below may contain unsaved edits
-            let _ = self.preset_manager.lock().unwrap().load_preset(preset_id);
+            if let Err(e) = self.preset_manager.locked().load_preset(preset_id) {
+                warn!(
+                    id = %preset_id,
+                    error = format_args!("{e:#}"),
+                    "Preset of the last session not found"
+                );
+            }
         }
         let state = EffectChainState::from_preset_chain(
             &session.chain,
@@ -1217,27 +1250,27 @@ impl AppState {
             *c = state;
             Ok(())
         })?;
-        self.autosave.lock().unwrap().saved = self.changes.load(Ordering::Relaxed);
+        self.autosave.locked().saved = self.changes.load(Ordering::Relaxed);
         Ok(true)
     }
 
     /// Connect to the audio engine and send it the current chain
     pub fn set_audio_control(&self, control: ChainControl) {
-        self.audio.lock().unwrap().control = Some(control);
-        let chain = self.effect_chain.lock().unwrap();
+        self.audio.locked().control = Some(control);
+        let chain = self.effect_chain.locked();
         self.send_spec(&chain);
     }
 
     /// Next error reported by the audio side (plugin failing to load...)
     pub fn poll_audio_error(&self) -> Option<String> {
-        let audio = self.audio.lock().unwrap();
+        let audio = self.audio.locked();
         audio.control.as_ref()?.error_rx.try_recv().ok()
     }
 
     /// Send the whole chain to be rebuilt. Called with the chain locked so
     /// that specs and commands are sent in the order they were made.
     fn send_spec(&self, chain: &EffectChainState) {
-        let mut audio = self.audio.lock().unwrap();
+        let mut audio = self.audio.locked();
         audio.generation += 1;
         let spec = self.spec(chain, audio.generation);
         if let Some(control) = &audio.control {
@@ -1282,17 +1315,18 @@ impl AppState {
     /// Hand a MIDI message to the plugins that take MIDI, if it is for them
     /// (MIDI threads; never blocks)
     pub fn forward_midi(&self, bytes: &[u8]) {
-        let settings = *self.midi.lock().unwrap();
+        let settings = *self.midi.locked();
         let Some(message) = crate::midi::for_plugins(bytes, &settings) else {
             return;
         };
-        if let Some(control) = &self.audio.lock().unwrap().control {
+        if let Some(control) = &self.audio.locked().control {
+            // Dropped if the queue is full: the audio callback has stopped
             let _ = control.midi_tx.try_send(message);
         }
     }
 
     fn send_command(&self, command: ChainCommand) {
-        let audio = self.audio.lock().unwrap();
+        let audio = self.audio.locked();
         if let Some(control) = &audio.control {
             // Never block the UI: the queue only fills up if the audio
             // callback has stopped
@@ -1302,7 +1336,7 @@ impl AppState {
 
     /// Apply a structural edit and rebuild the audio chain
     fn edit<T>(&self, f: impl FnOnce(&mut EffectChainState) -> Result<T>) -> Result<T> {
-        let mut chain = self.effect_chain.lock().unwrap();
+        let mut chain = self.effect_chain.locked();
         let result = f(&mut chain)?;
         self.send_spec(&chain);
         self.mark_dirty();
@@ -1314,7 +1348,7 @@ impl AppState {
         &self,
         f: impl FnOnce(&mut EffectChainState) -> Result<(T, ChainCommand)>,
     ) -> Result<T> {
-        let mut chain = self.effect_chain.lock().unwrap();
+        let mut chain = self.effect_chain.locked();
         let (result, command) = f(&mut chain)?;
         self.send_command(command);
         self.mark_dirty();
@@ -1333,7 +1367,7 @@ impl AppState {
             .find_by_uri(uri)
             .ok_or_else(|| anyhow!("Plugin not found: {}", uri))?;
         let mut values = info.default_parameters();
-        let bpm = self.effect_chain.lock().unwrap().bpm;
+        let bpm = self.effect_chain.locked().bpm;
         for index in info.tempo_parameters() {
             if let Some(value) = values.get_mut(index) {
                 *value = bpm;
@@ -1353,7 +1387,7 @@ impl AppState {
 
     /// Snapshot of the chain for display
     pub fn chain(&self) -> EffectChainState {
-        self.effect_chain.lock().unwrap().clone()
+        self.effect_chain.locked().clone()
     }
 
     pub fn plugin_name(&self, uri: &str) -> String {
@@ -1372,7 +1406,7 @@ impl AppState {
     pub fn add_plugin(&self, uri: &str) -> Result<usize> {
         let defaults = self.defaults_for(uri)?;
         let id = self.edit(|c| Ok(c.add_plugin(uri, defaults)))?;
-        info!("Added {} (#{})", self.plugin_name(uri), id);
+        info!(name = %self.plugin_name(uri), id, "Block added");
         Ok(id)
     }
 
@@ -1386,16 +1420,16 @@ impl AppState {
     }
 
     pub fn remove_node(&self, instance_id: usize) -> Result<()> {
-        let before = self.effect_chain.lock().unwrap().clone();
+        let before = self.effect_chain.locked().clone();
         self.edit(|c| c.remove(instance_id))?;
-        *self.removed.lock().unwrap() = Some((before, self.changes.load(Ordering::Relaxed)));
+        *self.removed.locked() = Some((before, self.changes.load(Ordering::Relaxed)));
         Ok(())
     }
 
     /// Put back the block removed last, with its settings, if nothing else
     /// changed since. False when there is nothing to undo.
     pub fn undo_remove(&self) -> Result<bool> {
-        let Some((before, changes)) = self.removed.lock().unwrap().take() else {
+        let Some((before, changes)) = self.removed.locked().take() else {
             return Ok(false);
         };
         if self.changes.load(Ordering::Relaxed) != changes {
@@ -1416,7 +1450,7 @@ impl AppState {
     /// Colour of a block in the rack; None for the default look. Does not
     /// touch the audio chain.
     pub fn set_color(&self, instance_id: usize, color: Option<String>) {
-        let mut chain = self.effect_chain.lock().unwrap();
+        let mut chain = self.effect_chain.locked();
         if chain.find(instance_id).is_none() {
             return;
         }
@@ -1491,7 +1525,7 @@ impl AppState {
     /// it on or off rebuilds the chain (returns true); moving it is a live
     /// command.
     pub fn set_split_pan(&self, split_id: usize, pan: [f32; 2]) -> Result<([f32; 2], bool)> {
-        let mut chain = self.effect_chain.lock().unwrap();
+        let mut chain = self.effect_chain.locked();
         let (pan, was) = chain.set_split_pan(split_id, pan)?;
         let now = matches!(
             chain.find(split_id),
@@ -1513,12 +1547,7 @@ impl AppState {
 
     /// Model file of a block (relative to the models directory)
     pub fn plugin_file(&self, instance_id: usize) -> Option<String> {
-        self.effect_chain
-            .lock()
-            .unwrap()
-            .files
-            .get(&instance_id)
-            .cloned()
+        self.effect_chain.locked().files.get(&instance_id).cloned()
     }
 
     /// Choose the model of a block (None to unload it); rebuilds the chain
@@ -1540,8 +1569,7 @@ impl AppState {
     /// Files chosen for the LV2 file parameters of a block, by parameter URI
     pub fn param_files(&self, instance_id: usize) -> BTreeMap<String, String> {
         self.effect_chain
-            .lock()
-            .unwrap()
+            .locked()
             .param_files
             .get(&instance_id)
             .cloned()
@@ -1677,7 +1705,7 @@ impl AppState {
 
     /// Recall scene `slot` of the preset, live (see `state::scenes`)
     pub fn select_scene(&self, slot: usize) -> Result<()> {
-        let mut chain = self.effect_chain.lock().unwrap();
+        let mut chain = self.effect_chain.locked();
         let switch = chain.select_scene(slot)?;
         if switch.rebuild {
             self.send_spec(&chain);
@@ -1691,7 +1719,7 @@ impl AppState {
     }
 
     pub fn rename_scene(&self, slot: usize, name: &str) -> Result<()> {
-        self.effect_chain.lock().unwrap().rename_scene(slot, name)?;
+        self.effect_chain.locked().rename_scene(slot, name)?;
         self.mark_dirty();
         Ok(())
     }
@@ -1699,13 +1727,13 @@ impl AppState {
     // === Tempo ===
 
     pub fn tempo(&self) -> f32 {
-        self.effect_chain.lock().unwrap().bpm
+        self.effect_chain.locked().bpm
     }
 
     /// Set the tempo of the preset; returns it clamped
     pub fn set_tempo(&self, bpm: f32) -> f32 {
         let bpm = super::tempo::clamp_bpm(bpm);
-        let mut chain = self.effect_chain.lock().unwrap();
+        let mut chain = self.effect_chain.locked();
         if chain.bpm != bpm {
             self.send_command(ChainCommand::SetTempo { bpm });
             for command in chain.apply_tempo(bpm, |uri| self.tempo_parameters(uri)) {
@@ -1719,18 +1747,18 @@ impl AppState {
     /// A tap of the tap tempo key or switch: the new tempo, once two taps
     /// are in
     pub fn tap_tempo(&self) -> Option<f32> {
-        let bpm = self.tap.lock().unwrap().tap(std::time::Instant::now())?;
+        let bpm = self.tap.locked().tap(std::time::Instant::now())?;
         Some(self.set_tempo(bpm.round()))
     }
 
     // === Footswitches ===
 
     pub fn live_settings(&self) -> LiveSettings {
-        *self.live.lock().unwrap()
+        *self.live.locked()
     }
 
     pub fn set_footswitch_mode(&self, mode: FootswitchMode) {
-        self.live.lock().unwrap().mode = mode;
+        self.live.locked().mode = mode;
         self.mark_dirty();
     }
 
@@ -1743,24 +1771,48 @@ impl AppState {
         self.mark_dirty();
     }
 
+    /// Cores the effect chain may use, 0 for all of them
+    pub fn dsp_cores(&self) -> usize {
+        self.dsp_cores.load(Ordering::Relaxed)
+    }
+
+    /// Use `cores` for the effect chain (0: all of them, up to the pool size)
+    pub fn set_dsp_cores(&self, cores: usize) {
+        self.dsp_cores.store(cores, Ordering::Relaxed);
+        self.apply_dsp_cores();
+        self.mark_dirty();
+    }
+
+    /// Start or resize the DSP workers to the saved core count
+    pub fn apply_dsp_cores(&self) {
+        let workers = match self.dsp_cores() {
+            0 => crate::audio::dsp_pool::default_workers(),
+            cores => cores - 1,
+        };
+        crate::audio::dsp_pool::start(workers);
+    }
+
     pub fn set_tap_switch(&self, on: bool) {
-        self.live.lock().unwrap().tap_switch = on;
+        self.live.locked().tap_switch = on;
         self.mark_dirty();
     }
 
     /// Block toggled by stomp switch `slot`: the one assigned to it, else
     /// the n-th block not assigned to another switch
     pub fn stomp_target(&self, slot: usize) -> Option<usize> {
-        self.effect_chain.lock().unwrap().stomp_target(slot)
+        self.effect_chain.locked().stomp_target(slot)
     }
 
     /// Assign a block to stomp switch `slot` (None: back to automatic)
     pub fn assign_stomp(&self, slot: usize, instance_id: Option<usize>) -> Result<()> {
-        let mut chain = self.effect_chain.lock().unwrap();
+        let mut chain = self.effect_chain.locked();
         if let Some(id) = instance_id {
             if chain.find(id).is_none() {
                 return Err(anyhow!("Node {} not found", id));
             }
+        }
+        if slot >= MAX_STOMP_SWITCHES {
+            return Err(anyhow!("No stomp switch {}", slot.saturating_add(1)));
         }
         if chain.stomps.len() <= slot {
             chain.stomps.resize(slot + 1, None);
@@ -1778,32 +1830,31 @@ impl AppState {
     pub fn toggle_stomp(&self, slot: usize) -> Result<(usize, bool)> {
         let id = self
             .stomp_target(slot)
-            .ok_or_else(|| anyhow!("No block on switch {}", slot + 1))?;
+            .ok_or_else(|| anyhow!("No block on switch {}", slot.saturating_add(1)))?;
         Ok((id, self.toggle_bypass(id)?))
     }
 
     // === MIDI ===
 
     pub fn midi_settings(&self) -> MidiSettings {
-        *self.midi.lock().unwrap()
+        *self.midi.locked()
     }
 
     /// Channel listened to: 1–16, or `midi::OMNI`
     pub fn set_midi_channel(&self, channel: u8) {
-        self.midi.lock().unwrap().channel = channel.min(16);
+        self.midi.locked().channel = channel.min(16);
         self.mark_dirty();
     }
 
     pub fn set_midi_clock(&self, on: bool) {
-        self.midi.lock().unwrap().clock = on;
+        self.midi.locked().clock = on;
         self.mark_dirty();
     }
 
     /// Make a block target follow `controller`
     pub fn learn_midi(&self, controller: u8, instance_id: usize, target: MidiTarget) -> Result<()> {
         self.effect_chain
-            .lock()
-            .unwrap()
+            .locked()
             .learn_midi(controller, instance_id, target)?;
         self.mark_dirty();
         Ok(())
@@ -1811,18 +1862,14 @@ impl AppState {
 
     /// Assignment of a target of a block, if any
     pub fn midi_assign(&self, instance_id: usize, target: MidiTarget) -> Option<MidiAssign> {
-        self.effect_chain
-            .lock()
-            .unwrap()
-            .midi_assign(instance_id, target)
+        self.effect_chain.locked().midi_assign(instance_id, target)
     }
 
     /// Heel and toe (percent of the range) of a learned target
     pub fn set_midi_range(&self, instance_id: usize, target: MidiTarget, heel: u8, toe: u8) {
         if self
             .effect_chain
-            .lock()
-            .unwrap()
+            .locked()
             .set_midi_range(instance_id, target, heel, toe)
         {
             self.mark_dirty();
@@ -1830,12 +1877,7 @@ impl AppState {
     }
 
     pub fn clear_midi(&self, instance_id: usize, target: MidiTarget) {
-        if self
-            .effect_chain
-            .lock()
-            .unwrap()
-            .clear_midi(instance_id, target)
-        {
+        if self.effect_chain.locked().clear_midi(instance_id, target) {
             self.mark_dirty();
         }
     }
@@ -1843,7 +1885,7 @@ impl AppState {
     /// Apply a learned CC to the targets following it; returns the targets
     /// that changed
     pub fn midi_controller(&self, controller: u8, value: u8) -> Vec<(usize, MidiTarget)> {
-        let targets = self.effect_chain.lock().unwrap().midi_targets(controller);
+        let targets = self.effect_chain.locked().midi_targets(controller);
         let mut changed = Vec::new();
         for assign in targets {
             let (instance_id, target) = (assign.instance_id, assign.target);
@@ -1855,7 +1897,11 @@ impl AppState {
             match done {
                 Ok(true) => changed.push((instance_id, target)),
                 Ok(false) => {}
-                Err(e) => warn!("MIDI CC {}: {}", controller, e),
+                Err(e) => warn!(
+                    controller,
+                    error = format_args!("{e:#}"),
+                    "MIDI CC not applied"
+                ),
             }
         }
         changed
@@ -1865,8 +1911,7 @@ impl AppState {
     fn set_block_enabled(&self, instance_id: usize, enabled: bool) -> Result<bool> {
         let current = self
             .effect_chain
-            .lock()
-            .unwrap()
+            .locked()
             .is_enabled(instance_id)
             .ok_or_else(|| anyhow!("Node {} not found", instance_id))?;
         if current == enabled {
@@ -1882,7 +1927,7 @@ impl AppState {
     /// changed
     fn midi_parameter(&self, instance_id: usize, index: usize, position: f32) -> Result<bool> {
         let (uri, current) = {
-            let chain = self.effect_chain.lock().unwrap();
+            let chain = self.effect_chain.locked();
             let uri = match chain.find(instance_id) {
                 Some(ChainNode::Plugin { uri, .. }) => uri.clone(),
                 _ => return Err(anyhow!("Plugin {} not found", instance_id)),
@@ -1929,7 +1974,7 @@ impl AppState {
     /// Leave the current setlist (Program Change then addresses the preset
     /// list)
     pub fn close_setlist(&self) {
-        self.scene_manager.lock().unwrap().close_scene();
+        self.scene_manager.locked().close_scene();
         self.mark_dirty();
     }
 
@@ -1948,7 +1993,7 @@ impl AppState {
             })
         };
         {
-            let scenes = self.scene_manager.lock().unwrap();
+            let scenes = self.scene_manager.locked();
             if scenes.current_scene().is_some() {
                 let filled = scenes.playable_slots();
                 let at = scenes
@@ -1969,8 +2014,8 @@ impl AppState {
     pub fn save_preset(&self, name: String) -> Result<String> {
         let mut preset = Preset::new(name);
         self.store_chain(&mut preset);
-        let id = self.preset_manager.lock().unwrap().add_preset(preset)?;
-        info!("Saved preset {}", id);
+        let id = self.preset_manager.locked().add_preset(preset)?;
+        debug!(id = %id, "Chain saved as a new preset");
         self.mark_dirty();
         Ok(id)
     }
@@ -1979,22 +2024,18 @@ impl AppState {
     /// its setlist slots and Program Change number); a new preset when
     /// none is current
     pub fn update_preset(&self) -> Result<String> {
-        let Some(mut preset) = self
-            .preset_manager
-            .lock()
-            .unwrap()
-            .current_preset()
-            .cloned()
-        else {
+        // Unlocked before `else`: saving a new preset locks the presets again
+        let current = self.preset_manager.locked().current_preset().cloned();
+        let Some(mut preset) = current else {
             return self.save_preset("Untitled".into());
         };
         self.store_chain(&mut preset);
         preset.touch();
         // Lock order: presets, then scenes
-        let mut presets = self.preset_manager.lock().unwrap();
+        let mut presets = self.preset_manager.locked();
         presets.save_preset(&preset)?;
-        self.scene_manager.lock().unwrap().refresh_preset(&preset);
-        info!("Updated preset {}", preset.id);
+        self.scene_manager.locked().refresh_preset(&preset);
+        debug!(id = %preset.id, "Chain saved over the current preset");
         self.mark_dirty();
         Ok(preset.id)
     }
@@ -2022,24 +2063,24 @@ impl AppState {
             *c = state;
             Ok(())
         });
-        info!("Applied preset '{}'", preset.name);
+        info!(name = %preset.name, "Preset applied");
     }
 
     pub fn load_preset(&self, id: &str) -> Result<()> {
-        let preset = self.preset_manager.lock().unwrap().load_preset(id)?;
+        let preset = self.preset_manager.locked().load_preset(id)?;
         self.apply_preset(&preset);
         Ok(())
     }
 
     pub fn delete_preset(&self, id: &str) -> Result<()> {
-        self.preset_manager.lock().unwrap().delete_preset(id)?;
-        self.scene_manager.lock().unwrap().forget_preset(id)?;
+        self.preset_manager.locked().delete_preset(id)?;
+        self.scene_manager.locked().forget_preset(id)?;
         self.mark_dirty();
         Ok(())
     }
 
     pub fn list_presets(&self) -> Vec<Preset> {
-        let manager = self.preset_manager.lock().unwrap();
+        let manager = self.preset_manager.locked();
         let mut presets: Vec<Preset> = manager.list_presets().into_iter().cloned().collect();
         presets.sort_by_key(|p| p.name.to_lowercase());
         presets
@@ -2047,21 +2088,19 @@ impl AppState {
 
     pub fn current_preset_id(&self) -> Option<String> {
         self.preset_manager
-            .lock()
-            .unwrap()
+            .locked()
             .current_preset()
             .map(|p| p.id.clone())
     }
 
     /// Slot of the current setlist last switched to
     pub fn active_setlist_slot(&self) -> Option<usize> {
-        self.scene_manager.lock().unwrap().active_slot()
+        self.scene_manager.locked().active_slot()
     }
 
     pub fn current_preset_name(&self) -> String {
         self.preset_manager
-            .lock()
-            .unwrap()
+            .locked()
             .current_preset()
             .map(|p| p.name.clone())
             .unwrap_or_else(|| "Unsaved".to_string())
@@ -2070,22 +2109,19 @@ impl AppState {
     // === Scenes ===
 
     pub fn create_scene(&self, name: String) -> Result<String> {
-        self.scene_manager.lock().unwrap().create_scene(name)
+        self.scene_manager.locked().create_scene(name)
     }
 
     /// Make a scene current and preload all its presets in memory
     pub fn load_scene(&self, scene_id: &str) -> Result<()> {
         // Lock order: presets, then scenes
-        let presets = self.preset_manager.lock().unwrap();
-        self.scene_manager
-            .lock()
-            .unwrap()
-            .load_scene(scene_id, |id| {
-                presets
-                    .get(id)
-                    .cloned()
-                    .ok_or_else(|| anyhow!("Preset not found: {}", id))
-            })?;
+        let presets = self.preset_manager.locked();
+        self.scene_manager.locked().load_scene(scene_id, |id| {
+            presets
+                .get(id)
+                .cloned()
+                .ok_or_else(|| anyhow!("Preset not found: {}", id))
+        })?;
         self.mark_dirty();
         Ok(())
     }
@@ -2093,11 +2129,17 @@ impl AppState {
     /// Switch to a slot of the current scene (presets are preloaded).
     /// Returns false when the slot is empty.
     pub fn switch_to_scene_slot(&self, slot: usize) -> Result<bool> {
-        let preset = self.scene_manager.lock().unwrap().switch_to_slot(slot)?;
+        let preset = self.scene_manager.locked().switch_to_slot(slot)?;
         match preset {
             Some(preset) => {
                 // The preset becomes the current one, as when loaded by hand
-                let _ = self.preset_manager.lock().unwrap().load_preset(&preset.id);
+                if let Err(e) = self.preset_manager.locked().load_preset(&preset.id) {
+                    warn!(
+                        id = %preset.id,
+                        error = format_args!("{e:#}"),
+                        "Setlist preset played but not made current"
+                    );
+                }
                 self.apply_preset(&preset);
                 Ok(true)
             }
@@ -2107,8 +2149,7 @@ impl AppState {
 
     pub fn current_scene_id(&self) -> Option<String> {
         self.scene_manager
-            .lock()
-            .unwrap()
+            .locked()
             .current_scene()
             .map(|s| s.id.clone())
     }
@@ -2130,20 +2171,19 @@ impl AppState {
         preset_id: Option<String>,
     ) -> Result<()> {
         self.scene_manager
-            .lock()
-            .unwrap()
+            .locked()
             .update_scene_slot(scene_id, slot, preset_id)
     }
 
     pub fn list_scenes(&self) -> Vec<crate::presets::Scene> {
-        let manager = self.scene_manager.lock().unwrap();
+        let manager = self.scene_manager.locked();
         let mut scenes: Vec<_> = manager.list_scenes().into_iter().cloned().collect();
         scenes.sort_by_key(|s| s.name.to_lowercase());
         scenes
     }
 
     pub fn delete_scene(&self, scene_id: &str) -> Result<()> {
-        self.scene_manager.lock().unwrap().delete_scene(scene_id)?;
+        self.scene_manager.locked().delete_scene(scene_id)?;
         self.mark_dirty();
         Ok(())
     }
@@ -2406,6 +2446,11 @@ mod tests {
         assert_eq!(short("Boss SD-1"), "Boss SD-1");
         // Nothing left once trimmed: keep the full names
         assert_eq!(labels(&["a/Red.nam", "a/Red 2.nam"]), ["Red", "Red 2"]);
+        // A space of more than one byte is cut after, not inside
+        assert_eq!(
+            labels(&["a/Amp\u{a0}Clean.nam", "a/Amp\u{a0}Crunch.nam"]),
+            ["Clean", "Crunch"]
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

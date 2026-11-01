@@ -74,6 +74,7 @@ impl AtomUrids {
 }
 
 /// Appends 8-byte aligned atoms to a buffer; drops what does not fit
+/// (callers check `fits` first: past the end, bytes are not written)
 struct Writer<'a> {
     buf: &'a mut [u8],
     at: usize,
@@ -85,19 +86,32 @@ impl Writer<'_> {
     }
 
     fn bytes(&mut self, b: &[u8]) {
-        self.buf[self.at..self.at + b.len()].copy_from_slice(b);
-        self.at += b.len();
+        let end = self.at.saturating_add(b.len());
+        if let Some(dst) = self.buf.get_mut(self.at..end) {
+            dst.copy_from_slice(b);
+        }
+        self.at = end;
     }
 
     fn pad(&mut self) {
         while !self.at.is_multiple_of(8) {
-            self.buf[self.at] = 0;
+            if let Some(byte) = self.buf.get_mut(self.at) {
+                *byte = 0;
+            }
             self.at += 1;
         }
     }
 
     fn fits(&self, size: usize) -> bool {
-        self.at + size <= self.buf.len()
+        self.at.saturating_add(size) <= self.buf.len()
+    }
+
+    /// Write the size of the sequence, now that its events are known
+    fn finish(self) {
+        let size = self.at.saturating_sub(8) as u32;
+        if let Some(header) = self.buf.get_mut(..4) {
+            header.copy_from_slice(&size.to_ne_bytes());
+        }
     }
 
     /// Event header at frame 0, then the atom header of its body
@@ -144,15 +158,15 @@ pub fn write_input(buf: &mut [u8], urids: &AtomUrids, bpm: Option<f32>, midi: &[
         w.property(urids.beats_per_bar, urids.float, &4.0f32.to_ne_bytes());
     }
     for message in midi {
-        if !w.fits(16 + 8) {
+        let bytes = message.as_slice();
+        if !w.fits(16 + bytes.len().next_multiple_of(8)) {
             break;
         }
-        w.event(u32::from(message.len), urids.midi_event);
-        w.bytes(message.as_slice());
+        w.event(bytes.len() as u32, urids.midi_event);
+        w.bytes(bytes);
         w.pad();
     }
-    let size = (w.at - 8) as u32;
-    w.buf[..4].copy_from_slice(&size.to_ne_bytes());
+    w.finish();
 }
 
 /// Size of the body of a `patch:Set` of a path of `len` bytes: object
@@ -189,8 +203,7 @@ pub fn write_patch_sets(buf: &mut [u8], urids: &AtomUrids, sets: &[(u32, &str)])
         w.pad();
         written += 1;
     }
-    let size = (w.at - 8) as u32;
-    w.buf[..4].copy_from_slice(&size.to_ne_bytes());
+    w.finish();
     written
 }
 

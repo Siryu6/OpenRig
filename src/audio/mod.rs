@@ -1,4 +1,5 @@
 pub mod chain_switcher;
+pub mod dsp_pool;
 pub mod engine;
 pub mod jack_client;
 pub mod looper;

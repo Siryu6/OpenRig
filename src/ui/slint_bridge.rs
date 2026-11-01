@@ -1,6 +1,7 @@
 //! Plain view models built from `AppState`, converted to Slint structs by
 //! the binary (the generated Slint types only exist there).
 
+use crate::sync::MutexExt;
 use chrono::{Local, TimeZone};
 
 use crate::audio::ChainNode;
@@ -203,7 +204,7 @@ fn has_quality(path: &std::path::Path) -> bool {
         let Ok(modified) = std::fs::metadata(path).and_then(|m| m.modified()) else {
             return false;
         };
-        let mut known = KNOWN.lock().unwrap();
+        let mut known = KNOWN.locked();
         let known = known.get_or_insert_with(HashMap::new);
         if let Some(&(time, quality)) = known.get(path) {
             if time == modified {
@@ -223,7 +224,7 @@ fn has_quality(path: &std::path::Path) -> bool {
 
 /// Editor content for a node; `None` if it no longer exists
 pub fn selected_node_view(state: &AppState, instance_id: usize) -> Option<SelectedNodeView> {
-    let chain = state.effect_chain.lock().unwrap();
+    let chain = state.effect_chain.locked();
     match chain.find(instance_id)? {
         ChainNode::Plugin { uri, enabled, .. } => {
             let scanner = state.lv2_host.scanner();
@@ -351,7 +352,7 @@ pub fn scene_views(state: &AppState) -> Vec<SceneView> {
 /// Slots of the current scene (empty if no scene is loaded)
 pub fn scene_slot_views(state: &AppState) -> Vec<SceneSlotView> {
     let (slots, active) = {
-        let scenes = state.scene_manager.lock().unwrap();
+        let scenes = state.scene_manager.locked();
         match scenes.current_scene() {
             Some(scene) => (scene.preset_slots.clone(), scenes.active_slot()),
             None => return Vec::new(),

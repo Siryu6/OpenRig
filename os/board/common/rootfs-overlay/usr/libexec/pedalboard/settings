@@ -1,0 +1,135 @@
+#!/bin/sh
+#
+# Changes pedalboard.txt (boot partition) for Settings → Audio & system.
+# Run by init as root; the app runs as the pedalboard user and asks through
+# a FIFO, one line per change:
+#
+#   <id> <key>=<value> [<key>=<value>...]
+#
+# Keys and values are checked as pedalboard.txt is read (see read-config),
+# the file keeps its comments, then what changed is applied: the audio
+# settings restart JACK (and the app with it). The result is in
+# $DIR/status: "<id> done <audio|display|reboot|none>" (what the change
+# needs: done, the app to restart, the system to restart) or
+# "<id> error <message>".
+
+DIR=/run/pedalboard/settings
+FILE=/boot/pedalboard.txt
+
+status() {
+	echo "$*" >"$DIR/status.tmp" && mv -f "$DIR/status.tmp" "$DIR/status"
+}
+
+# A value the key accepts
+valid() {
+	case "$1=$2" in
+	audio_device=auto) ;;
+	audio_device=*)
+		case "$2" in "" | *[!A-Za-z0-9_-]*) return 1 ;; esac
+		[ ${#2} -le 32 ]
+		;;
+	sample_rate=44100 | sample_rate=48000 | sample_rate=88200 | sample_rate=96000) ;;
+	period=16 | period=32 | period=64 | period=128 | period=256 | period=512 | period=1024) ;;
+	periods=2 | periods=3 | periods=4) ;;
+	display_rotation=0 | display_rotation=90 | display_rotation=180 | display_rotation=270) ;;
+	wifi_country=) ;;
+	wifi_country=[A-Z][A-Z]) ;;
+	*) return 1 ;;
+	esac
+}
+
+# pedalboard.txt with the KEY=value pairs of $changes: the line of each key
+# replaced, or added at the end
+rewrite() {
+	tr -d '\r' <"$FILE" 2>/dev/null |
+		awk -v changes="$changes" '
+		BEGIN {
+			n = split(changes, pairs, " ")
+			for (i = 1; i <= n; i++) {
+				eq = index(pairs[i], "=")
+				key = substr(pairs[i], 1, eq - 1)
+				value[key] = substr(pairs[i], eq + 1)
+				order[i] = key
+			}
+		}
+		{
+			line = $0
+			sub(/^[[:space:]]*/, "", line)
+			eq = index(line, "=")
+			key = substr(line, 1, eq - 1)
+			sub(/[[:space:]]*$/, "", key)
+			# The first line of a key takes the value, later ones (which
+			# would win when read) go
+			if (eq > 0 && (key in value)) {
+				if (!(key in done))
+					print key "=" value[key]
+				done[key] = 1
+				next
+			}
+			print
+		}
+		END {
+			for (i = 1; i <= n; i++)
+				if (!(order[i] in done))
+					print order[i] "=" value[order[i]]
+		}'
+}
+
+install -d -m 755 "$DIR"
+rm -f "$DIR/request"
+mkfifo -m 600 "$DIR/request" && chown pedalboard:pedalboard "$DIR/request" || exit 1
+status - idle
+
+while :; do
+	# Waits for the app to write a request
+	read -r id pairs <"$DIR/request" || continue
+	case "$id" in "" | *[!0-9A-Za-z_-]*) continue ;; esac
+	changes=
+	for pair in $pairs; do
+		key=${pair%%=*}
+		value=${pair#*=}
+		if [ "$key" = "$pair" ] || ! valid "$key" "$value"; then
+			changes=
+			break
+		fi
+		changes="$changes $key=$value"
+	done
+	if [ -z "$changes" ]; then
+		status "$id" error "Invalid setting"
+		continue
+	fi
+
+	logger -t pedalboard-settings "pedalboard.txt:$changes"
+	before=$(cat /run/pedalboard/config 2>/dev/null)
+	if ! mount -o remount,rw /boot 2>/dev/null; then
+		status "$id" error "The boot partition cannot be written"
+		continue
+	fi
+	rewrite >"$FILE.new" && sync && mv -f "$FILE.new" "$FILE" && sync
+	written=$?
+	rm -f "$FILE.new"
+	mount -o remount,ro /boot
+	if [ $written -ne 0 ]; then
+		status "$id" error "pedalboard.txt could not be written"
+		continue
+	fi
+	/usr/libexec/pedalboard/read-config
+	after=$(cat /run/pedalboard/config)
+
+	# What changed: the line of each key, before and after
+	changed() {
+		[ "$(echo "$before" | grep "^$1=" | tail -n 1)" != "$(echo "$after" | grep "^$1=" | tail -n 1)" ]
+	}
+	if changed wifi_country; then
+		status "$id" "done" reboot
+	elif changed audio_device || changed sample_rate || changed period || changed periods; then
+		status "$id" "done" audio
+		# Started again by init on the new settings; the app quits when
+		# its server stops and starts again too
+		killall jackd 2>/dev/null
+	elif changed display_rotation; then
+		status "$id" "done" display
+	else
+		status "$id" "done" none
+	fi
+done

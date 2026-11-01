@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // Tests: failing is their job
 use pedalboard::audio::{ChainNode, SplitType};
 use pedalboard::ui::chain_layout::{do_layout, CELL_HEIGHT};
 

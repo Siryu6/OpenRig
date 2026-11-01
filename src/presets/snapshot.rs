@@ -143,12 +143,17 @@ pub struct PluginConfig {
     pub parameters: HashMap<usize, f32>,
 }
 
+/// Seconds since 1970 (0 on a clock set before it, e.g. a board without RTC
+/// and network)
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
 impl Preset {
     pub fn new(name: String) -> Self {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = unix_now();
 
         Self {
             id: Uuid::new_v4().to_string(),
@@ -164,10 +169,7 @@ impl Preset {
     }
 
     pub fn touch(&mut self) {
-        self.modified_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        self.modified_at = unix_now();
     }
 }
 

@@ -19,6 +19,8 @@ null::sysinit:/bin/ln -sf /proc/self/fd/2 /dev/stderr
 ::respawn:/usr/libexec/pedalboard/ui
 # Installs the updates downloaded from Settings (as root, for the UI)
 ::respawn:/usr/libexec/pedalboard/updater
+# Writes pedalboard.txt for Settings → Audio & system (as root, for the UI)
+::respawn:/usr/libexec/pedalboard/settings
 
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/etc/init.d/rcK

@@ -132,6 +132,12 @@ pub(crate) fn drag(app: &App, state: &AppState, handle: &str, x: f32, y: f32) {
         (Some(a), Some(b)) => (a.min(b), a.max(b).min(MAX_RATIO)),
         _ => (1.0, MAX_RATIO),
     };
+    // From the plugin's range, which may be odd: clamp panics on NaN or min > max
+    let (min, max) = if min <= max {
+        (min, max)
+    } else {
+        (1.0, MAX_RATIO)
+    };
     controls.set(app, symbol, d.ratio_value(ratio.clamp(min, max)));
 }
 

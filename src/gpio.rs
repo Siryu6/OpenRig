@@ -37,15 +37,12 @@ const LONG_PRESS: Duration = Duration::from_millis(600);
 const QUADRATURE: [i8; 16] = [0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0];
 
 fn press_key(app: &slint::Weak<App>, key: Key) {
-    let app = app.clone();
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(app) = app.upgrade() {
-            let text: slint::SharedString = key.into();
-            app.window()
-                .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
-            app.window()
-                .dispatch_event(WindowEvent::KeyReleased { text });
-        }
+    crate::ui(app, move |app| {
+        let text: slint::SharedString = key.into();
+        app.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+        app.window()
+            .dispatch_event(WindowEvent::KeyReleased { text });
     });
 }
 
@@ -110,7 +107,7 @@ impl I2cPolling {
             if encoders.count() == 1 { "" } else { "s" },
             encoders.addresses()
         );
-        info!("I2C: {found}");
+        info!(found = %found, "External encoders opened");
         let stop = Arc::new(AtomicBool::new(false));
         let (app, halt) = (app.clone(), stop.clone());
         let thread = std::thread::Builder::new()
@@ -120,9 +117,7 @@ impl I2cPolling {
                 while !halt.load(Ordering::Relaxed) {
                     match encoders.poll(&mut bus, Instant::now()) {
                         Ok(events) if !events.is_empty() => {
-                            let app = app.clone();
-                            let _ = slint::invoke_from_event_loop(move || {
-                                let Some(app) = app.upgrade() else { return };
+                            crate::ui(&app, move |app| {
                                 for event in events {
                                     let (index, action, detents) = match event {
                                         Event::Turn { index, detents } => (index, 0, detents),
@@ -138,7 +133,7 @@ impl I2cPolling {
                         // A loose cable: said once, then tried again slower
                         Err(e) => {
                             if !failing {
-                                warn!("I2C encoders: {e}");
+                                warn!(error = %e, "External encoders not answering");
                             }
                             failing = true;
                             std::thread::sleep(Duration::from_secs(1));
@@ -160,7 +155,9 @@ impl Drop for I2cPolling {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+            if thread.join().is_err() {
+                warn!("External encoder thread had panicked");
+            }
         }
     }
 }
@@ -197,14 +194,12 @@ impl Gpio {
                 input.set_async_interrupt(Trigger::Both, Some(DEBOUNCE), move |event: Event| {
                     // Wired to ground: pressed pulls the pin low
                     let down = event.trigger == Trigger::FallingEdge;
-                    let (app, state) = (app.clone(), state.clone());
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(app) = app.upgrade() {
-                            if down {
-                                crate::live_ui::footswitch_down(&app, &state, slot);
-                            } else {
-                                crate::live_ui::footswitch_up(&app, slot);
-                            }
+                    let state = state.clone();
+                    crate::ui(&app, move |app| {
+                        if down {
+                            crate::live_ui::footswitch_down(app, &state, slot);
+                        } else {
+                            crate::live_ui::footswitch_up(app, slot);
                         }
                     });
                 });
@@ -212,7 +207,7 @@ impl Gpio {
                 errors.push(anyhow::Error::from(e).context(format!("{user}: GPIO {pin}")));
                 continue;
             }
-            info!("Footswitch {} on GPIO {}", slot + 1, pin);
+            info!(footswitch = slot + 1, gpio = pin, "Footswitch opened");
             held.push(input);
         }
 
@@ -295,7 +290,7 @@ impl Gpio {
                 .context("Encoder")?;
             }
 
-            info!("Encoder on GPIO {} / {}", encoder.a, encoder.b);
+            info!(gpio_a = encoder.a, gpio_b = encoder.b, "Encoder opened");
             held.extend([pin_a, pin_b]);
             // Without a push button, the touch screen confirms
             if let Some(button) = encoder.button {
@@ -330,7 +325,7 @@ impl Gpio {
                         }
                     })
                     .context("Encoder button")?;
-                info!("Encoder button on GPIO {}", button);
+                info!(gpio = button, "Encoder button opened");
                 held.push(pin_button);
             }
         }

@@ -67,7 +67,10 @@ pub fn enter<S: AsRef<str>>(locations: &[S], folder: &str) -> String {
     loop {
         let level = level(locations, &folder);
         match level.folders.as_slice() {
-            [(name, _)] if level.items.is_empty() => folder = join(&folder, name),
+            // An empty name ("a//b", "/a") would not go down: stop there
+            [(name, _)] if level.items.is_empty() && !name.is_empty() => {
+                folder = join(&folder, name)
+            }
             _ => return folder,
         }
     }

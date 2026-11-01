@@ -59,7 +59,7 @@ It is a young project: expect rough edges, and
 ## Get started
 
 1. **[Gather the hardware](https://openrig.eu/docs/getting-started/hardware/)**: a Raspberry Pi 5
-   (or an x86_64 mini PC), a class-compliant USB audio interface, a
+   (or an x86_64 mini PC with AVX2, e.g. an Intel N100), a class-compliant USB audio interface, a
    touchscreen and a micro SD card. Footswitches and a MIDI pedal are optional.
 2. **Write the image** from the [latest release](https://github.com/Siryu6/OpenRig/releases/latest):
    [Raspberry Pi 5](https://openrig.eu/docs/getting-started/raspberry-pi/) or
@@ -210,6 +210,7 @@ requests run `cargo fmt`, `cargo clippy` and `cargo test`
 src/
 ├── main.rs              UI wiring (callbacks, polling and monitor timers)
 ├── bin/splash.rs        Boot logo on the Linux framebuffer (feature splash, OS image)
+├── bin/bench.rs         pedalboard-bench: times a rig of NAM blocks on 1 to 8 cores
 ├── gpio.rs              Footswitches, encoder and I2C encoder polling (feature gpio)
 ├── hardware_ui.rs       Settings → Hardware (footswitches, encoders, their GPIOs), restarts the GPIO
 ├── strip_ui.rs          The rack's knob strip driven by external encoders
@@ -230,6 +231,7 @@ src/
 ├── audio/
 │   ├── jack_client.rs   JACK callback: tuner → effects → looper
 │   ├── chain_switcher.rs  Builder thread, crossfade, live commands
+│   ├── dsp_pool.rs      DSP worker threads: the chain on several cores
 │   ├── engine.rs        Audio engine handle
 │   ├── split_chain.rs   ChainNode / SplitType (chain description)
 │   ├── tuner.rs, looper.rs

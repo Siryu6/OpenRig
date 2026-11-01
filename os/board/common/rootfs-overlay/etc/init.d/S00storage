@@ -16,7 +16,6 @@
 
 [ "$1" = start ] || exit 0
 
-DEFAULTS=/etc/pedalboard/defaults
 # The board's (board/<board>/rootfs-overlay)
 # shellcheck source=../../../../rpi5/rootfs-overlay/etc/pedalboard/partitions
 . /etc/pedalboard/partitions
@@ -86,25 +85,10 @@ persist() {
 	mount --bind "/data/$2" "$1" || log "cannot keep $1"
 }
 
-# Shell-safe KEY='value' lines from pedalboard.txt: known keys, plain values
-read_config() {
-	mkdir -p /run/pedalboard
-	cat "$DEFAULTS" >"$CONFIG"
-	[ -r /boot/pedalboard.txt ] || return 0
-	tr -d '\r' </boot/pedalboard.txt |
-		sed -n 's/^[[:space:]]*\([a-z_]*\)[[:space:]]*=[[:space:]]*\([A-Za-z0-9_.:,-]*\)[[:space:]]*$/\1 \2/p' |
-		while read -r key value; do
-			case "$key" in
-			audio_device | sample_rate | period | periods | display_rotation | wifi_country)
-				echo "$key='$value'" ;;
-			esac
-		done >>"$CONFIG"
-}
-
 root_disk
 mount -t vfat -o ro,noexec,nosuid,nodev "/dev/${prefix}1" /boot ||
 	log "no boot partition on /dev/$disk"
-read_config
+/usr/libexec/pedalboard/read-config
 # shellcheck source=../pedalboard/defaults
 . "$CONFIG"
 

@@ -5,6 +5,7 @@
 //! The audio thread only touches atomics ([`DspMeter::record`]); everything
 //! else is read from /proc and /sys by the UI thread once per second. Values
 //! that cannot be read on the current machine are `None`.
+use crate::sync::MutexExt;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -101,8 +102,7 @@ impl BlockMeter {
     /// called when building the chain)
     pub fn counter(&self, instance_id: usize) -> Arc<AtomicU64> {
         self.counters
-            .lock()
-            .unwrap()
+            .locked()
             .entry(instance_id)
             .or_default()
             .clone()
@@ -110,7 +110,7 @@ impl BlockMeter {
 
     /// Nanoseconds the block has spent processing so far, if it was built
     pub fn spent(&self, instance_id: usize) -> Option<u64> {
-        let counters = self.counters.lock().unwrap();
+        let counters = self.counters.locked();
         Some(counters.get(&instance_id)?.load(Ordering::Relaxed))
     }
 }
@@ -297,10 +297,14 @@ fn parse_proc_stat(text: &str) -> Vec<CpuTimes> {
                 .filter_map(|f| f.parse().ok())
                 .collect();
             // user nice system idle iowait irq softirq steal
-            let total: u64 = fields.iter().take(8).sum();
-            let idle = fields.get(3)? + fields.get(4).unwrap_or(&0);
+            // (saturating: a malformed line must not overflow)
+            let total = fields
+                .iter()
+                .take(8)
+                .fold(0u64, |t, f| t.saturating_add(*f));
+            let idle = fields.get(3)?.saturating_add(*fields.get(4).unwrap_or(&0));
             Some(CpuTimes {
-                busy: total - idle,
+                busy: total.saturating_sub(idle),
                 total,
             })
         })

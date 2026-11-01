@@ -1,11 +1,13 @@
 //! Neural amp models (NAM `.nam`, RTNeural keras `.json` / `.aidax`) run
 //! through NeuralAudio, built from `native/` by build.rs.
 
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::path::Path;
 
 use anyhow::{anyhow, Result};
 
+// native/nam_wrapper.cpp: no C++ exception crosses it. Every model pointer
+// passed is one `pb_nam_load` returned and `pb_nam_free` has not freed.
 extern "C" {
     fn pb_nam_load(
         path: *const c_char,
@@ -34,7 +36,8 @@ pub struct NamModel {
     has_quality: bool,
 }
 
-// The model is only used from one thread at a time.
+// SAFETY: the C++ model has no thread affinity; `&mut self` makes every
+// call that changes it exclusive.
 unsafe impl Send for NamModel {}
 
 impl NamModel {
@@ -43,6 +46,7 @@ impl NamModel {
         let c_path = CString::new(path.to_string_lossy().as_bytes())
             .map_err(|_| anyhow!("Invalid model path {}", path.display()))?;
         let mut error = [0 as c_char; 512];
+        // SAFETY: a NUL-terminated path, and an error buffer of its length
         let handle = unsafe {
             pb_nam_load(
                 c_path.as_ptr(),
@@ -53,13 +57,12 @@ impl NamModel {
             )
         };
         if handle.is_null() {
-            let message = unsafe { std::ffi::CStr::from_ptr(error.as_ptr()) };
-            return Err(anyhow!(
-                "Cannot load model {}: {}",
-                path.display(),
-                message.to_string_lossy()
-            ));
+            let bytes: Vec<u8> = error.iter().map(|c| *c as u8).collect();
+            let message = CStr::from_bytes_until_nul(&bytes)
+                .map_or_else(|_| "unknown error".into(), CStr::to_string_lossy);
+            return Err(anyhow!("Cannot load model {}: {message}", path.display()));
         }
+        // SAFETY: a model just loaded
         let has_quality = unsafe { pb_nam_has_quality(handle) };
         Ok(Self {
             handle,
@@ -71,6 +74,8 @@ impl NamModel {
     /// Process `input` into `output` (same length, at most `max_block`)
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
         let frames = input.len().min(output.len()).min(self.max_block);
+        // SAFETY: a live model; both buffers hold `frames` samples, at most
+        // the block size it was loaded for
         unsafe { pb_nam_process(self.handle, input.as_ptr(), output.as_mut_ptr(), frames) }
     }
 
@@ -83,23 +88,27 @@ impl NamModel {
     /// does nothing on a model without sizes.
     pub fn set_quality(&mut self, quality: f32) {
         if self.has_quality {
+            // SAFETY: a live model
             unsafe { pb_nam_set_quality(self.handle, quality.clamp(0.0, 1.0)) }
         }
     }
 
     /// Sample rate the model was trained at, if known
     pub fn sample_rate(&self) -> Option<f32> {
+        // SAFETY: a live model
         let rate = unsafe { pb_nam_sample_rate(self.handle) };
         (rate > 0.0).then_some(rate)
     }
 
     /// Input gain (dB) bringing the signal to the level the model expects
     pub fn input_adjustment_db(&self) -> f32 {
+        // SAFETY: a live model
         unsafe { pb_nam_input_adjustment(self.handle) }
     }
 
     /// Output gain (dB) bringing the model to a standard loudness
     pub fn output_adjustment_db(&self) -> f32 {
+        // SAFETY: a live model
         unsafe { pb_nam_output_adjustment(self.handle) }
     }
 }
@@ -120,6 +129,7 @@ pub fn file_has_quality(path: &Path) -> bool {
 
 impl Drop for NamModel {
     fn drop(&mut self) {
+        // SAFETY: freed once, here; nothing uses it after
         unsafe { pb_nam_free(self.handle) }
     }
 }

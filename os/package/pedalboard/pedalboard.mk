@@ -56,6 +56,9 @@ define PEDALBOARD_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 \
 		$(@D)/target/$(RUSTC_TARGET_NAME)/$(if $(BR2_ENABLE_DEBUG),debug,release)/pedalboard-splash \
 		$(TARGET_DIR)/usr/libexec/pedalboard/splash
+	$(INSTALL) -D -m 0755 \
+		$(@D)/target/$(RUSTC_TARGET_NAME)/$(if $(BR2_ENABLE_DEBUG),debug,release)/pedalboard-bench \
+		$(TARGET_DIR)/usr/bin/pedalboard-bench
 endef
 
 $(eval $(cargo-package))

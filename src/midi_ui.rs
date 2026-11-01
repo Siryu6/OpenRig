@@ -12,6 +12,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use slint::{ComponentHandle, Model};
+#[cfg(feature = "midi")]
+use tracing::error;
 
 use pedalboard::midi::{MidiAssign, MidiTarget, TOE};
 use pedalboard::state::AppState;
@@ -117,17 +119,22 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
         move || {
             let Some(app) = weak.upgrade() else { return };
             let now = Instant::now();
-            MIDI.with(|m| {
+            let old = |t: Option<Instant>, d| t.is_none_or(|t| now.duration_since(t) > d);
+            // Not borrowed while the UI is told
+            let (quiet, clock_lost) = MIDI.with(|m| {
                 let mut m = m.borrow_mut();
-                let old = |t: Option<Instant>, d| t.is_none_or(|t| now.duration_since(t) > d);
-                if app.get_midi_activity() && old(m.last_message, ACTIVITY) {
-                    app.set_midi_activity(false);
-                }
-                if m.clock_bpm.is_some() && old(m.last_clock, CLOCK_LOST) {
+                let lost = m.clock_bpm.is_some() && old(m.last_clock, CLOCK_LOST);
+                if lost {
                     m.clock_bpm = None;
-                    app.set_tempo_clock(false);
                 }
+                (old(m.last_message, ACTIVITY), lost)
             });
+            if quiet && app.get_midi_activity() {
+                app.set_midi_activity(false);
+            }
+            if clock_lost {
+                app.set_tempo_clock(false);
+            }
         },
     );
     MIDI.with(|m| m.borrow_mut().timer = Some(timer));
@@ -136,12 +143,8 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
     {
         let (weak, st) = (app.as_weak(), state.clone());
         let send = move |event| {
-            let (weak, st) = (weak.clone(), st.clone());
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(app) = weak.upgrade() {
-                    on_event(&app, &st, event);
-                }
-            });
+            let st = st.clone();
+            crate::ui(&weak, move |app| on_event(app, &st, event));
         };
         let st = state.clone();
         let forward = move |bytes: &[u8]| st.forward_midi(bytes);
@@ -151,7 +154,7 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
                 MIDI.with(|m| m.borrow_mut().io = Some(io));
             }
             Err(e) => {
-                tracing::warn!("MIDI disabled: {:#}", e);
+                error!(error = format_args!("{e:#}"), "MIDI disabled");
                 app.set_midi_available(false);
                 app.set_midi_devices(format!("MIDI unavailable: {e}").into());
             }
@@ -226,7 +229,10 @@ fn on_message(app: &App, state: &AppState, message: MidiMessage) {
                 crate::refresh_scenes(app, state);
             }
         }
-        MidiAction::Bank(n) => match state.list_scenes().get(usize::from(n) - 1) {
+        MidiAction::Bank(n) => match usize::from(n)
+            .checked_sub(1)
+            .and_then(|i| state.list_scenes().into_iter().nth(i))
+        {
             Some(setlist) => {
                 if state.current_scene_id().as_ref() != Some(&setlist.id) {
                     report(app, state.load_scene(&setlist.id));

@@ -1,6 +1,8 @@
-use tracing::debug;
+#[cfg_attr(not(any(feature = "lv2", feature = "nam")), allow(unused_imports))]
+use tracing::{debug, warn};
 
 use super::atom::{self, AtomUrids};
+use super::chain::ramp;
 use super::dsp::Cuts;
 #[cfg(feature = "nam")]
 use super::dsp::{NoiseGate, ToneStack};
@@ -90,9 +92,10 @@ struct IrBlock {
 impl IrBlock {
     /// Linear (wet, dry) gains for the current controls
     fn target_gains(&self, controls: &[f32]) -> (f32, f32) {
-        let mix = (controls[port::IR_MIX] / 100.0).clamp(0.0, 1.0);
-        let mut wet = 10f32.powf(controls[port::IR_LEVEL] / 20.0) * mix;
-        if controls[port::IR_NORMALIZE] >= 0.5 && self.convolver.is_some() {
+        let control = |port: usize, default: f32| controls.get(port).copied().unwrap_or(default);
+        let mix = (control(port::IR_MIX, 100.0) / 100.0).clamp(0.0, 1.0);
+        let mut wet = 10f32.powf(control(port::IR_LEVEL, 0.0) / 20.0) * mix;
+        if control(port::IR_NORMALIZE, 0.0) >= 0.5 && self.convolver.is_some() {
             wet *= self.normalize_gain;
         }
         (wet, 1.0 - mix)
@@ -124,9 +127,10 @@ struct NamBlock {
 impl NamBlock {
     /// Linear (input, output) gains for the current controls
     fn target_gains(&self, controls: &[f32]) -> (f32, f32) {
-        let (mut input_db, mut output_db) = (controls[port::NAM_INPUT], controls[port::NAM_OUTPUT]);
+        let control = |port: usize| controls.get(port).copied().unwrap_or(0.0);
+        let (mut input_db, mut output_db) = (control(port::NAM_INPUT), control(port::NAM_OUTPUT));
         if let Some(model) = &self.model {
-            if controls[port::NAM_NORMALIZE] >= 0.5 {
+            if control(port::NAM_NORMALIZE) >= 0.5 {
                 input_db += model.input_adjustment_db();
                 output_db += model.output_adjustment_db();
             }
@@ -142,6 +146,14 @@ fn apply_gain_ramp(buffer: &mut [f32], from: f32, to: f32) {
     let step = (to - from) / buffer.len().max(1) as f32;
     for (i, sample) in buffer.iter_mut().enumerate() {
         *sample *= from + step * (i + 1) as f32;
+    }
+}
+
+/// A mono signal (`stereo_in` false) goes on unchanged on the right side
+#[inline]
+fn copy_mono(left: &[f32], right: Option<&mut [f32]>, stereo_in: bool) {
+    if let (Some(right), false) = (right, stereo_in) {
+        right.copy_from_slice(left);
     }
 }
 
@@ -188,7 +200,9 @@ pub struct PluginInstance {
     quiet_limit: usize,
 }
 
-// The LV2 handle is only used from one thread at a time.
+// SAFETY: LV2 instances have no thread affinity (the plugin's threading
+// classes allow moving them between threads); every call goes through
+// `&mut self`, so one thread at a time.
 unsafe impl Send for PluginInstance {}
 
 impl PluginInstance {
@@ -198,6 +212,8 @@ impl PluginInstance {
         sample_rate: f32,
         max_block: usize,
     ) -> Self {
+        // A zero block size would never move `process` forward
+        let max_block = max_block.max(1);
         let block = || vec![0.0f32; max_block].into_boxed_slice();
         let count = |t: PortType| info.ports.iter().filter(|p| p.port_type == t).count();
         let port_count = info.ports.iter().map(|p| p.index + 1).max().unwrap_or(0);
@@ -259,75 +275,90 @@ impl PluginInstance {
     ) -> anyhow::Result<Self> {
         use super::lv2_features::{map_uri, FeatureSet, ATOM_CHUNK, ATOM_SEQUENCE};
 
-        debug!("Instantiating LV2 plugin {} @ {}Hz", info.uri, sample_rate);
+        debug!(uri = %info.uri, sample_rate, "Instantiating LV2 plugin");
         let plugin = world
             .plugins()
             .plugin(&world.new_uri(&info.uri))
             .ok_or_else(|| anyhow::anyhow!("Plugin not in LV2 world: {}", info.uri))?;
 
         let features = Box::new(FeatureSet::new(sample_rate, max_block));
+        // SAFETY: the features (and what they point to) outlive the
+        // instance: both are kept in `Backend::Lv2`, the instance dropped
+        // first
         let mut instance = unsafe { plugin.instantiate(sample_rate as f64, features.features()) }
             .ok_or_else(|| anyhow::anyhow!("Failed to instantiate {}", info.name))?;
 
+        let uri = info.uri.clone();
         let mut this = Self::with_buffers(info, instance_id, sample_rate, max_block);
         this.urids = AtomUrids::new(map_uri(ATOM_SEQUENCE), map_uri);
         this.atom_chunk_urid = map_uri(ATOM_CHUNK);
 
         let (mut audio_in, mut audio_out, mut cv) = (0, 0, 0);
+        let missing = |what: &str| anyhow::anyhow!("{uri}: no buffer for {what}");
         for port in this.info.ports.clone() {
             let index = port.index;
-            unsafe {
-                match port.port_type {
-                    PortType::ControlInput | PortType::ControlOutput => {
-                        instance.connect_port_mut(index, this.controls.as_mut_ptr().add(index));
-                    }
-                    PortType::AudioInput => {
-                        instance.connect_port_mut(index, this.audio_in[audio_in].as_mut_ptr());
-                        audio_in += 1;
-                    }
-                    PortType::AudioOutput => {
-                        instance.connect_port_mut(index, this.audio_out[audio_out].as_mut_ptr());
-                        audio_out += 1;
-                    }
-                    PortType::CVInput | PortType::CVOutput => {
-                        instance.connect_port_mut(index, this._cv[cv].as_mut_ptr());
-                        cv += 1;
-                    }
-                    PortType::AtomInput | PortType::AtomOutput => {
-                        let mut buffer = vec![0u64; ATOM_CAPACITY / 8].into_boxed_slice();
-                        instance.connect_port_mut(index, buffer.as_mut_ptr());
-                        this.atoms.push(AtomPort {
-                            buffer,
-                            input: port.port_type == PortType::AtomInput,
-                            midi: port.midi,
-                            time: port.time,
-                            patch: port.patch,
-                        });
-                    }
+            // Each port gets a buffer of its own, boxed: it never moves
+            // while the instance lives (both belong to `this`)
+            let buffer: *mut f32 = match port.port_type {
+                PortType::ControlInput | PortType::ControlOutput => this
+                    .controls
+                    .get_mut(index)
+                    .map(|c| c as *mut f32)
+                    .ok_or_else(|| missing("a control"))?,
+                PortType::AudioInput => {
+                    audio_in += 1;
+                    this.audio_in
+                        .get_mut(audio_in - 1)
+                        .map(|b| b.as_mut_ptr())
+                        .ok_or_else(|| missing("an audio input"))?
                 }
-            }
+                PortType::AudioOutput => {
+                    audio_out += 1;
+                    this.audio_out
+                        .get_mut(audio_out - 1)
+                        .map(|b| b.as_mut_ptr())
+                        .ok_or_else(|| missing("an audio output"))?
+                }
+                PortType::CVInput | PortType::CVOutput => {
+                    cv += 1;
+                    this._cv
+                        .get_mut(cv - 1)
+                        .map(|b| b.as_mut_ptr())
+                        .ok_or_else(|| missing("a CV port"))?
+                }
+                PortType::AtomInput | PortType::AtomOutput => {
+                    let mut buffer = vec![0u64; ATOM_CAPACITY / 8].into_boxed_slice();
+                    let pointer = buffer.as_mut_ptr().cast::<f32>();
+                    this.atoms.push(AtomPort {
+                        buffer,
+                        input: port.port_type == PortType::AtomInput,
+                        midi: port.midi,
+                        time: port.time,
+                        patch: port.patch,
+                    });
+                    pointer
+                }
+            };
+            // SAFETY: a valid buffer of the port's type and size, alive as
+            // long as the instance (see above)
+            unsafe { instance.connect_port_mut(index, buffer) };
         }
 
         this.reset_atoms();
+        // SAFETY: every port is connected
         let instance = unsafe { instance.activate() };
         // Plugins doing slow jobs (loading files, applying a state) off
         // the audio thread
-        // (lilv calls extension_data without checking it, and it is optional)
-        let has_extension_data = instance.instance().descriptor().is_some_and(|d| {
-            // Typed as a function by lv2_raw, though plugins may leave it NULL
-            let field = std::ptr::addr_of!(d.extension_data) as *const *const std::ffi::c_void;
-            !unsafe { field.read() }.is_null()
-        });
-        let interface = if has_extension_data {
-            unsafe {
-                instance
-                    .instance()
-                    .extension_data::<super::lv2_worker::Interface>(super::lv2_worker::INTERFACE)
-            }
-        } else {
-            None
+        // (lilv returns None when the plugin has no extension_data)
+        // SAFETY: the URI asks for the Worker interface, of the type given
+        let interface = unsafe {
+            instance
+                .instance()
+                .extension_data::<super::lv2_worker::Interface>(super::lv2_worker::INTERFACE)
         };
         let worker = match interface {
+            // SAFETY: the interface is static plugin data; the instance
+            // outlives the worker (dropped first in `Drop`)
             Some(interface) => Some(unsafe {
                 super::lv2_worker::Worker::start(
                     features.worker(),
@@ -359,11 +390,11 @@ impl PluginInstance {
                 let model = super::nam::NamModel::load(path, sample_rate, max_block)?;
                 if let Some(rate) = model.sample_rate() {
                     if (rate - sample_rate).abs() > 1.0 && sample_rate % rate != 0.0 {
-                        tracing::warn!(
-                            "{} was trained at {} Hz but audio runs at {} Hz: tone will be off",
-                            path.display(),
-                            rate,
-                            sample_rate
+                        warn!(
+                            path = %path.display(),
+                            model_rate = rate,
+                            sample_rate,
+                            "Model trained at another sample rate, its tone will be off"
                         );
                     }
                 }
@@ -421,9 +452,9 @@ impl PluginInstance {
             Some(path) => {
                 let response = super::ir::ImpulseResponse::load(path, sample_rate, channel)?;
                 debug!(
-                    "Impulse response {}: {} samples",
-                    path.display(),
-                    response.samples.len()
+                    path = %path.display(),
+                    samples = response.samples.len(),
+                    "Impulse response loaded"
                 );
                 (
                     Some(response.convolver(max_block)?),
@@ -452,21 +483,16 @@ impl PluginInstance {
         let midi = &self.midi[..self.midi_len];
         for port in &mut self.atoms {
             if port.input {
-                let bytes = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        port.buffer.as_mut_ptr() as *mut u8,
-                        port.buffer.len() * 8,
-                    )
-                };
+                let bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut port.buffer);
                 let tempo = self.tempo.filter(|_| port.time);
                 let midi = if port.midi { midi } else { &[] };
                 atom::write_input(bytes, &self.urids, tempo, midi);
             } else {
                 // LV2_Atom header: { size, type }
-                let header = port.buffer.as_mut_ptr() as *mut u32;
-                unsafe {
-                    *header = (ATOM_CAPACITY - 8) as u32;
-                    *header.add(1) = self.atom_chunk_urid;
+                let header: &mut [u32] = bytemuck::cast_slice_mut(&mut port.buffer);
+                if let [size, kind, ..] = header {
+                    *size = (ATOM_CAPACITY - 8) as u32;
+                    *kind = self.atom_chunk_urid;
                 }
             }
         }
@@ -492,31 +518,42 @@ impl PluginInstance {
                 .position(|p| p.input && p.patch)
                 .or_else(|| self.atoms.iter().position(|p| p.input))
             else {
-                debug!("{}: no atom input to send its files to", self.info.uri);
+                debug!(uri = %self.info.uri, "No atom input to send the plugin its files");
                 return;
             };
             let paths: Vec<(u32, String)> = files
                 .iter()
-                .filter_map(|(uri, path)| Some((map_uri(uri), path.to_str()?.to_string())))
+                .filter_map(|(uri, path)| match path.to_str() {
+                    Some(p) => Some((map_uri(uri), p.to_string())),
+                    None => {
+                        warn!(path = %path.display(), "File path is not UTF-8, not given to the plugin");
+                        None
+                    }
+                })
                 .collect();
             if paths.is_empty() {
                 return;
             }
             let sets: Vec<(u32, &str)> = paths.iter().map(|(u, p)| (*u, p.as_str())).collect();
             let frames = self.max_block;
-            let deadline = std::time::Instant::now() + timeout;
+            let start = std::time::Instant::now();
             let mut sent = 0;
             loop {
                 self.reset_atoms();
                 if sent < sets.len() {
-                    let buffer = &mut self.atoms[port].buffer;
-                    let bytes = unsafe {
-                        std::slice::from_raw_parts_mut(
-                            buffer.as_mut_ptr() as *mut u8,
-                            buffer.len() * 8,
-                        )
+                    let Some(atoms) = self.atoms.get_mut(port) else {
+                        break;
                     };
-                    sent += atom::write_patch_sets(bytes, &self.urids, &sets[sent..]).max(1);
+                    let bytes: &mut [u8] = bytemuck::cast_slice_mut(&mut atoms.buffer);
+                    let rest = sets.get(sent..).unwrap_or_default();
+                    let written = atom::write_patch_sets(bytes, &self.urids, rest);
+                    if written == 0 {
+                        // Larger than the atom buffer: skipped
+                        if let Some((_, path)) = rest.first() {
+                            warn!(path, "File path too long to give to the plugin");
+                        }
+                    }
+                    sent += written.max(1);
                 }
                 for input in &mut self.audio_in {
                     input.fill(0.0);
@@ -529,12 +566,8 @@ impl PluginInstance {
                 if sent >= sets.len() && idle {
                     break;
                 }
-                if std::time::Instant::now() > deadline {
-                    tracing::warn!(
-                        "{}: still loading its files after {:?}",
-                        self.info.name,
-                        timeout
-                    );
+                if start.elapsed() > timeout {
+                    warn!(plugin = %self.info.name, ?timeout, "Plugin still loading its files, going on");
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(1));
@@ -567,7 +600,12 @@ impl PluginInstance {
                 // Each output copies the input of the same rank (or the last)
                 if let Some(last) = self.audio_in.len().checked_sub(1) {
                     for (i, output) in self.audio_out.iter_mut().enumerate() {
-                        output[..frames].copy_from_slice(&self.audio_in[i.min(last)][..frames]);
+                        if let (Some(output), Some(input)) = (
+                            output.get_mut(..frames),
+                            self.audio_in.get(i.min(last)).and_then(|b| b.get(..frames)),
+                        ) {
+                            output.copy_from_slice(input);
+                        }
                     }
                 }
             }
@@ -575,6 +613,8 @@ impl PluginInstance {
             Backend::Lv2 {
                 instance, worker, ..
             } => {
+                // SAFETY: an active instance, every port connected to a
+                // buffer of at least `max_block` frames, `frames` clamped to it
                 unsafe { instance.run(frames) };
                 if let Some(worker) = worker {
                     worker.end_run();
@@ -582,8 +622,12 @@ impl PluginInstance {
             }
             Backend::Ir(block) => {
                 let (wet_gain, dry_gain) = block.target_gains(&self.controls);
-                let input = &self.audio_in[0][..frames];
-                let output = &mut self.audio_out[0][..frames];
+                let (Some(input), Some(output)) = (
+                    self.audio_in.first().and_then(|b| b.get(..frames)),
+                    self.audio_out.first_mut().and_then(|b| b.get_mut(..frames)),
+                ) else {
+                    return;
+                };
                 match &mut block.convolver {
                     Some(convolver) => convolver.process(input, output),
                     None => output.copy_from_slice(input),
@@ -610,22 +654,27 @@ impl PluginInstance {
             #[cfg(feature = "nam")]
             Backend::Nam(block) => {
                 let (input_gain, output_gain) = block.target_gains(&self.controls);
-                let input = &mut self.audio_in[0][..frames];
-                let output = &mut self.audio_out[0][..frames];
+                let (Some(input), Some(output)) = (
+                    self.audio_in.first_mut().and_then(|b| b.get_mut(..frames)),
+                    self.audio_out.first_mut().and_then(|b| b.get_mut(..frames)),
+                ) else {
+                    return;
+                };
                 apply_gain_ramp(input, block.input_gain, input_gain);
                 if let (Some(model), Some(port)) = (&mut block.model, block.quality_port) {
-                    let quality = self.controls[port];
+                    let quality = self.controls.get(port).copied().unwrap_or(block.quality);
                     if quality != block.quality {
                         model.set_quality(quality);
                         block.quality = quality;
                     }
                 }
                 let controls = &self.controls;
+                let control = |port: usize| controls.get(port).copied().unwrap_or(0.0);
                 // Tone stack after the model (as in the NAM plugin), or before
                 // it to shape what hits the amp
                 let pre = block
                     .eq_position_port
-                    .is_some_and(|port| controls[port] < 0.5);
+                    .is_some_and(|port| control(port) < 0.5);
                 if block.eq_pre != Some(pre) {
                     if let Some(tone_stack) = &mut block.tone_stack {
                         tone_stack.reset();
@@ -636,19 +685,21 @@ impl PluginInstance {
                     if let Some(tone_stack) = &mut block.tone_stack {
                         tone_stack.process(
                             buffer,
-                            controls[port::NAM_BASS],
-                            controls[port::NAM_MIDDLE],
-                            controls[port::NAM_TREBLE],
+                            control(port::NAM_BASS),
+                            control(port::NAM_MIDDLE),
+                            control(port::NAM_TREBLE),
                         );
                     }
                 };
                 // The gate listens to the input before the EQ
-                let detector: &[f32] = if pre {
-                    block.dry[..frames].copy_from_slice(input);
-                    tone_stack(input);
-                    &block.dry[..frames]
-                } else {
-                    input
+                // (`dry` holds a block when there is an EQ position: `pre`)
+                let detector: &[f32] = match block.dry.get_mut(..frames).filter(|_| pre) {
+                    Some(dry) => {
+                        dry.copy_from_slice(input);
+                        tone_stack(input);
+                        dry
+                    }
+                    None => input,
                 };
                 match &mut block.model {
                     Some(model) => model.process(input, output),
@@ -658,7 +709,7 @@ impl PluginInstance {
                 if controls.get(port::NAM_GATE).is_some_and(|&on| on >= 0.5) {
                     block
                         .gate
-                        .process(detector, output, controls[port::NAM_THRESHOLD]);
+                        .process(detector, output, control(port::NAM_THRESHOLD));
                 } else {
                     block.gate.reset();
                 }
@@ -682,14 +733,18 @@ impl PluginInstance {
     /// right side of the input (else the input is mono, in `left`); with
     /// `right`, the output is stereo. A mono input feeds every audio input;
     /// a stereo one feeds the first two, or their mix a single input.
-    pub fn process(&mut self, left: &mut [f32], mut right: Option<&mut [f32]>, stereo_in: bool) {
+    pub fn process(&mut self, left: &mut [f32], right: Option<&mut [f32]>, stereo_in: bool) {
+        // Both sides as long as each other
+        let len = right
+            .as_deref()
+            .map_or(left.len(), |r| r.len().min(left.len()));
+        let left = &mut left[..len];
+        let mut right = right.map(|r| &mut r[..len]);
         let stereo_in = stereo_in && right.is_some();
         if self.bypassed && self.wet <= 0.0 && (!self.trails || self.quiet >= self.quiet_limit) {
             // Not run: queued notes would play late
             self.midi_len = 0;
-            if let (Some(right), false) = (right, stereo_in) {
-                right.copy_from_slice(left);
-            }
+            copy_mono(left, right, stereo_in);
             return;
         }
         let mut start = 0;
@@ -715,9 +770,7 @@ impl PluginInstance {
         let outputs = self.audio_out.len().min(2);
         if outputs == 0 {
             // Nothing comes out (analysis plugin): the signal goes on
-            if let (Some(right), false) = (right, stereo_in) {
-                right.copy_from_slice(left);
-            }
+            copy_mono(left, right, stereo_in);
             return;
         }
         let target = if self.bypassed { 0.0 } else { 1.0 };
@@ -743,13 +796,7 @@ impl PluginInstance {
         for i in 0..frames {
             let wet_l = self.audio_out[0][i];
             let wet_r = self.audio_out[outputs - 1][i];
-            if self.wet != target {
-                self.wet = if target > self.wet {
-                    (self.wet + self.wet_step).min(1.0)
-                } else {
-                    (self.wet - self.wet_step).max(0.0)
-                };
-            }
+            ramp(&mut self.wet, target, self.wet_step);
             let (w, dry_l) = (self.wet, left[i]);
             match right.as_deref_mut() {
                 Some(r) => {
@@ -774,13 +821,7 @@ impl PluginInstance {
         let frames = left.len();
         let target = if self.bypassed { 0.0 } else { 1.0 };
         for gain in &mut self.ramp[..frames] {
-            if self.wet != target {
-                self.wet = if target > self.wet {
-                    (self.wet + self.wet_step).min(1.0)
-                } else {
-                    (self.wet - self.wet_step).max(0.0)
-                };
-            }
+            ramp(&mut self.wet, target, self.wet_step);
             *gain = self.wet;
         }
         let ramp = &self.ramp[..frames];
@@ -791,9 +832,7 @@ impl PluginInstance {
 
         let outputs = self.audio_out.len().min(2);
         if outputs == 0 {
-            if let (Some(right), false) = (right, stereo_in) {
-                right.copy_from_slice(left);
-            }
+            copy_mono(left, right, stereo_in);
             return;
         }
         let ramp = &self.ramp[..frames];
@@ -835,8 +874,15 @@ impl PluginInstance {
     /// Set a parameter value (clamped to its range)
     pub fn set_parameter(&mut self, index: usize, value: f32) {
         // Called from the audio thread: no logging
+        if !value.is_finite() {
+            return;
+        }
         if let Some(&(port, lo, hi)) = self.param_ports.get(index) {
-            self.controls[port] = value.clamp(lo, hi);
+            if let Some(control) = self.controls.get_mut(port) {
+                // `max(lo)`, not `clamp`: no panic on a range the plugin
+                // got wrong
+                *control = value.min(hi).max(lo);
+            }
         }
     }
 
@@ -849,7 +895,7 @@ impl PluginInstance {
     pub fn parameter(&self, index: usize) -> Option<f32> {
         self.param_ports
             .get(index)
-            .map(|&(port, ..)| self.controls[port])
+            .and_then(|&(port, ..)| self.controls.get(port).copied())
     }
 
     /// Bypass with a short crossfade
@@ -911,6 +957,34 @@ mod tests {
         PluginInstance::passthrough(info, 7, 64)
     }
 
+    /// A built-in block
+    fn builtin(uri: &str) -> PluginInfo {
+        crate::plugins::scanner::builtin_plugins()
+            .into_iter()
+            .find(|p| p.uri == uri)
+            .unwrap()
+    }
+
+    /// A mono impulse response of `samples` at 48 kHz, in a new directory
+    /// named after `prefix`: (directory, file)
+    fn echo_file(prefix: &str, samples: &[f32]) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("echo.wav");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48000,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+        for &s in samples {
+            writer.write_sample(s).unwrap();
+        }
+        writer.finalize().unwrap();
+        (dir, path)
+    }
+
     #[test]
     fn passthrough_handles_blocks_larger_than_max_block() {
         let mut plugin = demo_instance();
@@ -922,25 +996,8 @@ mod tests {
 
     #[test]
     fn ir_block_convolves_and_mixes() {
-        use crate::plugins::scanner::{builtin_plugins, IR_URI};
-        let info = builtin_plugins()
-            .into_iter()
-            .find(|p| p.uri == IR_URI)
-            .unwrap();
-        let dir = std::env::temp_dir().join(format!("pedalboard-ir-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("echo.wav");
-        let spec = hound::WavSpec {
-            channels: 1,
-            sample_rate: 48000,
-            bits_per_sample: 32,
-            sample_format: hound::SampleFormat::Float,
-        };
-        let mut writer = hound::WavWriter::create(&path, spec).unwrap();
-        for s in [1.0f32, 0.0, 0.0, 0.5] {
-            writer.write_sample(s).unwrap();
-        }
-        writer.finalize().unwrap();
+        let info = builtin(crate::plugins::scanner::IR_URI);
+        let (dir, path) = echo_file("pedalboard-ir", &[1.0, 0.0, 0.0, 0.5]);
 
         let mut plugin =
             PluginInstance::ir(info.clone(), 1, 48000.0, 64, Some(&path), None).unwrap();
@@ -975,28 +1032,11 @@ mod tests {
 
     #[test]
     fn space_keeps_ringing_once_bypassed() {
-        use crate::plugins::scanner::{builtin_plugins, IR_SPACE_URI};
-        let info = builtin_plugins()
-            .into_iter()
-            .find(|p| p.uri == IR_SPACE_URI)
-            .unwrap();
-        let dir = std::env::temp_dir().join(format!("pedalboard-tail-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("echo.wav");
-        let spec = hound::WavSpec {
-            channels: 1,
-            sample_rate: 48000,
-            bits_per_sample: 32,
-            sample_format: hound::SampleFormat::Float,
-        };
+        let info = builtin(crate::plugins::scanner::IR_SPACE_URI);
         // An echo 1000 frames late, well after the 10 ms crossfade
-        let mut writer = hound::WavWriter::create(&path, spec).unwrap();
-        for i in 0..=1000 {
-            writer
-                .write_sample(if i == 1000 { 0.5f32 } else { 0.0 })
-                .unwrap();
-        }
-        writer.finalize().unwrap();
+        let mut samples = vec![0.0; 1001];
+        samples[1000] = 0.5;
+        let (dir, path) = echo_file("pedalboard-tail", &samples);
 
         let mut plugin = PluginInstance::ir(info, 1, 48000.0, 64, Some(&path), None).unwrap();
         assert!(plugin.has_trails());
@@ -1032,11 +1072,7 @@ mod tests {
     #[cfg(feature = "nam")]
     #[test]
     fn nam_block_without_model_applies_gains() {
-        use crate::plugins::scanner::{builtin_plugins, NAM_URI};
-        let info = builtin_plugins()
-            .into_iter()
-            .find(|p| p.uri == NAM_URI)
-            .unwrap();
+        let info = builtin(crate::plugins::scanner::NAM_URI);
         let mut plugin = PluginInstance::nam(info, 1, 48000.0, 64, None).unwrap();
         let mut buffer = vec![0.5f32; 64];
         plugin.process_in_place(&mut buffer);
@@ -1051,11 +1087,7 @@ mod tests {
     #[cfg(feature = "nam")]
     #[test]
     fn nam_tone_stack_runs_before_or_after_the_model() {
-        use crate::plugins::scanner::{builtin_plugins, NAM_URI};
-        let info = builtin_plugins()
-            .into_iter()
-            .find(|p| p.uri == NAM_URI)
-            .unwrap();
+        let info = builtin(crate::plugins::scanner::NAM_URI);
         // A low tone: the bass shelf boosts it in both positions
         let tone: Vec<f32> = (0..4800)
             .map(|i| 0.1 * (i as f32 * 2.0 * std::f32::consts::PI * 80.0 / 48000.0).sin())

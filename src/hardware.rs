@@ -16,6 +16,7 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 pub use crate::i2c_encoders::{I2cEncoders, Module as I2cModule};
 
@@ -76,7 +77,11 @@ impl Hardware {
             .and_then(|h| h.map(|h| h.validate().map(|()| h)).transpose());
         hardware
             .unwrap_or_else(|e| {
-                tracing::warn!("{}: {e:#}; using the defaults", path.display());
+                warn!(
+                    path = %path.display(),
+                    error = format_args!("{e:#}"),
+                    "Hardware settings unreadable; using the defaults"
+                );
                 None
             })
             .unwrap_or_else(|| Self::from_env(|name| std::env::var(name).ok()))
@@ -92,7 +97,7 @@ impl Hardware {
                 .filter(|s| !s.is_empty())
                 .map(str::parse)
                 .collect();
-            pins.map_err(|_| tracing::warn!("{name}: invalid pins '{value}'"))
+            pins.map_err(|_| warn!(var = name, value = %value, "Invalid GPIO pins ignored"))
                 .ok()
         };
         if let Some(pins) = pins("PEDALBOARD_FOOTSWITCH_PINS") {
@@ -114,7 +119,10 @@ impl Hardware {
                     ..Encoder::default()
                 }),
                 _ => {
-                    tracing::warn!("PEDALBOARD_ENCODER_PINS needs A,B[,button]: no encoder");
+                    warn!(
+                        var = "PEDALBOARD_ENCODER_PINS",
+                        "Encoder pins must be A,B[,button]; no encoder"
+                    );
                     None
                 }
             };
@@ -125,7 +133,11 @@ impl Hardware {
                 name => match serde_json::from_value(serde_json::Value::String(name.into())) {
                     Ok(module) => Some(I2cEncoders::new(module)),
                     Err(_) => {
-                        tracing::warn!("PEDALBOARD_I2C_ENCODERS: unknown board '{name}'");
+                        warn!(
+                            var = "PEDALBOARD_I2C_ENCODERS",
+                            board = %name,
+                            "Unknown I2C encoder board ignored"
+                        );
                         None
                     }
                 },
@@ -140,7 +152,10 @@ impl Hardware {
             }
         }
         if let Err(e) = hardware.validate() {
-            tracing::warn!("Hardware from the environment: {e:#}; using the defaults");
+            warn!(
+                error = format_args!("{e:#}"),
+                "Hardware from the environment invalid; using the defaults"
+            );
             return Self::default();
         }
         hardware

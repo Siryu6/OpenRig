@@ -1,6 +1,7 @@
 //! Hosts a real LV2 plugin: a tiny gain plugin is compiled with the system
 //! C compiler into a temporary bundle, then discovered and run through lilv.
 //! Skipped when no C compiler or LV2 headers are available.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // Tests: failing is their job
 #![cfg(feature = "lv2")]
 
 use pedalboard::audio::{ChainNode, SplitType};

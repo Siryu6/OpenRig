@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::{store, Preset};
 
@@ -75,9 +75,9 @@ impl SceneManager {
             manager.scenes.insert(scene.id.clone(), scene);
         }
         info!(
-            "Loaded {} scenes from {:?}",
-            manager.scenes.len(),
-            manager.scenes_dir
+            count = manager.scenes.len(),
+            dir = %manager.scenes_dir.display(),
+            "Setlists loaded"
         );
         Ok(manager)
     }
@@ -86,7 +86,7 @@ impl SceneManager {
     pub fn save_scene(&mut self, scene: &Scene) -> Result<()> {
         let previous = self.files.get(&scene.id).map(PathBuf::as_path);
         let path = store::save(&self.scenes_dir, &scene.id, scene, previous)?;
-        info!("Saved scene '{}' to {:?}", scene.name, path);
+        info!(name = %scene.name, path = %path.display(), "Setlist saved");
         self.files.insert(scene.id.clone(), path);
         self.scenes.insert(scene.id.clone(), scene.clone());
         Ok(())
@@ -112,11 +112,13 @@ impl SceneManager {
         let scene_name = scene.name.clone();
         let path = self
             .files
-            .remove(id)
+            .get(id)
+            .cloned()
             .unwrap_or_else(|| store::file_for(&self.scenes_dir, id));
         if path.exists() {
             fs::remove_file(&path).context("Failed to delete scene file")?;
         }
+        self.files.remove(id);
 
         self.scenes.remove(id);
 
@@ -125,7 +127,7 @@ impl SceneManager {
             self.preloaded_presets.clear();
         }
 
-        info!("Deleted scene '{}'", scene_name);
+        info!(name = %scene_name, "Setlist deleted");
         Ok(())
     }
 
@@ -154,11 +156,7 @@ impl SceneManager {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Scene not found: {}", id))?;
 
-        info!(
-            "Loading scene '{}' with {} slots",
-            scene.name,
-            scene.preset_slots.len()
-        );
+        debug!(name = %scene.name, slots = scene.preset_slots.len(), "Loading setlist");
 
         // Preload all presets in the scene
         self.preloaded_presets.clear();
@@ -171,7 +169,11 @@ impl SceneManager {
                     loaded_count += 1;
                 }
                 Err(e) => {
-                    warn!("Failed to preload preset {}: {}", slot_preset_id, e);
+                    warn!(
+                        preset = %slot_preset_id,
+                        error = format_args!("{e:#}"),
+                        "Setlist preset skipped"
+                    );
                 }
             }
         }
@@ -180,10 +182,10 @@ impl SceneManager {
         self.active_slot = None;
 
         info!(
-            "Scene '{}' loaded with {}/{} presets preloaded",
-            scene.name,
-            loaded_count,
-            scene.preset_slots.iter().flatten().count()
+            name = %scene.name,
+            preloaded = loaded_count,
+            assigned = scene.preset_slots.iter().flatten().count(),
+            "Setlist loaded"
         );
 
         Ok(())
@@ -219,12 +221,12 @@ impl SceneManager {
                     .cloned()
                     .ok_or_else(|| anyhow::anyhow!("Preset not preloaded: {}", preset_id))?;
 
-                info!("Switched to slot {} (preset '{}')", slot, preset.name);
+                info!(slot, preset = %preset.name, "Setlist slot selected");
                 self.active_slot = Some(slot);
                 Ok(Some(preset))
             }
             None => {
-                info!("Slot {} is empty", slot);
+                debug!(slot, "Setlist slot is empty");
                 Ok(None)
             }
         }
