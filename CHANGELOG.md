@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/Siryu6/OpenRig/compare/v0.9.0...v0.10.0) - 2026-11-01
+
+### Added
+
+- *(audio)* run the effect chain on several cores ([#77](https://github.com/Siryu6/OpenRig/pull/77))
+
 ## [0.9.0](https://github.com/Siryu6/OpenRig/compare/v0.8.0...v0.9.0) - 2026-10-31
 
 ### Added
