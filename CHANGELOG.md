@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/Siryu6/OpenRig/compare/v0.9.0...v0.10.0) - 2026-11-01
+
+### Added
+
+- *(audio)* split branches run on two cores and long chains are cut into pipeline stages over up to 4 cores, with no added latency and sample-identical sound; Settings → Processing → DSP cores (Auto or 1–4), "· N cores" in the resource monitor ([#77](https://github.com/Siryu6/OpenRig/pull/77))
+- *(os)* Settings → Audio & system: change pedalboard.txt from the screen (audio interface, sample rate, buffer, periods, screen rotation, Wi-Fi country) ([#77](https://github.com/Siryu6/OpenRig/pull/77))
+- `pedalboard-bench`, in the images, times a rig of neural models offline ([#77](https://github.com/Siryu6/OpenRig/pull/77))
+
+### Changed
+
+- *(os)* the x86_64 image is built for x86-64-v3: neural models run about 1.8 times faster; it needs a CPU with AVX2 (Intel N100, Haswell or newer) ([#77](https://github.com/Siryu6/OpenRig/pull/77))
+- structured logs, without time or colours under syslog ([#77](https://github.com/Siryu6/OpenRig/pull/77))
+
+### Fixed
+
+- a plugin that crashes in the audio callback no longer stops the audio: the dry signal plays and the chain is rebuilt ([#77](https://github.com/Siryu6/OpenRig/pull/77))
+- no more crashes on bad input: presets, IR WAV files, plugin ranges, store index and archives, MIDI and I2C data, more than 16 audio ports ([#77](https://github.com/Siryu6/OpenRig/pull/77))
+- a store index could write outside the cache, and a corrupt TONE3000 settings file could show a token in the logs ([#77](https://github.com/Siryu6/OpenRig/pull/77))
+
 ## [0.9.0](https://github.com/Siryu6/OpenRig/compare/v0.8.0...v0.9.0) - 2026-10-31
 
 ### Added
