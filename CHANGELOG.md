@@ -11,7 +11,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- *(audio)* run the effect chain on several cores ([#77](https://github.com/Siryu6/OpenRig/pull/77))
 - *(audio)* split branches run on two cores and long chains are cut into pipeline stages over up to 4 cores, with no added latency and sample-identical sound; Settings → Processing → DSP cores (Auto or 1–4), "· N cores" in the resource monitor ([#77](https://github.com/Siryu6/OpenRig/pull/77))
 - *(os)* Settings → Audio & system: change pedalboard.txt from the screen (audio interface, sample rate, buffer, periods, screen rotation, Wi-Fi country) ([#77](https://github.com/Siryu6/OpenRig/pull/77))
 - `pedalboard-bench`, in the images, times a rig of neural models offline ([#77](https://github.com/Siryu6/OpenRig/pull/77))
