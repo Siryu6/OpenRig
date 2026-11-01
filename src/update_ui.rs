@@ -7,11 +7,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use slint::{ComponentHandle, Weak};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use pedalboard::update::{self, Download, Installer, Kind, Plan, Status, System};
 
-use crate::{App, Features};
+use crate::{ui, App, Features};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Longest wait for the installer (a whole system on a slow card)
@@ -44,7 +44,7 @@ pub fn setup(app: &App) {
         .name("update".into())
         .spawn(move || worker(rx, weak, system, installer))
     {
-        warn!("Updates: cannot start the worker: {e}");
+        error!(error = %e, "Updates disabled, cannot start the worker");
         return;
     }
     // The status changes here, before the worker runs the command: a second
@@ -56,6 +56,7 @@ pub fn setup(app: &App) {
             return;
         }
         app.set_update_status("checking".into());
+        // The worker only stops with the app
         let _ = t.send(Command::Check);
     });
     let weak = app.as_weak();
@@ -97,7 +98,7 @@ fn worker(
                 match update::check(VERSION, system.as_ref()) {
                     Ok(check) => {
                         let version = check.release.version().to_string();
-                        info!("Updates: latest release {version}, {:?}", check.plan);
+                        info!(version = %version, plan = ?check.plan, "Latest release checked");
                         let (status, kind, size) = match &check.plan {
                             Plan::UpToDate => ("up-to-date", "", 0),
                             Plan::Available => ("available", "", 0),
@@ -115,7 +116,7 @@ fn worker(
                         });
                     }
                     Err(e) => {
-                        warn!("Updates: {e:#}");
+                        warn!(error = format_args!("{e:#}"), "Update check failed");
                         set_status(&app, "error", &format!("{e:#}"));
                     }
                 }
@@ -127,7 +128,7 @@ fn worker(
                     continue;
                 };
                 if let Err(e) = install(&app, installer, &download) {
-                    warn!("Updates: installing {version}: {e:#}");
+                    error!(version = %version, error = format_args!("{e:#}"), "Update not installed");
                     set_status(&app, "error", &format!("{e:#}"));
                     // Install again after a check
                 }
@@ -137,7 +138,7 @@ fn worker(
 }
 
 fn install(app: &Weak<App>, installer: &Installer, download: &Download) -> anyhow::Result<()> {
-    info!("Updates: downloading {}", download.file);
+    info!(file = %download.file, "Downloading update");
     let dir = pedalboard::state::data_dir().join("update");
     let mut shown = 0.0f32;
     let path = update::download(download, &dir, |received, total| {
@@ -166,7 +167,7 @@ fn install(app: &Weak<App>, installer: &Installer, download: &Download) -> anyho
             anyhow::bail!("The installation does not finish: restart the pedalboard");
         }
     }
-    info!("Updates: {} installed", download.file);
+    info!(file = %download.file, "Update installed");
     set_status(app, "installed", "");
     Ok(())
 }
@@ -187,15 +188,5 @@ fn set_status(app: &Weak<App>, status: &'static str, message: &str) {
     ui(app, move |app| {
         app.set_update_message(message.into());
         app.set_update_status(status.into());
-    });
-}
-
-/// Run on the UI thread
-fn ui(app: &Weak<App>, f: impl FnOnce(&App) + Send + 'static) {
-    let app = app.clone();
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(app) = app.upgrade() {
-            f(&app);
-        }
     });
 }

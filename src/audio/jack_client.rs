@@ -1,3 +1,4 @@
+use crate::sync::MutexExt;
 use anyhow::{Context, Result};
 use crossbeam_channel::Sender;
 use jack::{Client, ClientOptions, Control, NotificationHandler, ProcessHandler, ProcessScope};
@@ -52,21 +53,21 @@ impl JackClientBuilder {
         looper: Arc<Mutex<Looper>>,
         tuner_tx: Sender<TunerResult>,
     ) -> Result<ActiveJack> {
-        info!("Initializing JACK client: {}", self.client_name);
-
         let (client, _status) = Client::new(&self.client_name, ClientOptions::NO_START_SERVER)
             .context("Failed to create JACK client")?;
 
         let sample_rate = client.sample_rate() as f32;
         let buffer_size = client.buffer_size() as usize;
         info!(
-            "JACK client created - Sample rate: {}Hz, Buffer size: {} samples",
-            sample_rate, buffer_size
+            client = %self.client_name,
+            sample_rate,
+            buffer_size,
+            "JACK client created"
         );
 
         // Tuner and looper depend on the server's sample rate
-        *tuner.lock().unwrap() = Tuner::new(sample_rate);
-        *looper.lock().unwrap() = Looper::new(sample_rate);
+        *tuner.locked() = Tuner::new(sample_rate);
+        *looper.locked() = Looper::new(sample_rate);
 
         // As many inputs and outputs as the interface has (at least the
         // guitar input and a stereo pair)
@@ -80,6 +81,7 @@ impl JackClientBuilder {
                 .with_context(|| format!("Failed to register input {i}"))?;
             if i == 1 {
                 // The name of the single input before multi-channel support
+                // Cosmetic: other clients find the port by its name anyway
                 let _ = port.set_alias(&format!("{}:guitar_in", self.client_name));
             }
             in_ports.push(port);
@@ -94,7 +96,7 @@ impl JackClientBuilder {
             }
             out_ports.push(port);
         }
-        info!("{inputs} inputs, {outputs} outputs");
+        info!(inputs, outputs, "Ports registered");
         // With a single physical output, the routing sees one output, so the
         // main pair is summed on it
         let heard = if playbacks.len() == 1 { 1 } else { outputs };
@@ -137,7 +139,7 @@ impl JackClientBuilder {
             .context("Failed to activate JACK client")?;
         connect_system_ports(client.as_client(), &self.client_name, &captures, &playbacks);
 
-        info!("JACK client activated and processing audio");
+        info!("JACK client active");
         Ok(ActiveJack {
             client,
             control,
@@ -172,20 +174,26 @@ fn physical_ports(client: &Client) -> (Vec<String>, Vec<String>) {
 fn connect_system_ports(client: &Client, name: &str, captures: &[String], playbacks: &[String]) {
     // Which interface port each input and output is wired to, to tell a
     // routing problem from a silent output of the interface (issue #19)
-    info!("Interface inputs: {}", list(captures));
-    info!("Interface outputs: {}", list(playbacks));
+    info!(
+        inputs = %list(captures),
+        outputs = %list(playbacks),
+        "Audio interface ports"
+    );
     if std::env::var_os("PEDALBOARD_NO_AUTOCONNECT").is_some() {
-        info!("PEDALBOARD_NO_AUTOCONNECT set: ports left unconnected");
+        info!("Ports left unconnected (PEDALBOARD_NO_AUTOCONNECT)");
         return;
     }
     if captures.len().max(playbacks.len()) > MAX_PORTS {
-        warn!("Only the first {MAX_PORTS} inputs and outputs of the interface are used");
+        warn!(
+            max = MAX_PORTS,
+            "Only the first inputs and outputs of the interface are used"
+        );
     }
     let mut connected = Vec::new();
     let mut connect =
         |source: &str, destination: &str| match client.connect_ports_by_name(source, destination) {
             Ok(()) => connected.push(format!("{source} → {destination}")),
-            Err(e) => warn!("Cannot connect {source} to {destination}: {e}"),
+            Err(e) => warn!(source, destination, error = %e, "Ports not connected"),
         };
     for (i, capture) in captures.iter().take(MAX_PORTS).enumerate() {
         connect(capture, &format!("{name}:in_{}", i + 1));
@@ -193,7 +201,7 @@ fn connect_system_ports(client: &Client, name: &str, captures: &[String], playba
     for (i, playback) in playbacks.iter().take(MAX_PORTS).enumerate() {
         connect(&format!("{name}:out_{}", i + 1), playback);
     }
-    info!("Connected: {}", list(&connected));
+    info!(connections = %list(&connected), "Ports connected");
 }
 
 fn list(items: &[String]) -> String {
@@ -252,7 +260,15 @@ impl ProcessHandler for PedalboardProcessor {
         let start = Instant::now();
         super::flush_denormals();
         self.router.update();
-        let input = self.in_ports[self.router.chain_input()].as_slice(ps);
+        // The router keeps the input within the ports; the first otherwise
+        let Some(port) = self
+            .in_ports
+            .get(self.router.chain_input())
+            .or_else(|| self.in_ports.first())
+        else {
+            return Control::Continue;
+        };
+        let input = port.as_slice(ps);
         let n = input.len();
         let [left, right] = &mut self.scratch;
         if left.len() < n {
@@ -289,7 +305,7 @@ impl ProcessHandler for PedalboardProcessor {
         let ports = self.in_ports.len();
         let heard = if muted { 0 } else { ports };
         let switching = {
-            let mut io = ChainIo::new(&inputs[..heard], &mut self.sends);
+            let mut io = ChainIo::new(inputs.get(..heard).unwrap_or(&[]), &mut self.sends);
             self.chain_switcher.process_io(left, right, &mut io)
         };
 
@@ -309,7 +325,7 @@ impl ProcessHandler for PedalboardProcessor {
                 bus.fill(0.0);
             }
         }
-        let passed = |i: u8| inputs[..heard].get(i as usize).copied();
+        let passed = |i: u8| inputs.get(..heard)?.get(i as usize).copied();
         // The main mix, then each send
         let mut buses: [[&[f32]; 2]; 1 + MAX_SENDS] = [[&[], &[]]; 1 + MAX_SENDS];
         buses[0] = [left, right];
@@ -321,7 +337,7 @@ impl ProcessHandler for PedalboardProcessor {
             self.router.render(port, &buses, passed, out);
             self.ports.record_output(port, out);
         }
-        for (port, input) in inputs[..ports].iter().enumerate() {
+        for (port, input) in inputs.iter().take(ports).enumerate() {
             self.ports.record_input(port, input);
         }
         self.levels.record(input, left, right);

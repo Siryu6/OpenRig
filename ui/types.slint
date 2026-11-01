@@ -124,6 +124,7 @@ export enum LooperState {
 export struct ResourceStatus {
     dsp-load: float,        // pedalboard audio callback, average fraction of the period
     dsp-peak: float,        // worst cycle of the last second
+    dsp-cores: int,         // most cores the effects ran on in the last second
     jack-load: float,       // whole JACK graph, as reported by the server
     cpu: float,             // whole machine
     cpu-max-core: float,    // busiest core
@@ -366,4 +367,13 @@ export struct ScopeLive {
     wave-in: string,
     wave-out: string,
     gain: string,           // output against input, "+12.5 dB"
+}
+
+// A setting of pedalboard.txt in Settings → Audio & system
+export struct SystemSetting {
+    key: string,            // "audio_device", "sample_rate"…
+    label: string,          // "INTERFACE"
+    value: string,          // shown in the stepper
+    can-decrement: bool,
+    can-increment: bool,
 }

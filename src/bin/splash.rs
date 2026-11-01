@@ -86,7 +86,10 @@ fn draw(fb: &Framebuffer, logo: &Logo, rotation: u32) -> Result<(), String> {
         (logo.width as f32 * scale) as usize,
         (logo.height as f32 * scale) as usize,
     );
-    let (left, top) = ((width - logo_w) / 2, (height - logo_h) / 2);
+    let (left, top) = (
+        width.saturating_sub(logo_w) / 2,
+        height.saturating_sub(logo_h) / 2,
+    );
 
     let mut device = std::fs::OpenOptions::new()
         .read(true)
@@ -94,7 +97,11 @@ fn draw(fb: &Framebuffer, logo: &Logo, rotation: u32) -> Result<(), String> {
         .open(&fb.device)
         .map_err(|e| format!("{}: {e}", fb.device))?;
     let mut var = ScreenInfo::get(&device).map_err(|e| format!("{}: {e}", fb.device))?;
-    let mut frame = vec![0u8; fb.stride * fb.height];
+    let size = fb
+        .stride
+        .checked_mul(fb.height)
+        .ok_or("framebuffer too large")?;
+    let mut frame = vec![0u8; size];
     for py in 0..fb.height {
         for px in 0..fb.width {
             let (x, y) = match rotation {
@@ -180,7 +187,10 @@ impl ScreenInfo {
     fn pixel(&self, rgb: [u8; 3]) -> u32 {
         let channel = |[offset, length, _]: [u32; 3], value: u8| {
             let length = length.min(8);
-            (u32::from(value) >> (8 - length)) << offset
+            // An offset past the pixel (a broken driver) drops the channel
+            (u32::from(value) >> (8 - length))
+                .checked_shl(offset)
+                .unwrap_or(0)
         };
         let [r, g, b, a] = self.colors;
         channel(r, rgb[0]) | channel(g, rgb[1]) | channel(b, rgb[2]) | channel(a, 0xff)
@@ -209,22 +219,31 @@ impl Logo {
         let rgba = match info.color_type {
             png::ColorType::Rgba => buf,
             png::ColorType::Rgb => buf
-                .chunks(3)
-                .flat_map(|p| [p[0], p[1], p[2], 0xff])
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .flat_map(|&[r, g, b]| [r, g, b, 0xff])
                 .collect(),
             png::ColorType::GrayscaleAlpha => buf
-                .chunks(2)
-                .flat_map(|p| [p[0], p[0], p[0], p[1]])
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .flat_map(|&[v, a]| [v, v, v, a])
                 .collect(),
             png::ColorType::Grayscale => buf.iter().flat_map(|&v| [v, v, v, 0xff]).collect(),
             png::ColorType::Indexed => return Err("unexpected indexed colors".into()),
         };
-        if info.width == 0 || info.height == 0 {
+        let (width, height) = (info.width as usize, info.height as usize);
+        if width == 0 || height == 0 {
             return Err("empty picture".into());
         }
+        // `over` reads every pixel of width × height
+        if width.checked_mul(height).and_then(|n| n.checked_mul(4)) != Some(rgba.len()) {
+            return Err("unexpected picture size".into());
+        }
         Ok(Self {
-            width: info.width as usize,
-            height: info.height as usize,
+            width,
+            height,
             rgba,
         })
     }
@@ -268,7 +287,10 @@ impl Framebuffer {
         };
         let usable = fb.width > 0
             && fb.height > 0
-            && fb.stride >= fb.width * fb.bytes_per_pixel()
+            && fb
+                .width
+                .checked_mul(fb.bytes_per_pixel())
+                .is_some_and(|row| fb.stride >= row)
             && std::path::Path::new(&fb.device).exists();
         usable.then_some(fb)
     }
@@ -285,6 +307,7 @@ fn console_graphics() {
     const KDSETMODE: libc::c_ulong = 0x4B3A;
     const KD_GRAPHICS: libc::c_int = 1;
     if let Ok(tty) = std::fs::OpenOptions::new().write(true).open("/dev/tty0") {
+        // Best effort: without it the console may draw over the picture
         // SAFETY: KDSETMODE takes an int by value; the fd is open
         unsafe { libc::ioctl(tty.as_raw_fd(), KDSETMODE as _, KD_GRAPHICS) };
     }

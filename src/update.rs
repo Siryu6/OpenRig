@@ -14,13 +14,16 @@
 //! Every call here blocks on the network or on the installer: call them off
 //! the UI thread.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
+use tracing::warn;
+
+use crate::system_config::{request_state, send_request};
 
 /// Latest release of the official repository
 pub const RELEASES_URL: &str = "https://api.github.com/repos/Siryu6/OpenRig/releases/latest";
@@ -319,10 +322,12 @@ pub fn download(
         bail!("Invalid file name: {}", download.file);
     }
     fs::create_dir_all(dir).with_context(|| format!("Cannot create {}", dir.display()))?;
-    // Leftovers of an earlier attempt
+    // Leftovers of an earlier attempt: what stays only takes space
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
-            let _ = fs::remove_file(entry.path());
+            if let Err(e) = fs::remove_file(entry.path()) {
+                warn!(path = %entry.path().display(), error = %e, "Old update file not removed");
+            }
         }
     }
     let path = dir.join(&download.file);
@@ -365,11 +370,13 @@ pub fn download(
         if digest != download.sha256 {
             bail!("The download is damaged (checksum mismatch)");
         }
-        file.sync_all()?;
-        fs::rename(&part, &path)?;
+        file.sync_all()
+            .with_context(|| format!("Cannot write {}", part.display()))?;
+        fs::rename(&part, &path).with_context(|| format!("Cannot write {}", path.display()))?;
         Ok(path.clone())
     })();
     if result.is_err() {
+        // Not there when the download failed before creating it
         let _ = fs::remove_file(&part);
     }
     result
@@ -401,32 +408,11 @@ impl Installer {
     /// Ask for `file` (in the download directory) to be installed; returns
     /// the request id the status refers to
     pub fn request(&self, kind: Kind, file: &str) -> Result<String> {
-        let id = format!(
-            "{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or_default()
-        );
-        // Non-blocking: without the installer reading, opening fails
-        // instead of waiting forever
-        #[cfg(unix)]
-        let mut fifo = {
-            use std::os::unix::fs::OpenOptionsExt;
-            OpenOptions::new()
-                .write(true)
-                .custom_flags(libc::O_NONBLOCK)
-                .open(self.dir.join("request"))
-        }
-        .map_err(|_| anyhow!("The system installer is not running"))?;
-        #[cfg(not(unix))]
-        let mut fifo = OpenOptions::new()
-            .write(true)
-            .open(self.dir.join("request"))
-            .map_err(|_| anyhow!("The system installer is not running"))?;
-        writeln!(fifo, "{id} {} {file}", kind.request())?;
-        Ok(id)
+        send_request(
+            &self.dir,
+            "system installer",
+            &format!("{} {file}", kind.request()),
+        )
     }
 
     /// Status of request `id`; `None` until the installer took it
@@ -437,9 +423,7 @@ impl Installer {
 }
 
 fn parse_status(text: &str, id: &str) -> Option<Status> {
-    let line = text.lines().next()?;
-    let rest = line.strip_prefix(id)?.strip_prefix(' ')?;
-    let (state, detail) = rest.split_once(' ').unwrap_or((rest, ""));
+    let (state, detail) = request_state(text, id)?;
     match state {
         "installing" => Some(Status::Installing),
         "done" => Some(Status::Done),

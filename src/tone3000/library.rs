@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use super::auth::{download_agent, get_json, AuthError};
 use crate::plugins::scanner::{TONE_INFO_FILE, TONE_PICTURE_FILE};
@@ -266,7 +267,7 @@ pub fn list(token: &str, list: List, gear: Option<&str>, page: u32) -> Result<Pa
         path += &format!("&page_size={PAGE_SIZE}");
     }
     if let Some(gear) = gear {
-        path += &format!("&gear={gear}");
+        path += &format!("&gear={}", encode(gear));
     }
     let response: ListResponse<Tone> = get_json(token, &path)?;
     let mut tones = response.data;
@@ -318,13 +319,21 @@ fn encode(value: &str) -> String {
         .collect()
 }
 
+/// Pages of models read at most per set: bounds a tone whose answer
+/// never ends (25 per page)
+const MAX_MODEL_PAGES: u32 = 40;
+
 /// Every model of a tone. The API leaves A2 models out unless asked, so
 /// both sets are requested.
 pub fn models(token: &str, tone: &Tone) -> Result<Vec<Model>, AuthError> {
     let mut queries = vec![""];
     if tone.format != "ir" && tone.a2_models_count > 0 {
         queries.push("&architecture=2");
-        if tone.a1_models_count + tone.custom_models_count == 0 {
+        if tone
+            .a1_models_count
+            .saturating_add(tone.custom_models_count)
+            == 0
+        {
             queries.remove(0);
         }
     }
@@ -337,8 +346,13 @@ pub fn models(token: &str, tone: &Tone) -> Result<Vec<Model>, AuthError> {
                 tone.id
             );
             let response: ListResponse<Model> = get_json(token, &path)?;
+            let empty = response.data.is_empty();
             models.extend(response.data);
-            if page >= response.total_pages.unwrap_or(0) {
+            if empty || page >= response.total_pages.unwrap_or(0) {
+                break;
+            }
+            if page >= MAX_MODEL_PAGES {
+                warn!(tone = tone.id, pages = page, "Tone models cut short");
                 break;
             }
             page += 1;
@@ -418,6 +432,7 @@ pub fn download(token: &str, models_dir: &Path, tone: &Tone, model: &Model) -> R
         })
         .and_then(|()| std::fs::rename(&part, &path).map_err(Into::into));
     if let Err(e) = result {
+        // May already be gone (renamed) or never written
         let _ = std::fs::remove_file(&part);
         return Err(e.context(format!("Download of {} failed", model.name)));
     }
@@ -463,7 +478,7 @@ pub fn save_picture(models_dir: &Path, tone: &Tone) -> bool {
     match saved {
         Ok(()) => true,
         Err(e) => {
-            tracing::warn!("Picture of {} not saved: {:#}", tone.title, e);
+            warn!(tone = %tone.title, error = format_args!("{e:#}"), "Tone picture not saved");
             false
         }
     }

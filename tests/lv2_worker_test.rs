@@ -2,6 +2,7 @@
 //! the Dragonfly reverbs do: when its Level control changes, `run` schedules
 //! a job, `work` (worker thread) answers with the level doubled, and
 //! `work_response` makes it the constant output. `end_run` must follow.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // Tests: failing is their job
 #![cfg(feature = "lv2")]
 
 use std::time::{Duration, Instant};

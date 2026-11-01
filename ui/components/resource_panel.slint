@@ -170,7 +170,8 @@ export component ResourcePanel inherits Rectangle {
             Gauge {
                 label: "DSP load (effects)";
                 value: root.status.dsp-load < 0 ? "n/a"
-                    : round(root.status.dsp-load * 100) + "%  ·  peak " + round(root.status.dsp-peak * 100) + "%";
+                    : round(root.status.dsp-load * 100) + "%  ·  peak " + round(root.status.dsp-peak * 100) + "%"
+                        + (root.status.dsp-cores > 1 ? "  ·  " + root.status.dsp-cores + " cores" : "");
                 fraction: root.status.dsp-load;
                 marker: root.status.dsp-peak;
                 fill: root.tone(max(root.status.dsp-load, root.status.dsp-peak * 0.9), 0.7, 0.9);

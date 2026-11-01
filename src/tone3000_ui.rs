@@ -3,6 +3,7 @@
 //! downloads of the models the user ticks) and the pictures of tones and
 //! creators.
 
+use pedalboard::sync::{CondvarExt, MutexExt};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -11,7 +12,7 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use slint::{
     ComponentHandle, Image, Model as _, Rgb8Pixel, Rgba8Pixel, SharedPixelBuffer, SharedString,
 };
-use tracing::warn;
+use tracing::{debug, error, warn};
 
 use pedalboard::audio::ChainNode;
 use pedalboard::plugins::scanner::{self, FileBlock, FileKind};
@@ -21,7 +22,7 @@ use pedalboard::tone3000::library::{self, List, Model, Tone};
 use pedalboard::tone3000::limiter;
 use pedalboard::tone3000::{self, AuthError, ConnectEvent, Connection, DeviceCode, Settings};
 
-use crate::{model, App, Features, T3kModel, T3kTone};
+use crate::{model, spawn, App, Features, T3kModel, T3kTone};
 
 /// View index of the settings page
 const SETTINGS_VIEW: i32 = 7;
@@ -118,7 +119,7 @@ impl Pictures {
             return (SharedString::new(), Image::default());
         };
         let key = Self::key(url, side);
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.locked();
         if let Some(buffer) = state.cache.get(&key) {
             return (key.into(), Image::from_rgba8(buffer.clone()));
         }
@@ -128,9 +129,10 @@ impl Pictures {
         {
             state.queue.push_back((key.clone(), url.to_string(), side));
             if state.workers < PICTURE_WORKERS {
-                state.workers += 1;
                 let pictures = self.clone();
-                std::thread::spawn(move || pictures.work());
+                if spawn("t3k-pictures", move || pictures.work()) {
+                    state.workers += 1;
+                }
             }
             self.wake.notify_one();
         }
@@ -140,7 +142,7 @@ impl Pictures {
     /// Forget what is waiting (a new list replaces the old one) and try the
     /// failed pictures again
     fn reset_queue(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.locked();
         state.queue.clear();
         state.failed.clear();
     }
@@ -148,22 +150,22 @@ impl Pictures {
     fn work(self: Arc<Self>) {
         loop {
             let (key, url, side) = {
-                let mut state = self.state.lock().unwrap();
+                let mut state = self.state.locked();
                 loop {
                     if let Some(job) = state.queue.pop_front() {
                         state.busy.insert(job.0.clone());
                         break job;
                     }
-                    state = self.wake.wait(state).unwrap();
+                    state = self.wake.wait_locked(state);
                 }
             };
             let picture = images::fetch(&url, side);
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.locked();
             state.busy.remove(&key);
             let picture = match picture {
                 Ok(picture) => picture,
                 Err(e) => {
-                    tracing::debug!("TONE3000 picture {}: {:#}", url, e);
+                    debug!(url = %url, error = format_args!("{e:#}"), "TONE3000 picture not fetched");
                     state.failed.insert(key);
                     continue;
                 }
@@ -181,7 +183,7 @@ impl Pictures {
                     break;
                 };
                 if let Some(old) = state.cache.remove(&old) {
-                    state.bytes -= old.as_bytes().len();
+                    state.bytes = state.bytes.saturating_sub(old.as_bytes().len());
                 }
             }
             drop(state);
@@ -248,7 +250,7 @@ pub fn local_picture(path: &std::path::Path) -> Image {
                 picture.side,
             )),
             Err(e) => {
-                warn!("Cannot read {}: {:#}", path.display(), e);
+                warn!(path = %path.display(), error = format_args!("{e:#}"), "Tone picture unreadable");
                 Image::default()
             }
         };
@@ -305,10 +307,10 @@ impl Shared {
         &self,
         get: impl FnOnce(&mut Settings) -> Result<String, AuthError>,
     ) -> Result<String, AuthError> {
-        let _guard = self.token_lock.lock().unwrap();
-        let mut settings = self.settings.lock().unwrap().clone();
+        let _guard = self.token_lock.locked();
+        let mut settings = self.settings.locked().clone();
         let token = get(&mut settings)?;
-        let mut current = self.settings.lock().unwrap();
+        let mut current = self.settings.locked();
         // Keep the rotated tokens unless the user signed out meanwhile
         if current.connected() {
             *current = settings;
@@ -369,13 +371,13 @@ fn show_code(app: &App, code: &DeviceCode) {
 
 /// Report a failed API call; a revoked link signs out
 fn fail(weak: &slint::Weak<App>, shared: &Arc<Shared>, error: AuthError) {
-    warn!("{}", error);
+    warn!(error = %error, "TONE3000 request failed");
     let shared = shared.clone();
     let _ = weak.upgrade_in_event_loop(move |app| {
         if matches!(error, AuthError::Revoked) {
-            let mut settings = shared.settings.lock().unwrap();
+            let mut settings = shared.settings.locked();
             if let Err(e) = settings.disconnect() {
-                warn!("{:#}", e);
+                error!(error = format_args!("{e:#}"), "TONE3000 sign-out not saved");
             }
             apply(&app, &settings);
             if app.get_current_view() > SETTINGS_VIEW {
@@ -422,13 +424,13 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
     if verify {
         let weak = app.as_weak();
         let shared = shared.clone();
-        std::thread::spawn(move || {
+        spawn("t3k-session", move || {
             for attempt in 1.. {
                 match shared.token() {
                     Ok(_) => break,
                     Err(AuthError::Unavailable(e)) => {
                         if attempt >= STARTUP_ATTEMPTS {
-                            warn!("TONE3000 session not checked, offline: {}", e);
+                            warn!(error = %e, "TONE3000 session not checked, offline");
                             break;
                         }
                         std::thread::sleep(STARTUP_RETRY);
@@ -461,9 +463,10 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
             },
         };
         {
-            let mut settings = state.settings.lock().unwrap();
+            let mut settings = state.settings.locked();
             settings.client_id = key.clone();
             if let Err(e) = settings.save() {
+                error!(error = format_args!("{e:#}"), "TONE3000 settings not saved");
                 app.set_t3k_error(format!("{e:#}").into());
                 return;
             }
@@ -484,25 +487,25 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
                 match event {
                     ConnectEvent::Code(code) => show_code(&app, &code),
                     ConnectEvent::Connected(settings) => {
-                        events.connection.lock().unwrap().take();
-                        events.account_avatar.lock().unwrap().take();
+                        events.connection.locked().take();
+                        events.account_avatar.locked().take();
                         let user = settings.session.as_ref().map(|s| s.username.clone());
                         apply(&app, &settings);
-                        *events.settings.lock().unwrap() = settings;
+                        *events.settings.locked() = settings;
                         let message =
                             format!("Connected to TONE3000 as @{}", user.unwrap_or_default());
                         crate::show_status(&app, message.into());
                     }
                     ConnectEvent::Failed(message) => {
-                        events.connection.lock().unwrap().take();
-                        apply(&app, &events.settings.lock().unwrap());
+                        events.connection.locked().take();
+                        apply(&app, &events.settings.locked());
                         app.set_t3k_error(message.into());
                     }
                     ConnectEvent::Cancelled => {}
                 }
             });
         });
-        *state.connection.lock().unwrap() = Some(connection);
+        *state.connection.locked() = Some(connection);
     });
 
     let weak = app.as_weak();
@@ -510,19 +513,20 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
     app.on_t3k_cancel(move || {
         let Some(app) = weak.upgrade() else { return };
         state.generation.fetch_add(1, Ordering::Relaxed);
-        state.connection.lock().unwrap().take();
-        apply(&app, &state.settings.lock().unwrap());
+        state.connection.locked().take();
+        apply(&app, &state.settings.locked());
     });
 
     let weak = app.as_weak();
     let state = shared;
     app.on_t3k_disconnect(move || {
         let Some(app) = weak.upgrade() else { return };
-        let mut settings = state.settings.lock().unwrap();
+        let mut settings = state.settings.locked();
         if let Err(e) = settings.disconnect() {
+            error!(error = format_args!("{e:#}"), "TONE3000 sign-out not saved");
             app.set_t3k_error(format!("{e:#}").into());
         }
-        state.account_avatar.lock().unwrap().take();
+        state.account_avatar.locked().take();
         apply(&app, &settings);
         crate::show_status(&app, "Disconnected from TONE3000".into());
     });
@@ -590,7 +594,7 @@ fn tone_row(shared: &Shared, library: &Library, tone: &Tone) -> T3kTone {
 
 /// Show the signed-in account's avatar, asking TONE3000 for it once
 fn show_account_avatar(app: &App, shared: &Arc<Shared>) {
-    let known = shared.account_avatar.lock().unwrap().clone();
+    let known = shared.account_avatar.locked().clone();
     match known {
         Some(url) => {
             let (key, image) = shared.pictures.get(url.as_deref(), AVATAR_SIDE);
@@ -600,12 +604,16 @@ fn show_account_avatar(app: &App, shared: &Arc<Shared>) {
         None => {
             let weak = app.as_weak();
             let shared = shared.clone();
-            std::thread::spawn(move || {
+            spawn("t3k-avatar", move || {
                 // Not reachable: the "@" placeholder stays, asked again next time
-                let Ok(url) = shared.call(tone3000::avatar) else {
-                    return;
+                let url = match shared.call(tone3000::avatar) {
+                    Ok(url) => url,
+                    Err(e) => {
+                        debug!(error = %e, "TONE3000 avatar not fetched");
+                        return;
+                    }
                 };
-                *shared.account_avatar.lock().unwrap() = Some(url);
+                *shared.account_avatar.locked() = Some(url);
                 let _ = weak.upgrade_in_event_loop(move |app| show_account_avatar(&app, &shared));
             });
         }
@@ -723,7 +731,7 @@ fn downloadable(shared: &Shared, library: &Library, model: &Model) -> bool {
 /// after the other at the pace TONE3000 accepts (no bulk download: only
 /// what the user picked)
 fn download_selected(app: &App, shared: &Arc<Shared>) {
-    let mut library = shared.library.lock().unwrap();
+    let mut library = shared.library.locked();
     let Some(tone) = library.tone.clone() else {
         return;
     };
@@ -741,10 +749,14 @@ fn download_selected(app: &App, shared: &Arc<Shared>) {
     }
     shared.cancel.store(false, Ordering::Relaxed);
     if !library.downloads.worker && !library.downloads.queue.is_empty() {
-        library.downloads.worker = true;
         let weak = app.as_weak();
-        let shared = shared.clone();
-        std::thread::spawn(move || download_worker(weak, shared));
+        let worker = shared.clone();
+        library.downloads.worker = spawn("t3k-downloads", move || download_worker(weak, worker));
+        if !library.downloads.worker {
+            // Nothing will take them: dropped, as a cancel would
+            library.downloads = Downloads::default();
+            crate::show_status(app, "Cannot start the downloads".into());
+        }
     }
     show_models(app, shared, &library);
 }
@@ -752,11 +764,11 @@ fn download_selected(app: &App, shared: &Arc<Shared>) {
 /// Stop the downloads: the queue is dropped, the current file finishes
 fn cancel_downloads(app: &App, shared: &Shared) {
     shared.cancel.store(true, Ordering::Relaxed);
-    let mut library = shared.library.lock().unwrap();
+    let mut library = shared.library.locked();
     let downloads = &mut library.downloads;
     for (_, model) in downloads.queue.drain(..) {
         downloads.ids.remove(&model.id);
-        downloads.total -= 1;
+        downloads.total = downloads.total.saturating_sub(1);
     }
     show_models(app, shared, &library);
 }
@@ -765,7 +777,7 @@ fn cancel_downloads(app: &App, shared: &Shared) {
 fn show_downloads(weak: &slint::Weak<App>, shared: &Arc<Shared>, refresh_blocks: bool) {
     let shared = shared.clone();
     let _ = weak.upgrade_in_event_loop(move |app| {
-        let library = shared.library.lock().unwrap();
+        let library = shared.library.locked();
         show_models(&app, &shared, &library);
         if refresh_blocks {
             show_tones(&app, &shared, &library);
@@ -780,7 +792,7 @@ fn show_downloads(weak: &slint::Weak<App>, shared: &Arc<Shared>, refresh_blocks:
 fn download_worker(weak: slint::Weak<App>, shared: Arc<Shared>) {
     loop {
         let job = {
-            let mut library = shared.library.lock().unwrap();
+            let mut library = shared.library.locked();
             let downloads = &mut library.downloads;
             match downloads.queue.pop_front() {
                 Some((tone, model)) => {
@@ -820,15 +832,15 @@ fn download_worker(weak: slint::Weak<App>, shared: Arc<Shared>) {
         };
         let mut revoked = None;
         {
-            let mut library = shared.library.lock().unwrap();
+            let mut library = shared.library.locked();
             let downloads = &mut library.downloads;
             downloads.ids.remove(&model.id);
             downloads.active = None;
             match (result, failure) {
-                (None, _) => downloads.total -= 1,
+                (None, _) => downloads.total = downloads.total.saturating_sub(1),
                 (Some(Ok(_)), _) => downloads.done += 1,
                 (Some(Err(_)), Some(e)) => {
-                    warn!("{:#}", e);
+                    warn!(model = %model.name, error = format_args!("{e:#}"), "TONE3000 download failed");
                     downloads.failed += 1;
                     downloads.last_error = Some(format!("{e:#}"));
                 }
@@ -837,7 +849,7 @@ fn download_worker(weak: slint::Weak<App>, shared: Arc<Shared>) {
                     downloads.failed += 1;
                     for (_, model) in downloads.queue.drain(..) {
                         downloads.ids.remove(&model.id);
-                        downloads.total -= 1;
+                        downloads.total = downloads.total.saturating_sub(1);
                     }
                     revoked = Some(e);
                 }
@@ -897,13 +909,13 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
         app.set_t3k_target_name(block.map(|b| b.name).unwrap_or_default().into());
 
         let (tab, gear) = {
-            let mut library = state.library.lock().unwrap();
+            let mut library = state.library.locked();
             library.target = block;
             let current = library.gear.clone().unwrap_or_default();
             let gear = if gears.contains(&current.as_str()) {
                 current
             } else {
-                gears[0].to_string()
+                gears.first().copied().unwrap_or_default().to_string()
             };
             app.set_t3k_query(library.query.as_str().into());
             (library.list as i32, gear)
@@ -918,7 +930,7 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
         let mut list = usize::try_from(list).unwrap_or(0).min(SEARCH_TAB);
         let gear = (!gear.is_empty()).then(|| gear.to_string());
         let (page, query) = {
-            let mut library = state.library.lock().unwrap();
+            let mut library = state.library.locked();
             if list == SEARCH_TAB && library.query.is_empty() {
                 list = library.browse;
             }
@@ -946,7 +958,7 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
 
         let weak = app.as_weak();
         let shared = state.clone();
-        std::thread::spawn(move || {
+        let started = spawn("t3k-list", move || {
             let result = shared.call(|token| match List::ALL.get(list) {
                 Some(&list) => library::list(token, list, gear.as_deref(), page),
                 // Only sent when the user submits a search
@@ -964,7 +976,7 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
                 app.set_t3k_loading(false);
                 match result {
                     Ok(page) => {
-                        let mut library = state.library.lock().unwrap();
+                        let mut library = state.library.locked();
                         library.page = page.page;
                         library.tones.extend(page.tones);
                         app.set_t3k_has_more(page.has_more);
@@ -975,6 +987,10 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
                 }
             });
         });
+        if !started {
+            app.set_t3k_loading(false);
+            app.set_t3k_list_error("Cannot load the list now".into());
+        }
     });
 
     let weak = app.as_weak();
@@ -982,7 +998,7 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
     app.on_t3k_open_tone(move |index| {
         let Some(app) = weak.upgrade() else { return };
         let tone = {
-            let mut library = state.library.lock().unwrap();
+            let mut library = state.library.locked();
             let Some(tone) = usize::try_from(index)
                 .ok()
                 .and_then(|i| library.tones.get(i))
@@ -997,7 +1013,7 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
             show_models(&app, &state, &library);
             tone
         };
-        let row = tone_row(&state, &state.library.lock().unwrap(), &tone);
+        let row = tone_row(&state, &state.library.locked(), &tone);
         app.set_t3k_detail(row.clone());
         app.set_t3k_detail_url(tone.page_url().trim_start_matches("https://").into());
         app.set_t3k_models_loading(tone.supported());
@@ -1007,7 +1023,7 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
             let weak = app.as_weak();
             let shared = state.clone();
             let tone = tone.clone();
-            std::thread::spawn(move || {
+            spawn("t3k-picture", move || {
                 if library::save_picture(&shared.models_dir, &tone) {
                     let _ = weak.upgrade_in_event_loop(move |app| {
                         crate::refresh_chain(&app, &shared.state);
@@ -1022,7 +1038,7 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
 
         let weak = app.as_weak();
         let shared = state.clone();
-        std::thread::spawn(move || {
+        let started = spawn("t3k-models", move || {
             let result = shared.call(|token| library::models(token, &tone));
             let revoked = matches!(result, Err(AuthError::Revoked));
             if revoked {
@@ -1036,7 +1052,7 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
                 app.set_t3k_models_loading(false);
                 match result {
                     Ok(models) => {
-                        let mut library = state.library.lock().unwrap();
+                        let mut library = state.library.locked();
                         library.models = models;
                         // A single model to get: ticked already
                         if let [model] = library.models.as_slice() {
@@ -1052,13 +1068,16 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
                 }
             });
         });
+        if !started {
+            app.set_t3k_models_loading(false);
+        }
     });
 
     let weak = app.as_weak();
     let state = shared.clone();
     app.on_t3k_toggle_model(move |index| {
         let Some(app) = weak.upgrade() else { return };
-        let mut library = state.library.lock().unwrap();
+        let mut library = state.library.locked();
         let Some(model) = usize::try_from(index)
             .ok()
             .and_then(|i| page_models(&library).get(i))
@@ -1083,7 +1102,7 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
     let state = shared.clone();
     app.on_t3k_select_page(move || {
         let Some(app) = weak.upgrade() else { return };
-        let mut library = state.library.lock().unwrap();
+        let mut library = state.library.locked();
         select_page(&state, &mut library);
         show_models(&app, &state, &library);
     });
@@ -1092,7 +1111,7 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
     let state = shared.clone();
     app.on_t3k_model_page_changed(move |page| {
         let Some(app) = weak.upgrade() else { return };
-        let mut library = state.library.lock().unwrap();
+        let mut library = state.library.locked();
         let pages = library.models.len().div_ceil(MODELS_PER_PAGE).max(1);
         library.model_page = usize::try_from(page).unwrap_or(0).min(pages - 1);
         show_models(&app, &state, &library);
@@ -1120,7 +1139,7 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
         let Some(app) = weak.upgrade() else { return };
         let query = query.trim().to_string();
         let (tab, gear) = {
-            let mut library = state.library.lock().unwrap();
+            let mut library = state.library.locked();
             library.query = query.clone();
             let tab = if query.is_empty() {
                 library.browse

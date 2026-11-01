@@ -91,7 +91,10 @@ impl BlockTap {
     fn write(&self, ring: &[AtomicU32], l: &[f32], r: &[f32], stereo: bool) {
         let start = self.written.load(Ordering::Relaxed);
         for (i, s) in l.iter().enumerate() {
-            let s = if stereo { (s + r[i]) * 0.5 } else { *s };
+            let s = match r.get(i) {
+                Some(r) if stereo => (s + r) * 0.5,
+                _ => *s,
+            };
             ring[(start + i) % TAP_SIZE].store(s.to_bits(), Ordering::Relaxed);
         }
     }

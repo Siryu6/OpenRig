@@ -138,7 +138,7 @@ fn view(app: &App, state: &AppState) -> Option<(ScopeView, Vec<EchoTap>)> {
         x: x(2.0 * time, layout.span),
         y: amplitude_up(first * echoes.feedback(&value)),
     };
-    let count = layout.taps.len() - 1;
+    let count = layout.taps.len().saturating_sub(1);
     view.summary = format!(
         "{} · {count} echo{}",
         seconds(time),

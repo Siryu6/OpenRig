@@ -8,7 +8,6 @@
 //! block without a network (on stage).
 
 use std::io::{Cursor, Read};
-use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
 
@@ -44,18 +43,8 @@ pub fn thumbnail_url(url: &str, side: u32) -> Option<String> {
     ))
 }
 
-fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
-        .https_only(true)
-        .timeout_global(Some(Duration::from_secs(20)))
-        .http_status_as_error(false)
-        .user_agent(concat!("pedalboard/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .into()
-}
-
 fn get(url: &str) -> Result<Vec<u8>> {
-    let response = agent()
+    let response = super::auth::agent()
         .get(url)
         // JPEG and PNG are the formats decoded here
         .header("Accept", "image/jpeg, image/png")
@@ -70,7 +59,8 @@ fn get(url: &str) -> Result<Vec<u8>> {
         .into_body()
         .into_reader()
         .take(MAX_BYTES + 1)
-        .read_to_end(&mut data)?;
+        .read_to_end(&mut data)
+        .context("Picture download interrupted")?;
     if data.len() as u64 > MAX_BYTES {
         bail!("picture too large");
     }
@@ -88,7 +78,7 @@ pub fn fetch(url: &str, side: u32) -> Result<Picture> {
         _ => get(url)?,
     };
     let (width, height, rgba) = decode(&data)?;
-    Ok(cover(width, height, &rgba, side))
+    Ok(cover(width, height, &rgba, side.min(MAX_SIDE as u32)))
 }
 
 /// PNG file of a picture
@@ -105,9 +95,12 @@ pub fn encode_png(picture: &Picture) -> Result<Vec<u8>> {
 
 /// A picture file saved on the pedalboard, as a square
 pub fn load(path: &std::path::Path) -> Result<Picture> {
-    let file = std::fs::File::open(path)?;
+    let read = |e| anyhow!("Cannot read {}: {e}", path.display());
+    let file = std::fs::File::open(path).map_err(read)?;
     let mut data = Vec::new();
-    file.take(MAX_BYTES + 1).read_to_end(&mut data)?;
+    file.take(MAX_BYTES + 1)
+        .read_to_end(&mut data)
+        .map_err(read)?;
     if data.len() as u64 > MAX_BYTES {
         bail!("picture too large");
     }
@@ -149,17 +142,25 @@ pub fn decode(data: &[u8]) -> Result<(usize, usize, Vec<u8>)> {
         let rgba = match info.color_type {
             png::ColorType::Rgba => buf,
             png::ColorType::Rgb => buf
-                .chunks(3)
-                .flat_map(|p| [p[0], p[1], p[2], 0xff])
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .flat_map(|&[r, g, b]| [r, g, b, 0xff])
                 .collect(),
             png::ColorType::GrayscaleAlpha => buf
-                .chunks(2)
-                .flat_map(|p| [p[0], p[0], p[0], p[1]])
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .flat_map(|&[v, a]| [v, v, v, a])
                 .collect(),
             png::ColorType::Grayscale => buf.iter().flat_map(|&v| [v, v, v, 0xff]).collect(),
             png::ColorType::Indexed => bail!("PNG: unexpected indexed colors"),
         };
-        return Ok((info.width as usize, info.height as usize, rgba));
+        let (width, height) = (info.width as usize, info.height as usize);
+        if rgba.len() != width * height * 4 {
+            bail!("PNG: unexpected colors");
+        }
+        return Ok((width, height, rgba));
     }
     bail!("unsupported picture format")
 }
@@ -174,7 +175,15 @@ pub fn cover(width: usize, height: usize, rgba: &[u8], side: u32) -> Picture {
         (height - crop.min(height)) / 2,
     );
     let mut out = vec![0u8; side * side * 4];
-    if width == 0 || height == 0 {
+    // A buffer that does not match the size draws nothing rather than
+    // reading past its end
+    if width == 0
+        || height == 0
+        || width
+            .checked_mul(height)
+            .and_then(|n| n.checked_mul(4))
+            .is_none_or(|n| rgba.len() < n)
+    {
         return Picture {
             side: side as u32,
             rgba: out,

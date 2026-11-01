@@ -155,14 +155,16 @@ pub fn setup(app: &App) {
     let weak = app.as_weak();
     app.on_strip_encoder(move |encoder, action, detents| {
         if let Some(app) = weak.upgrade() {
-            event(&app, &mut before.borrow_mut(), encoder, action, detents);
+            event(&app, &before, encoder, action, detents);
         }
     });
 }
 
+/// `before` is only borrowed for a moment: the callbacks invoked here may
+/// come back to this one
 fn event(
     app: &App,
-    before: &mut HashMap<(i32, i32), f32>,
+    before: &RefCell<HashMap<(i32, i32), f32>>,
     encoder: i32,
     action: i32,
     detents: i32,
@@ -218,14 +220,7 @@ fn event(
             -1
         };
         let open = (list_row == row).then(|| app.get_strip_list_focus());
-        match list_field(count, current, action, detents, open) {
-            List::Keep => {}
-            List::Focus(option) => {
-                app.set_strip_list_focus(option);
-                app.set_strip_list_row(row);
-            }
-            List::Close => app.set_strip_list_row(-1),
-        }
+        show_list(app, row, list_field(count, current, action, detents, open));
         if let (Some(focus), PRESS) = (open, action) {
             let picked = if focus < 0 { current.max(0) } else { focus };
             if row == FACTORY_ROW {
@@ -256,26 +251,32 @@ fn event(
     };
     let key = (instance, p.index);
     let open = (list_row == row).then(|| app.get_strip_list_focus());
-    let response = control.respond(action, detents, open, before.get(&key).copied());
+    let held = before.borrow().get(&key).copied();
+    let response = control.respond(action, detents, open, held);
     match response.before {
         Before::Keep => {}
         Before::Set(value) => {
-            before.insert(key, value);
+            before.borrow_mut().insert(key, value);
         }
         Before::Forget => {
-            before.remove(&key);
+            before.borrow_mut().remove(&key);
         }
     }
-    match response.list {
+    show_list(app, row, response.list);
+    if let Some(value) = response.value {
+        app.invoke_set_parameter(instance, p.index, value);
+    }
+}
+
+/// Open, move or close the list of row `row`
+fn show_list(app: &App, row: i32, list: List) {
+    match list {
         List::Keep => {}
         List::Focus(option) => {
             app.set_strip_list_focus(option);
             app.set_strip_list_row(row);
         }
         List::Close => app.set_strip_list_row(-1),
-    }
-    if let Some(value) = response.value {
-        app.invoke_set_parameter(instance, p.index, value);
     }
 }
 

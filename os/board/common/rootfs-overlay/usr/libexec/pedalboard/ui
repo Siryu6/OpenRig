@@ -51,6 +51,7 @@ keeper=$!
 		PEDALBOARD_POWER_REQUEST="$power/request" \
 		PEDALBOARD_ALIVE_FILE="$alive" \
 		PEDALBOARD_UPDATE_DIR=/run/pedalboard/update \
+		PEDALBOARD_SETTINGS_DIR=/run/pedalboard/settings \
 		SLINT_BACKEND=linuxkms \
 		SLINT_KMS_ROTATION="$display_rotation" \
 		"$app" 2>&1

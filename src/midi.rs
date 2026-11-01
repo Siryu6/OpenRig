@@ -118,7 +118,10 @@ pub struct RawMidi {
 
 impl RawMidi {
     pub fn as_slice(&self) -> &[u8] {
-        &self.bytes[..usize::from(self.len)]
+        // `len` is public: never past the bytes
+        self.bytes
+            .get(..usize::from(self.len))
+            .unwrap_or(&self.bytes)
     }
 }
 

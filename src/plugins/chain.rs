@@ -19,18 +19,20 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tracing::warn;
 
 use super::instance::PluginInstance;
 use super::lv2_host::Lv2Host;
 use super::scanner::{self, FileKind};
+use crate::audio::dsp_pool;
 use crate::audio::spectrum::BlockTap;
 use crate::audio::split_chain::{ChainNode, SplitType};
 use crate::midi::RawMidi;
 use crate::monitor::BlockMeter;
+use crate::sync::MutexExt;
 
 /// How long a new LV2 instance may take to load its files before its
 /// chain goes to the audio thread anyway
@@ -93,6 +95,18 @@ impl<'a> ChainIo<'a> {
         self.offset = offset;
         self.gain = from;
         self.gain_step = (to - from) / len.max(1) as f32;
+    }
+
+    /// The same inputs and part, without the sends: for a branch run on
+    /// another core, which must not add to the buses at the same time
+    pub fn without_sends(&self) -> ChainIo<'a> {
+        ChainIo {
+            inputs: self.inputs,
+            sends: &mut [],
+            offset: self.offset,
+            gain: self.gain,
+            gain_step: self.gain_step,
+        }
     }
 }
 
@@ -162,6 +176,7 @@ pub fn is_panned(split_type: SplitType, pan: [f32; 2]) -> bool {
 }
 
 /// Move `current` towards `target` by at most `step`
+#[inline]
 pub(crate) fn ramp(current: &mut f32, target: f32, step: f32) {
     if *current < target {
         *current = (*current + step).min(target);
@@ -371,6 +386,79 @@ struct SplitProc {
     /// Branch buffers (left, right)
     top_buf: [Box<[f32]>; 2],
     bottom_buf: [Box<[f32]>; 2],
+    /// The branch that may run on another core (see `Offload`)
+    offload: Offload,
+}
+
+/// Which branch of a split runs on another core while the audio thread runs
+/// the other one: one with plugins and without sends (the send buses are
+/// the audio thread's), when the other branch has plugins too
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Offload {
+    None,
+    Top,
+    Bottom,
+}
+
+impl Offload {
+    fn choose(top: &[ProcNode], bottom: &[ProcNode]) -> Self {
+        if !has_plugin(top) || !has_plugin(bottom) {
+            Offload::None
+        } else if !has_send(bottom) {
+            Offload::Bottom
+        } else if !has_send(top) {
+            Offload::Top
+        } else {
+            Offload::None
+        }
+    }
+}
+
+fn has_plugin(nodes: &[ProcNode]) -> bool {
+    nodes.iter().any(|node| match node {
+        ProcNode::Plugin(_) => true,
+        ProcNode::Split(split) => has_plugin(&split.top) || has_plugin(&split.bottom),
+        ProcNode::Route(_) => false,
+    })
+}
+
+fn has_send(nodes: &[ProcNode]) -> bool {
+    nodes.iter().any(|node| match node {
+        ProcNode::Plugin(_) => false,
+        ProcNode::Split(split) => has_send(&split.top) || has_send(&split.bottom),
+        ProcNode::Route(route) => route.send,
+    })
+}
+
+/// Process two branches, at the same time when one may go to another core
+#[allow(clippy::too_many_arguments)]
+fn process_branches(
+    offload: Offload,
+    io: &mut ChainIo,
+    top: &mut [ProcNode],
+    [tl, tr]: [&mut [f32]; 2],
+    bottom: &mut [ProcNode],
+    [bl, br]: [&mut [f32]; 2],
+) {
+    let mut other = io.without_sends();
+    match offload {
+        Offload::Bottom => {
+            dsp_pool::join(
+                || process_nodes(top, tl, tr, io),
+                || process_nodes(bottom, bl, br, &mut other),
+            );
+        }
+        Offload::Top => {
+            dsp_pool::join(
+                || process_nodes(bottom, bl, br, io),
+                || process_nodes(top, tl, tr, &mut other),
+            );
+        }
+        Offload::None => {
+            process_nodes(top, tl, tr, io);
+            process_nodes(bottom, bl, br, io);
+        }
+    }
 }
 
 impl SplitProc {
@@ -419,9 +507,15 @@ impl SplitProc {
             let [bl, br] = &mut self.bottom_buf;
             let (bl, br) = (&mut bl[..n], &mut br[..n]);
             bl.copy_from_slice(if self.stereo_in { r } else { l });
-            process_nodes(&mut self.bottom, bl, br, io);
             let tr = &mut self.top_buf[1][..n];
-            process_nodes(&mut self.top, l, tr, io);
+            process_branches(
+                self.offload,
+                io,
+                &mut self.top,
+                [&mut *l, &mut *tr],
+                &mut self.bottom,
+                [&mut *bl, &mut *br],
+            );
             if self.top_stereo {
                 for (l, tr) in l.iter_mut().zip(tr.iter()) {
                     *l = (*l + tr) * 0.5;
@@ -471,9 +565,15 @@ impl SplitProc {
         }
         {
             let [tl, tr] = &mut self.top_buf;
-            process_nodes(&mut self.top, &mut tl[..n], &mut tr[..n], io);
             let [bl, br] = &mut self.bottom_buf;
-            process_nodes(&mut self.bottom, &mut bl[..n], &mut br[..n], io);
+            process_branches(
+                self.offload,
+                io,
+                &mut self.top,
+                [&mut tl[..n], &mut tr[..n]],
+                &mut self.bottom,
+                [&mut bl[..n], &mut br[..n]],
+            );
         }
 
         let ([tl, tr], [bl, br]) = (&self.top_buf, &self.bottom_buf);
@@ -626,10 +726,183 @@ enum ProcNode {
 /// Process `l` (and `r` where the signal is stereo) through `nodes`
 fn process_nodes(nodes: &mut [ProcNode], l: &mut [f32], r: &mut [f32], io: &mut ChainIo) {
     for node in nodes {
-        match node {
+        node.process(l, r, io);
+    }
+}
+
+impl ProcNode {
+    fn process(&mut self, l: &mut [f32], r: &mut [f32], io: &mut ChainIo) {
+        match self {
             ProcNode::Plugin(plugin) => plugin.process(l, r),
             ProcNode::Split(split) => split.process(l, r, io),
             ProcNode::Route(route) => route.process(l, r, io),
+        }
+    }
+}
+
+/// Sub-blocks a period is cut into when the chain runs on several cores
+const WAVE_PARTS: usize = 8;
+/// Smallest sub-block, in samples
+const WAVE_MIN: usize = 16;
+/// The chain goes on one more core for each share of the period it takes
+/// (f32 bits; see `set_stage_load`)
+static STAGE_LOAD: AtomicU32 = AtomicU32::new(0x3e80_0000); // 0.25
+
+/// Share of the period a chain takes before it goes on one more core: low
+/// spreads it early (a shorter callback, more cores busy), high keeps it
+/// on fewer cores
+pub fn set_stage_load(share: f32) {
+    STAGE_LOAD.store(share.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+}
+/// Most cores a chain ran on since `take_peak_cores`
+static PEAK_CORES: AtomicUsize = AtomicUsize::new(1);
+
+/// Most cores a chain ran on since the last call (the resource monitor)
+pub fn take_peak_cores() -> usize {
+    PEAK_CORES.swap(1, Ordering::Relaxed)
+}
+
+/// Weight of the last period in the time a block takes (moving average)
+const COST_WEIGHT: f32 = 0.1;
+
+/// Cut `costs` into `stages` runs of nodes taking about the same time:
+/// stage k runs the nodes `bounds[k]..bounds[k + 1]`. `stages` must not
+/// exceed the number of nodes
+fn partition(costs: &[f32], stages: usize) -> [usize; dsp_pool::MAX_WORKERS + 2] {
+    let mut bounds = [0; dsp_pool::MAX_WORKERS + 2];
+    let len = costs.len();
+    let stages = stages.clamp(1, len.clamp(1, dsp_pool::MAX_WORKERS + 1));
+    let target = costs.iter().sum::<f32>() / stages as f32;
+    let mut k = 1;
+    let mut done = 0.0;
+    for (i, cost) in costs.iter().enumerate() {
+        // Cut before the node that would end past its middle the share of
+        // the stage, leaving a node for each stage after
+        if k < stages
+            && i > bounds[k - 1]
+            && done + cost / 2.0 > target * k as f32
+            && len - i >= stages - k
+        {
+            bounds[k] = i;
+            k += 1;
+        }
+        done += cost;
+    }
+    while k < stages {
+        bounds[k] = (bounds[k - 1] + 1).max(len.saturating_sub(stages - k));
+        k += 1;
+    }
+    bounds[stages] = len;
+    bounds
+}
+
+/// Most sub-blocks of a pipelined period (`WAVE_PARTS`, one more when the
+/// period does not divide evenly)
+const WAVE_BLOCKS: usize = WAVE_PARTS + 1;
+
+/// Nodes of one stage, with their times
+type StageNodes<'a> = Option<(&'a mut [ProcNode], &'a mut [f32])>;
+/// One sub-block of the period: left and right
+type SubBlock<'a> = Option<(&'a mut [f32], &'a mut [f32])>;
+
+/// What the stages of a pipelined period share. Each stage owns its nodes,
+/// and a sub-block is used by one stage at a time (the progress of the
+/// stage before says when): the locks are never contended, each taken
+/// with a single atomic operation, and nothing is allocated.
+struct Wave<'a> {
+    stages: [Mutex<StageNodes<'a>>; dsp_pool::MAX_WORKERS + 1],
+    blocks: [Mutex<SubBlock<'a>>; WAVE_BLOCKS],
+    part: usize,
+    inputs: &'a [&'a [f32]],
+    offset: usize,
+    /// Sub-blocks each stage has finished
+    progress: [AtomicUsize; dsp_pool::MAX_WORKERS + 1],
+}
+
+impl<'a> Wave<'a> {
+    /// Cut `nodes` (and `spent`) at `bounds` into stages, and `l` / `r`
+    /// into sub-blocks of `part` samples
+    fn new(
+        mut nodes: &'a mut [ProcNode],
+        mut spent: &'a mut [f32],
+        bounds: &[usize],
+        (l, r): (&'a mut [f32], &'a mut [f32]),
+        part: usize,
+        (inputs, offset): (&'a [&'a [f32]], usize),
+    ) -> Self {
+        let stages = std::array::from_fn(|_| Mutex::new(None));
+        let blocks = std::array::from_fn(|_| Mutex::new(None));
+        let wave = Self {
+            stages,
+            blocks,
+            part,
+            inputs,
+            offset,
+            progress: Default::default(),
+        };
+        for (slot, ends) in wave.stages.iter().zip(bounds.windows(2)) {
+            let count = ends[1].saturating_sub(ends[0]);
+            let all_nodes = std::mem::take(&mut nodes);
+            let (stage_nodes, rest_nodes) = all_nodes.split_at_mut(count.min(all_nodes.len()));
+            let all_spent = std::mem::take(&mut spent);
+            let (stage_spent, rest_spent) = all_spent.split_at_mut(count.min(all_spent.len()));
+            (nodes, spent) = (rest_nodes, rest_spent);
+            *slot.locked() = Some((stage_nodes, stage_spent));
+        }
+        for (slot, block) in wave
+            .blocks
+            .iter()
+            .zip(l.chunks_mut(part.max(1)).zip(r.chunks_mut(part.max(1))))
+        {
+            *slot.locked() = Some(block);
+        }
+        wave
+    }
+
+    /// Run stage `k` over every sub-block, each once the stage before is
+    /// done with it
+    fn stage(&self, k: usize) {
+        // However the stage ends (a plugin may panic), the stages after it
+        // must not wait for it forever
+        struct Finish<'a>(Option<&'a AtomicUsize>);
+        impl Drop for Finish<'_> {
+            fn drop(&mut self) {
+                if let Some(progress) = self.0 {
+                    progress.store(WAVE_BLOCKS, Ordering::Release);
+                }
+            }
+        }
+        let _finish = Finish(self.progress.get(k));
+        let Some(stage) = self.stages.get(k) else {
+            return;
+        };
+        let mut stage = stage.locked();
+        let Some((nodes, spent)) = stage.as_mut() else {
+            return;
+        };
+        for (j, block) in self.blocks.iter().enumerate() {
+            if let Some(before) = k.checked_sub(1).and_then(|k| self.progress.get(k)) {
+                dsp_pool::spin_until(|| before.load(Ordering::Acquire) > j);
+            }
+            // The stage before is done with this sub-block (its progress,
+            // Acquire) and the stage after waits for ours
+            if let Some((l, r)) = block.locked().as_mut() {
+                let mut io = ChainIo {
+                    inputs: self.inputs,
+                    sends: &mut [],
+                    offset: self.offset + j * self.part,
+                    gain: 1.0,
+                    gain_step: 0.0,
+                };
+                for (node, spent) in nodes.iter_mut().zip(spent.iter_mut()) {
+                    let start = Instant::now();
+                    node.process(l, r, &mut io);
+                    *spent += start.elapsed().as_secs_f32();
+                }
+            }
+            if let Some(progress) = self.progress.get(k) {
+                progress.store(j + 1, Ordering::Release);
+            }
         }
     }
 }
@@ -708,6 +981,14 @@ pub struct EffectChain {
     plugin_count: usize,
     /// The output is stereo (else the right side copies the left one)
     stereo_out: bool,
+    sample_rate: f32,
+    /// Time each node takes per period, in seconds (moving average), and
+    /// the time it took in the period being processed
+    costs: Vec<f32>,
+    spent: Vec<f32>,
+    /// A send somewhere: the chain stays on the audio thread, which owns
+    /// the send buses
+    has_send: bool,
 }
 
 impl EffectChain {
@@ -718,6 +999,10 @@ impl EffectChain {
             max_block: max_block.max(1),
             plugin_count: 0,
             stereo_out: false,
+            sample_rate: 48000.0,
+            costs: Vec::new(),
+            spent: Vec::new(),
+            has_send: false,
         }
     }
 
@@ -736,6 +1021,10 @@ impl EffectChain {
             chain.build_nodes(&spec.nodes, false, spec, host, sample_rate, &mut errors);
         chain.nodes = nodes;
         chain.stereo_out = stereo_out;
+        chain.sample_rate = sample_rate;
+        chain.costs = vec![0.0; chain.nodes.len()];
+        chain.spent = vec![0.0; chain.nodes.len()];
+        chain.has_send = has_send(&chain.nodes);
         if spec.bpm > 0.0 {
             chain.apply(&ChainCommand::SetTempo { bpm: spec.bpm });
         }
@@ -808,7 +1097,11 @@ impl EffectChain {
                                 match instantiate(ir.then_some(1)) {
                                     Ok(right) => Some(right),
                                     Err(e) => {
-                                        warn!("No right-side instance of {}: {}", uri, e);
+                                        warn!(
+                                            uri = %uri,
+                                            error = format_args!("{e:#}"),
+                                            "No right-side instance, the block plays in mono"
+                                        );
                                         None
                                     }
                                 }
@@ -830,7 +1123,11 @@ impl EffectChain {
                             stereo = stereo_out;
                         }
                         Err(e) => {
-                            warn!("Skipping plugin {}: {}", uri, e);
+                            warn!(
+                                uri = %uri,
+                                error = format_args!("{e:#}"),
+                                "Plugin skipped from the chain"
+                            );
                             errors.push(format!("{}: {}", uri, e));
                         }
                     }
@@ -874,7 +1171,9 @@ impl EffectChain {
                         stereo_out,
                         top_buf: [buffer(), buffer()],
                         bottom_buf: [buffer(), buffer()],
+                        offload: Offload::None,
                     };
+                    split.offload = Offload::choose(&split.top, &split.bottom);
                     split.top_gain = split.target();
                     split.pan_now = split.pan_target();
                     built.push(ProcNode::Split(Box::new(split)));
@@ -888,6 +1187,8 @@ impl EffectChain {
     /// Process the mono input in `left` (any length): the left and right
     /// outputs are written in place to `left` and `right` (same length)
     pub fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
+        let len = left.len().min(right.len());
+        let (left, right) = (&mut left[..len], &mut right[..len]);
         no_io(|io| {
             for (k, (l, r)) in left
                 .chunks_mut(self.max_block)
@@ -903,9 +1204,103 @@ impl EffectChain {
     /// Process one part of a period (at most `max_block` samples, at the
     /// offset set in `io`), with the inputs and sends of `io`
     pub fn process_io(&mut self, l: &mut [f32], r: &mut [f32], io: &mut ChainIo) {
-        process_nodes(&mut self.nodes, l, r, io);
+        let len = l.len().min(r.len());
+        let (l, r) = (&mut l[..len], &mut r[..len]);
+        if len > self.max_block {
+            // Longer than the chain's buffers: in parts that fit them
+            let (offset, gain) = (io.offset, io.gain);
+            for (k, (l, r)) in l
+                .chunks_mut(self.max_block)
+                .zip(r.chunks_mut(self.max_block))
+                .enumerate()
+            {
+                let start = k * self.max_block;
+                io.offset = offset + start;
+                io.gain = gain + io.gain_step * start as f32;
+                self.process_part(l, r, io);
+            }
+            (io.offset, io.gain) = (offset, gain);
+            return;
+        }
+        self.process_part(l, r, io);
+    }
+
+    /// `process_io` on at most `max_block` samples, `l` and `r` as long
+    fn process_part(&mut self, l: &mut [f32], r: &mut [f32], io: &mut ChainIo) {
+        let stages = self.stages(l.len());
+        let crew = (stages > 1).then(|| dsp_pool::crew(stages - 1));
+        match crew {
+            Some(crew) if !crew.is_empty() => {
+                PEAK_CORES.fetch_max(crew.len() + 1, Ordering::Relaxed);
+                self.process_wave(l, r, io, crew)
+            }
+            _ => {
+                for ((node, cost), spent) in self
+                    .nodes
+                    .iter_mut()
+                    .zip(&mut self.costs)
+                    .zip(&mut self.spent)
+                {
+                    let start = Instant::now();
+                    node.process(l, r, io);
+                    *spent = start.elapsed().as_secs_f32();
+                    *cost += (*spent - *cost) * COST_WEIGHT;
+                    *spent = 0.0;
+                }
+            }
+        }
         if !self.stereo_out {
             r.copy_from_slice(l);
+        }
+    }
+
+    /// The chain feeds a send bus: it must run on the audio thread
+    pub fn has_send(&self) -> bool {
+        self.has_send
+    }
+
+    /// Cores to run a period of `len` samples on: one more for each
+    /// `set_stage_load` share of the period the chain takes, as many as there are
+    /// workers and nodes
+    fn stages(&self, len: usize) -> usize {
+        let workers = dsp_pool::workers();
+        if workers == 0 || self.has_send || len < 2 * WAVE_MIN || self.nodes.len() < 2 {
+            return 1;
+        }
+        let load = self.costs.iter().sum::<f32>() * self.sample_rate / len as f32;
+        let share = f32::from_bits(STAGE_LOAD.load(Ordering::Relaxed)).max(1e-3);
+        ((load / share).ceil() as usize).clamp(1, (workers + 1).min(self.nodes.len()))
+    }
+
+    /// Run the nodes as a pipeline over the cores of `crew` and this one:
+    /// stage k runs its share of the nodes on each sub-block of the period
+    /// once stage k - 1 is done with it, so the stages work at the same
+    /// time on successive sub-blocks, and the period ends with no added
+    /// latency
+    fn process_wave(
+        &mut self,
+        l: &mut [f32],
+        r: &mut [f32],
+        io: &mut ChainIo,
+        crew: dsp_pool::Crew,
+    ) {
+        let len = l.len();
+        let stages = crew.len() + 1;
+        let part = (len / WAVE_PARTS).max(WAVE_MIN);
+        let bounds = partition(&self.costs, stages);
+        let wave = Wave::new(
+            &mut self.nodes,
+            &mut self.spent,
+            &bounds[..=stages.min(bounds.len() - 1)],
+            (l, r),
+            part,
+            (io.inputs, io.offset),
+        );
+        crew.run(&|k| wave.stage(k));
+
+        for (cost, spent) in self.costs.iter_mut().zip(&mut self.spent) {
+            *cost += (*spent - *cost) * COST_WEIGHT;
+            *spent = 0.0;
         }
     }
 
@@ -1337,5 +1732,114 @@ mod tests {
         let (chain, errors) = EffectChain::build(&spec, &host, 48000.0, 64);
         assert_eq!(chain.len(), 1);
         assert_eq!(errors.len(), 1);
+    }
+
+    /// NAM blocks without a model: their tone stack filters, which keep
+    /// state from one sample to the next, so any sample processed out of
+    /// order or twice shows
+    #[cfg(feature = "nam")]
+    fn tone_block(id: usize) -> ChainNode {
+        ChainNode::Plugin {
+            instance_id: id,
+            uri: scanner::NAM_URI.to_string(),
+            enabled: true,
+            num_inputs: 1,
+            num_outputs: 1,
+        }
+    }
+
+    #[cfg(feature = "nam")]
+    #[test]
+    fn several_cores_play_exactly_what_one_core_plays() {
+        let host = Lv2Host::demo();
+        let mix = |id, top, bottom| ChainNode::Split {
+            instance_id: id,
+            split_type: SplitType::Mix,
+            enabled: true,
+            top_chain: top,
+            bottom_chain: bottom,
+            ab_select_a: true,
+            mix_ratio: 0.3,
+            pan: [-0.5, 0.5],
+            num_inputs: 1,
+            num_outputs: 2,
+        };
+        let nodes = vec![
+            tone_block(1),
+            tone_block(2),
+            mix(
+                3,
+                vec![tone_block(4), cab(5)],
+                vec![
+                    tone_block(6),
+                    mix(7, vec![tone_block(8)], vec![tone_block(9)]),
+                ],
+            ),
+            tone_block(10),
+            cab(11),
+            tone_block(12),
+        ];
+        // Each block's bass, middle and treble set apart
+        let params = (1..=12)
+            .map(|id| {
+                let mut values = vec![0.0; 10];
+                values[5] = (id % 10) as f32;
+                values[6] = ((id * 3) % 10) as f32;
+                values[7] = ((id * 7) % 10) as f32;
+                (id, values)
+            })
+            .collect();
+        let spec = ChainSpec {
+            nodes,
+            params,
+            stereo: true,
+            ..Default::default()
+        };
+        let input: Vec<f32> = (0..128 * 40)
+            .map(|i| 0.4 * ((i as f32 * 0.031).sin() + (i as f32 * 0.17).sin() * 0.5))
+            .collect();
+        let play = |cores: bool| {
+            let (mut chain, errors) = EffectChain::build(&spec, &host, 48000.0, 128);
+            assert!(errors.is_empty(), "{errors:?}");
+            let (mut left, mut right) = (input.clone(), vec![0.0; input.len()]);
+            for (l, r) in left.chunks_mut(128).zip(right.chunks_mut(128)) {
+                if cores {
+                    no_io(|io| chain.process_io(l, r, io));
+                } else {
+                    // The nodes one after the other, as before the cores
+                    no_io(|io| process_nodes(&mut chain.nodes, l, r, io));
+                    if !chain.stereo_out {
+                        r.copy_from_slice(l);
+                    }
+                }
+            }
+            (left, right)
+        };
+        let one = play(false);
+        dsp_pool::start(3);
+        // Every period on as many cores as there are
+        set_stage_load(0.0);
+        let before = dsp_pool::jobs_run();
+        let several = play(true);
+        assert!(dsp_pool::jobs_run() > before);
+        assert_eq!(one.0, several.0);
+        assert_eq!(one.1, several.1);
+        set_stage_load(0.25);
+    }
+
+    #[test]
+    fn stages_take_about_the_same_time() {
+        let bounds = partition(&[1.0, 1.0, 1.0, 1.0], 2);
+        assert_eq!(&bounds[..3], &[0, 2, 4]);
+        // A heavy block alone on its core
+        let bounds = partition(&[0.1, 5.0, 0.1, 0.1, 0.1], 2);
+        assert_eq!(&bounds[..3], &[0, 2, 5]);
+        let bounds = partition(&[5.0, 0.1, 0.1, 0.1], 2);
+        assert_eq!(&bounds[..3], &[0, 1, 4]);
+        // Every stage gets a node, even with no time measured yet
+        let bounds = partition(&[0.0; 4], 4);
+        assert_eq!(&bounds[..5], &[0, 1, 2, 3, 4]);
+        let bounds = partition(&[0.0, 0.0, 9.0], 3);
+        assert_eq!(&bounds[..4], &[0, 1, 2, 3]);
     }
 }

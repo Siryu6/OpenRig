@@ -2,7 +2,7 @@ import { Theme } from "../theme.slint";
 import { Button, Card, Icon, SectionHeader, Stepper, Toggle } from "../components/controls.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 import { LogoMark, LogoText } from "../components/logo.slint";
-import { WifiNetwork } from "../types.slint";
+import { SystemSetting, WifiNetwork } from "../types.slint";
 import { Tone3000Logo } from "../components/tone3000_brand.slint";
 import { Features } from "../features.slint";
 
@@ -89,6 +89,22 @@ export component SettingsView inherits Rectangle {
     callback midi-channel-changed(int);
     callback midi-clock-changed(bool);
     callback light-theme-changed(bool);
+
+    // Audio processing
+    in property <int> dsp-cores: 0;                  // 0 = Auto
+    in property <int> dsp-max-cores: 1;              // cores the effect chain can use
+    callback dsp-cores-changed(int);
+
+    // Audio & system (pedalboard.txt, on the pedalboard OS only)
+    in property <bool> system-available: false;
+    in property <[SystemSetting]> system-settings: [];
+    in property <string> system-summary: "";        // latency of the buffer
+    in property <bool> system-changed: false;       // differs from what runs
+    in property <bool> system-busy: false;
+    in property <string> system-message: "";
+    callback system-step(string, int);
+    callback system-apply();
+    callback system-revert();
 
     // TONE3000 Connect
     in property <bool> t3k-available: true;          // built with the tone3000 feature
@@ -446,6 +462,151 @@ export component SettingsView inherits Rectangle {
                                 clicked => {
                                     root.open-routing();
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ------------------------------------------- Audio & system
+            if root.system-available: Card {
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    HorizontalLayout {
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                name: "settings";
+                                color: Theme.accent;
+                            }
+                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: "Audio & system";
+                                color: Theme.text-primary;
+                                font-size: Theme.font-title;
+                                font-weight: Theme.weight-semibold;
+                            }
+                            Text {
+                                text: root.system-summary;
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-small;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+
+                    for setting in root.system-settings: SettingRow {
+                        label: setting.label;
+                        Stepper {
+                            width: 220px;
+                            text: setting.value;
+                            can-decrement: setting.can-decrement && !root.system-busy;
+                            can-increment: setting.can-increment && !root.system-busy;
+                            decrement => {
+                                root.system-step(setting.key, -1);
+                            }
+                            increment => {
+                                root.system-step(setting.key, 1);
+                            }
+                        }
+                    }
+
+                    if root.system-message != "": Text {
+                        text: root.system-message;
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+
+                    if root.system-changed: HorizontalLayout {
+                        spacing: Theme.space-md;
+                        alignment: end;
+                        Button {
+                            width: 140px;
+                            text: "Cancel";
+                            enabled: !root.system-busy;
+                            clicked => {
+                                root.system-revert();
+                            }
+                        }
+                        Button {
+                            width: 140px;
+                            text: "Apply";
+                            variant: "primary";
+                            enabled: !root.system-busy;
+                            clicked => {
+                                root.system-apply();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ----------------------------------------------- Processing
+            if root.dsp-max-cores > 1: Card {
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    HorizontalLayout {
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                name: "rack";
+                                color: Theme.accent;
+                            }
+                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: "Processing";
+                                color: Theme.text-primary;
+                                font-size: Theme.font-title;
+                                font-weight: Theme.weight-semibold;
+                            }
+                            Text {
+                                text: "Heavy rigs share the effects across the cores, without added latency";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-small;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            Text {
+                                text: "DSP CORES";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-caption;
+                                font-weight: Theme.weight-bold;
+                                letter-spacing: 0.8px;
+                            }
+                        }
+                        Stepper {
+                            width: 180px;
+                            text: root.dsp-cores == 0 ? "Auto (" + root.dsp-max-cores + ")"
+                                : root.dsp-cores == 1 ? "1 core" : root.dsp-cores + " cores";
+                            can-decrement: root.dsp-cores > 0;
+                            can-increment: root.dsp-cores < root.dsp-max-cores;
+                            decrement => {
+                                root.dsp-cores-changed(root.dsp-cores - 1);
+                            }
+                            increment => {
+                                root.dsp-cores-changed(root.dsp-cores + 1);
                             }
                         }
                     }

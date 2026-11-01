@@ -17,8 +17,9 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use anyhow::{bail, Result};
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, TrySendError};
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use crate::plugins::chain::{pan_gains, ramp};
 
@@ -147,7 +148,11 @@ impl Routing {
             .and_then(|r| r.map(|r| r.validate().map(|()| r)).transpose());
         routing
             .unwrap_or_else(|e| {
-                tracing::warn!("{}: {e:#}; using the default routing", path.display());
+                warn!(
+                    path = %path.display(),
+                    error = format_args!("{e:#}"),
+                    "Routing not loaded, using the default one"
+                );
                 None
             })
             .unwrap_or_default()
@@ -336,14 +341,17 @@ impl Routing {
             if let Some(strip) = self.strip_mut(port) {
                 strip.stereo = true;
             }
-        } else if let Some(strip) = self.strip_mut(port).filter(|s| s.stereo) {
+        } else if let (Some(next), Some(strip)) = (
+            port.checked_add(1),
+            self.strip_mut(port).filter(|s| s.stereo),
+        ) {
             // Two outputs playing the same source: the left and right sides
             // of the main mix or a send, or the same input on both
             let bus = !matches!(strip.source, Source::Input(_));
             strip.stereo = false;
             strip.fold = if bus { Fold::Left } else { Fold::Sum };
             let second = Strip {
-                port: port + 1,
+                port: next,
                 fold: if bus { Fold::Right } else { Fold::Sum },
                 ..*strip
             };
@@ -471,7 +479,11 @@ pub struct RoutingControl {
 
 impl RoutingControl {
     pub fn apply(&self, routing: &Routing) {
-        let _ = self.tx.try_send(routing.mix(self.inputs, self.outputs));
+        // Disconnected: the audio thread is gone (shutdown, audio restart)
+        if let Err(TrySendError::Full(_)) = self.tx.try_send(routing.mix(self.inputs, self.outputs))
+        {
+            warn!("Audio thread not taking routing changes, change dropped");
+        }
     }
 }
 
@@ -549,9 +561,9 @@ impl OutputRouter {
             let buffer = target.input.and_then(&input);
             for (i, o) in out.iter_mut().enumerate() {
                 let played = bus.map_or(0.0, |[l, r]| {
-                    target.gains[0] * l[i] + target.gains[1] * r[i]
+                    target.gains[0] * sample(l, i) + target.gains[1] * sample(r, i)
                 });
-                let passed = buffer.map_or(0.0, |b| b[i] * target.input_gain);
+                let passed = buffer.map_or(0.0, |b| sample(b, i) * target.input_gain);
                 *o = played + passed;
             }
             return;
@@ -577,12 +589,18 @@ impl OutputRouter {
                 buffer = current.input.and_then(&input);
             }
             let played = bus.map_or(0.0, |[l, r]| {
-                current.gains[0] * l[i] + current.gains[1] * r[i]
+                current.gains[0] * sample(l, i) + current.gains[1] * sample(r, i)
             });
-            let passed = buffer.map_or(0.0, |b| b[i] * current.input_gain);
+            let passed = buffer.map_or(0.0, |b| sample(b, i) * current.input_gain);
             *o = played + passed;
         }
     }
+}
+
+/// Sample `i` of `buffer`, silence past its end (a buffer shorter than the
+/// output)
+fn sample(buffer: &[f32], i: usize) -> f32 {
+    buffer.get(i).copied().unwrap_or(0.0)
 }
 
 #[cfg(test)]

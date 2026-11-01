@@ -2,6 +2,7 @@
 //! urid:map/unmap, options (block length, sample rate), buf-size and the
 //! worker (`work:schedule`, see `lv2_worker`).
 
+use crate::sync::MutexExt;
 use lv2_raw::core::LV2Feature;
 
 use super::atom::{ATOM_FLOAT, ATOM_INT};
@@ -60,7 +61,7 @@ pub fn map_uri(uri: &str) -> u32 {
 }
 
 fn map_cstr(uri: &CStr) -> u32 {
-    let mut table = table().lock().unwrap();
+    let mut table = table().locked();
     if let Some(&id) = table.ids.get(uri) {
         return id;
     }
@@ -70,15 +71,20 @@ fn map_cstr(uri: &CStr) -> u32 {
     id
 }
 
-extern "C" fn urid_map(_handle: *mut c_void, uri: *const c_char) -> u32 {
+/// `LV2_URID_Map::map`
+///
+/// # Safety
+/// `uri` is null or a NUL-terminated string (the LV2 contract).
+unsafe extern "C" fn urid_map(_handle: *mut c_void, uri: *const c_char) -> u32 {
     if uri.is_null() {
         return 0;
     }
+    // SAFETY: see the function's contract
     map_cstr(unsafe { CStr::from_ptr(uri) })
 }
 
 extern "C" fn urid_unmap(_handle: *mut c_void, urid: u32) -> *const c_char {
-    let table = table().lock().unwrap();
+    let table = table().locked();
     match urid.checked_sub(1).and_then(|i| table.uris.get(i as usize)) {
         // The CString heap buffer never moves or gets freed, so the pointer
         // stays valid after the lock is released.
@@ -90,7 +96,7 @@ extern "C" fn urid_unmap(_handle: *mut c_void, urid: u32) -> *const c_char {
 #[repr(C)]
 struct UridMap {
     handle: *mut c_void,
-    map: extern "C" fn(*mut c_void, *const c_char) -> u32,
+    map: unsafe extern "C" fn(*mut c_void, *const c_char) -> u32,
 }
 
 #[repr(C)]
@@ -123,7 +129,8 @@ pub struct FeatureSet {
     features: Vec<LV2Feature>,
 }
 
-// Raw pointers here only point into data owned by the FeatureSet itself.
+// SAFETY: the raw pointers only point into data the FeatureSet owns (boxed,
+// so they do not move with it) and into the URID table, which is global.
 unsafe impl Send for FeatureSet {}
 
 impl FeatureSet {
@@ -173,17 +180,6 @@ impl FeatureSet {
         ]);
 
         let worker = lv2_worker::Feature::new();
-        let uris: Vec<CString> = [
-            URID_MAP,
-            URID_UNMAP,
-            OPTIONS,
-            BOUNDED_BLOCK_LENGTH,
-            IS_LIVE,
-            lv2_worker::SCHEDULE,
-        ]
-        .iter()
-        .map(|u| CString::new(*u).unwrap())
-        .collect();
         let data: [*mut c_void; 6] = [
             &*map as *const UridMap as *mut c_void,
             &*unmap as *const UridUnmap as *mut c_void,
@@ -192,6 +188,19 @@ impl FeatureSet {
             std::ptr::null_mut(),
             worker.data(),
         ];
+        // The URIs are constants without NUL: none is left out
+        let (uris, data): (Vec<CString>, Vec<*mut c_void>) = [
+            URID_MAP,
+            URID_UNMAP,
+            OPTIONS,
+            BOUNDED_BLOCK_LENGTH,
+            IS_LIVE,
+            lv2_worker::SCHEDULE,
+        ]
+        .into_iter()
+        .zip(data)
+        .filter_map(|(uri, data)| Some((CString::new(uri).ok()?, data)))
+        .unzip();
         let features = uris
             .iter()
             .zip(data)
@@ -234,6 +243,7 @@ mod tests {
         assert_ne!(a, 0);
         assert_ne!(a, b);
         assert_eq!(a, map_uri("urn:test:a"));
+        // SAFETY: a URID just mapped: a string of the table, never freed
         let back = unsafe { CStr::from_ptr(urid_unmap(std::ptr::null_mut(), b)) };
         assert_eq!(back.to_str().unwrap(), "urn:test:b");
         assert!(urid_unmap(std::ptr::null_mut(), 0).is_null());

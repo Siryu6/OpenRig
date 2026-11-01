@@ -29,7 +29,9 @@ pub fn step(kind: &str, min: f32, max: f32, value: f32, options: &[f32], steps: 
             else {
                 return value;
             };
-            let next = (current + steps).clamp(0, options.len() as i32 - 1);
+            let next = current
+                .saturating_add(steps)
+                .clamp(0, options.len() as i32 - 1);
             options[next as usize]
         }
         _ if min > 0.0 && max / min >= 100.0 => {

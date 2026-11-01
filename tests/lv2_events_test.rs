@@ -1,6 +1,7 @@
 //! A real LV2 plugin reading its atom input: it outputs the last tempo
 //! (time:Position) or MIDI note it received as a constant signal, so the
 //! transport and MIDI written by the host can be checked end to end.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // Tests: failing is their job
 #![cfg(feature = "lv2")]
 
 use pedalboard::audio::ChainNode;

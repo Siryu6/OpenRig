@@ -42,7 +42,7 @@ pub fn get(url: &str, max: u64) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     open(url, Duration::from_secs(30))?
         .into_reader()
-        .take(max + 1)
+        .take(max.saturating_add(1))
         .read_to_end(&mut bytes)
         .context("Download interrupted")?;
     if bytes.len() as u64 > max {
@@ -65,7 +65,7 @@ pub fn download(
         let timeout = 60 + size / MIN_RATE;
         let mut body = open(url, Duration::from_secs(timeout))?
             .into_reader()
-            .take(size + 1);
+            .take(size.saturating_add(1));
         let mut file =
             File::create(&part).with_context(|| format!("Cannot write {}", part.display()))?;
         let mut hash = ring::digest::Context::new(&ring::digest::SHA256);
@@ -91,11 +91,13 @@ pub fn download(
         if hex(hash.finish().as_ref()) != sha256.to_ascii_lowercase() {
             bail!("The download is damaged or was replaced (checksum mismatch)");
         }
-        file.sync_all()?;
-        fs::rename(&part, path)?;
+        file.sync_all()
+            .with_context(|| format!("Cannot write {}", part.display()))?;
+        fs::rename(&part, path).with_context(|| format!("Cannot write {}", path.display()))?;
         Ok(())
     })();
     if result.is_err() {
+        // Not there when the download failed before creating it
         let _ = fs::remove_file(&part);
     }
     result
@@ -103,11 +105,13 @@ pub fn download(
 
 /// SHA-256 of a file, in hex
 pub fn sha256_file(path: &Path) -> Result<String> {
-    let mut file = File::open(path)?;
+    let mut file = File::open(path).with_context(|| format!("Cannot read {}", path.display()))?;
     let mut hash = ring::digest::Context::new(&ring::digest::SHA256);
     let mut buffer = vec![0u8; 64 * 1024];
     loop {
-        let n = file.read(&mut buffer)?;
+        let n = file
+            .read(&mut buffer)
+            .with_context(|| format!("Cannot read {}", path.display()))?;
         if n == 0 {
             break;
         }

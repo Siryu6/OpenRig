@@ -94,7 +94,7 @@ pub fn start(
                 connections.retain(|id, (name, _)| {
                     let present = ports.iter().any(|(p, _)| p == id);
                     if !present {
-                        info!("MIDI device gone: {}", name);
+                        info!(device = %name, "MIDI device gone");
                     }
                     present
                 });
@@ -104,14 +104,14 @@ pub fn start(
                     }
                     match connect(&scanner, id, send.clone(), forward.clone()) {
                         Ok(connection) => {
-                            info!("MIDI input: {}", name);
+                            info!(device = %name, "MIDI input opened");
                             failed.remove(id);
                             connections.insert(id.clone(), (name.clone(), connection));
                         }
                         // Busy or gone: tried again at the next scan
                         Err(e) => {
                             if failed.insert(id.clone()) {
-                                warn!("MIDI input {}: {}", name, e);
+                                warn!(device = %name, error = format_args!("{e:#}"), "MIDI input not opened");
                             }
                         }
                     }

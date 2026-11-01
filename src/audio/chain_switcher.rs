@@ -11,12 +11,21 @@
 //! applied directly on the audio thread. Each carries the generation of the
 //! latest spec sent before it; commands newer than a chain being built are
 //! replayed on it when it arrives, so no change is lost during a rebuild.
+//!
+//! A chain that panics (a plugin or a model gone wrong) is dropped by the
+//! audio thread, which plays the dry signal and asks the builder for the
+//! same chain again; a chain that keeps failing stays out and the user is
+//! told. The audio never stops.
 
 use anyhow::Result;
 use crossbeam_channel::{bounded, select, unbounded, Receiver, Sender, TrySendError};
+use std::collections::VecDeque;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use std::time::{Duration, Instant};
+use tracing::{debug, error, info, warn};
 
+use super::dsp_pool;
 use crate::midi::RawMidi;
 use crate::plugins::chain::{ChainCommand, ChainIo, ChainSpec, EffectChain};
 use crate::plugins::Lv2Host;
@@ -25,6 +34,9 @@ use crate::plugins::Lv2Host;
 const COMMAND_LOG_CAPACITY: usize = 1024;
 /// MIDI messages waiting for the audio thread (an audio period at most)
 const MIDI_CAPACITY: usize = 256;
+/// Rebuilds of a chain that panicked, at most, within `REBUILD_WINDOW`
+const MAX_REBUILDS: usize = 3;
+const REBUILD_WINDOW: Duration = Duration::from_secs(60);
 
 /// Crossfade state tracking
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -159,6 +171,8 @@ pub struct ChainSwitcher {
     command_rx: Receiver<(u64, ChainCommand)>,
     midi_rx: Receiver<RawMidi>,
     garbage_tx: Sender<EffectChain>,
+    /// Asks the builder for the latest chain again, after a panic
+    rebuild_tx: Sender<()>,
     log: CommandLog,
 }
 
@@ -177,15 +191,19 @@ impl ChainSwitcher {
         let (command_tx, command_rx) = bounded(COMMAND_LOG_CAPACITY);
         let (midi_tx, midi_rx) = bounded(MIDI_CAPACITY);
         let (error_tx, error_rx) = unbounded();
+        let (rebuild_tx, rebuild_rx) = bounded(1);
 
         std::thread::Builder::new()
             .name("chain-builder".to_string())
             .spawn(move || {
                 builder_thread(
                     host,
-                    spec_rx,
+                    Inbox {
+                        specs: spec_rx,
+                        garbage: garbage_rx,
+                        rebuilds: rebuild_rx,
+                    },
                     ready_tx,
-                    garbage_rx,
                     error_tx,
                     sample_rate,
                     max_block,
@@ -207,11 +225,14 @@ impl ChainSwitcher {
             command_rx,
             midi_rx,
             garbage_tx,
+            rebuild_tx,
             log: CommandLog::new(),
         };
         info!(
-            "ChainSwitcher ready: {}Hz, block {}, crossfade {}ms",
-            sample_rate, max_block, crossfade_duration_ms
+            sample_rate,
+            max_block,
+            crossfade_ms = crossfade_duration_ms,
+            "Chain switcher ready"
         );
         Ok((
             switcher,
@@ -285,21 +306,49 @@ impl ChainSwitcher {
         self.poll();
         let max_block = self.max_block;
         let mut switching = false;
-        for (k, (l, r)) in left
-            .chunks_mut(max_block)
-            .zip(right.chunks_mut(max_block))
-            .enumerate()
-        {
-            let offset = k * max_block;
-            if self.crossfade_state.is_active() && self.next.is_some() {
-                self.process_crossfade(l, r, io, offset);
-                switching = true;
-            } else {
-                io.part(offset, l.len(), 1.0, 1.0);
-                self.active.process_io(l, r, io);
+        // The panic itself is logged by the hook set in `main`
+        let ran = catch_unwind(AssertUnwindSafe(|| {
+            for (k, (l, r)) in left
+                .chunks_mut(max_block)
+                .zip(right.chunks_mut(max_block))
+                .enumerate()
+            {
+                let offset = k * max_block;
+                if self.crossfade_state.is_active() && self.next.is_some() {
+                    self.process_crossfade(l, r, io, offset);
+                    switching = true;
+                } else {
+                    io.part(offset, l.len(), 1.0, 1.0);
+                    self.active.process_io(l, r, io);
+                }
             }
+        }));
+        if ran.is_err() {
+            left.fill(0.0);
+            right.fill(0.0);
+            self.drop_chains();
         }
         switching
+    }
+
+    /// After a panic: the chains may be half-way through anything, so they
+    /// go (off this thread), the dry signal plays, and the latest chain is
+    /// built again
+    fn drop_chains(&mut self) {
+        let chains = [
+            Some(std::mem::replace(
+                &mut self.active,
+                EffectChain::empty(self.max_block),
+            )),
+            self.next.take(),
+            self.pending.take(),
+        ];
+        for chain in chains.into_iter().flatten() {
+            self.discard(chain);
+        }
+        self.crossfade_state = CrossfadeState::new();
+        // Full: a rebuild is already asked for
+        let _ = self.rebuild_tx.try_send(());
     }
 
     fn process_crossfade(&mut self, l: &mut [f32], r: &mut [f32], io: &mut ChainIo, offset: usize) {
@@ -312,10 +361,32 @@ impl ChainSwitcher {
             |ahead| self.crossfade_state.progress_after(ahead) * std::f32::consts::FRAC_PI_2;
         let (from, to) = (angle(0), angle(n));
         io.part(offset, n, from.cos(), to.cos());
-        self.active.process_io(l, r, io);
-        if let Some(next) = &mut self.next {
-            io.part(offset, n, from.sin(), to.sin());
-            next.process_io(next_l, next_r, io);
+        let active = &mut self.active;
+        match &mut self.next {
+            // Both chains at once on two cores, when one of them adds to no
+            // send bus (only the audio thread does)
+            Some(next) if !next.has_send() => {
+                let mut next_io = io.without_sends();
+                next_io.part(offset, n, from.sin(), to.sin());
+                dsp_pool::join(
+                    || active.process_io(l, r, io),
+                    || next.process_io(next_l, next_r, &mut next_io),
+                );
+            }
+            Some(next) if !active.has_send() => {
+                let mut active_io = io.without_sends();
+                io.part(offset, n, from.sin(), to.sin());
+                dsp_pool::join(
+                    || next.process_io(next_l, next_r, io),
+                    || active.process_io(l, r, &mut active_io),
+                );
+            }
+            Some(next) => {
+                active.process_io(l, r, io);
+                io.part(offset, n, from.sin(), to.sin());
+                next.process_io(next_l, next_r, io);
+            }
+            None => active.process_io(l, r, io),
         }
 
         // Equal-power crossfade, per sample
@@ -349,49 +420,109 @@ impl ChainSwitcher {
     }
 }
 
+/// What the builder thread receives
+struct Inbox {
+    /// Chains to build, from the UI
+    specs: Receiver<ChainSpec>,
+    /// Old chains to drop, from the audio thread
+    garbage: Receiver<EffectChain>,
+    /// The latest chain again, from the audio thread after a panic
+    rebuilds: Receiver<()>,
+}
+
 fn builder_thread(
     host: Arc<Lv2Host>,
-    spec_rx: Receiver<ChainSpec>,
+    inbox: Inbox,
     ready_tx: Sender<BuiltChain>,
-    garbage_rx: Receiver<EffectChain>,
     error_tx: Sender<String>,
     sample_rate: f32,
     max_block: usize,
 ) {
-    info!("Chain builder thread started");
+    debug!("Chain builder thread started");
+    let report = |message: &str| {
+        // The UI is gone only when the app quits
+        let _ = error_tx.send(message.to_string());
+    };
+    let build = |spec: &ChainSpec| match catch_unwind(AssertUnwindSafe(|| {
+        EffectChain::build(spec, &host, sample_rate, max_block)
+    })) {
+        Ok((chain, errors)) => {
+            for error in errors {
+                report(&error);
+            }
+            debug!(
+                generation = spec.generation,
+                plugins = chain.len(),
+                "Chain built"
+            );
+            Some(chain)
+        }
+        Err(_) => {
+            error!(
+                generation = spec.generation,
+                "Chain not built: a plugin panicked"
+            );
+            report("The effect chain could not be built: a plugin failed");
+            None
+        }
+    };
+    let mut latest: Option<ChainSpec> = None;
+    let mut rebuilds: VecDeque<Instant> = VecDeque::new();
     loop {
-        select! {
-            recv(spec_rx) -> spec => {
+        let chain = select! {
+            recv(inbox.specs) -> spec => {
                 let Ok(mut spec) = spec else { break };
                 // Only the latest spec matters
-                while let Ok(newer) = spec_rx.try_recv() {
+                while let Ok(newer) = inbox.specs.try_recv() {
                     spec = newer;
                 }
-                let (chain, errors) = EffectChain::build(&spec, &host, sample_rate, max_block);
-                for error in errors {
-                    let _ = error_tx.send(error);
-                }
-                debug!("Chain generation {} built ({} plugins)", spec.generation, chain.len());
-                if ready_tx.send(BuiltChain { generation: spec.generation, chain }).is_err() {
-                    break;
-                }
+                let chain = build(&spec).map(|chain| (spec.generation, chain));
+                latest = Some(spec);
+                chain
             }
-            recv(garbage_rx) -> chain => {
-                if chain.is_err() {
+            recv(inbox.rebuilds) -> request => {
+                if request.is_err() {
                     break;
                 }
-                // Dropped here, off the audio thread
+                let now = Instant::now();
+                rebuilds.retain(|at| now.saturating_duration_since(*at) < REBUILD_WINDOW);
+                let Some(spec) = latest.as_ref() else { continue };
+                if rebuilds.len() >= MAX_REBUILDS {
+                    error!(
+                        generation = spec.generation,
+                        "Effect chain keeps failing: dry signal until the next change"
+                    );
+                    report("The effect chain keeps failing: playing the dry signal until the next change");
+                    continue;
+                }
+                rebuilds.push_back(now);
+                warn!(generation = spec.generation, "Effect chain failed: rebuilding it");
+                build(spec).map(|chain| (spec.generation, chain))
+            }
+            recv(inbox.garbage) -> chain => {
+                let Ok(chain) = chain else { break };
+                // Dropped here, off the audio thread; plugin cleanup code
+                // that panics loses nothing more
+                if catch_unwind(AssertUnwindSafe(|| drop(chain))).is_err() {
+                    warn!("A plugin panicked while being freed");
+                }
+                None
+            }
+        };
+        if let Some((generation, chain)) = chain {
+            if ready_tx.send(BuiltChain { generation, chain }).is_err() {
+                break;
             }
         }
     }
-    warn!("Chain builder thread stopped");
+    debug!("Chain builder thread stopped");
 }
 
 /// Logging allocates on the audio thread: only report the first leak
 fn warn_once_leaked() {
     static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        warn!("Chain garbage queue full: leaking an old chain");
+        warn!("Chain garbage queue full: an old chain is leaked");
     }
 }
 
@@ -441,10 +572,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn switches_to_a_new_chain() {
+    /// A switcher, sent a chain of one demo reverb (not built yet)
+    fn with_reverb() -> (ChainSwitcher, ChainControl) {
         let host = Arc::new(Lv2Host::demo());
-        let (mut switcher, control) = ChainSwitcher::new(host, 48000.0, 128, 5.0).unwrap();
+        let (switcher, control) = ChainSwitcher::new(host, 48000.0, 128, 5.0).unwrap();
         control
             .spec_tx
             .send(ChainSpec {
@@ -459,6 +590,12 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
+        (switcher, control)
+    }
+
+    #[test]
+    fn switches_to_a_new_chain() {
+        let (mut switcher, _control) = with_reverb();
 
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut switched = false;
@@ -475,5 +612,40 @@ mod tests {
         assert!(switched);
         let (mut left, mut right) = (vec![0.5; 256], vec![0.0; 256]);
         assert!(!switcher.process(&mut left, &mut right));
+    }
+
+    /// Plays until the active chain has `len` blocks
+    fn wait_for(switcher: &mut ChainSwitcher, len: usize) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while switcher.active.len() != len {
+            assert!(Instant::now() < deadline, "chain never arrived");
+            let (mut left, mut right) = (vec![0.5; 256], vec![0.0; 256]);
+            switcher.process(&mut left, &mut right);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn a_chain_that_panicked_is_built_again_a_few_times() {
+        let (mut switcher, control) = with_reverb();
+        wait_for(&mut switcher, 1);
+        for _ in 0..MAX_REBUILDS {
+            // What the audio thread does after a panic
+            switcher.drop_chains();
+            assert!(switcher.active.is_empty());
+            wait_for(&mut switcher, 1);
+        }
+        // Once more within the window: it stays out, and the user is told
+        switcher.drop_chains();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let message = loop {
+            if let Ok(message) = control.error_rx.try_recv() {
+                break message;
+            }
+            assert!(Instant::now() < deadline, "failure never reported");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert!(message.contains("keeps failing"));
+        assert!(switcher.active.is_empty());
     }
 }

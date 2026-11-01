@@ -21,6 +21,7 @@ pub mod verify;
 use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::warn;
 
 use index::{Index, Package, Plugin};
 use install::Installed;
@@ -131,7 +132,7 @@ impl Store {
         match verify::verify(&data, &signature, &self.keys()).and_then(|_| Index::parse(&data)) {
             Ok(index) => Some(index),
             Err(e) => {
-                tracing::warn!("Ignoring the kept plugin catalog: {e:#}");
+                warn!(error = format_args!("{e:#}"), "Kept plugin catalog ignored");
                 None
             }
         }
@@ -198,7 +199,7 @@ impl Store {
             .artifact()
             .with_context(|| format!("{} is not available for {} yet", plugin.name, arch()))?;
         let cache = self.dir.join("cache");
-        fs::create_dir_all(&cache)?;
+        fs::create_dir_all(&cache).with_context(|| format!("Cannot create {}", cache.display()))?;
         let archive = cache.join(format!("{}.{}", artifact.sha256, artifact.format));
         let cached =
             archive.is_file() && fetch::sha256_file(&archive).is_ok_and(|s| s == artifact.sha256);
@@ -248,13 +249,15 @@ impl Store {
             if fetch::sha256(&bytes) != picture.sha256 {
                 bail!("checksum mismatch");
             }
-            fs::create_dir_all(path.parent().unwrap())?;
+            if let Some(dir) = path.parent() {
+                fs::create_dir_all(dir)?;
+            }
             crate::persist::write_atomic(&path, &bytes)
         })();
         match result {
             Ok(()) => Some(path),
             Err(e) => {
-                tracing::warn!("Picture of {} not downloaded: {e:#}", plugin.id);
+                warn!(plugin = %plugin.id, error = format_args!("{e:#}"), "Plugin picture not downloaded");
                 None
             }
         }
@@ -287,7 +290,9 @@ fn prune(dir: &Path, keep: impl Fn(&str) -> bool) {
     };
     for entry in entries.flatten() {
         if !keep(&entry.file_name().to_string_lossy()) {
-            let _ = fs::remove_file(entry.path());
+            if let Err(e) = fs::remove_file(entry.path()) {
+                warn!(path = %entry.path().display(), error = %e, "Stale store file not removed");
+            }
         }
     }
 }

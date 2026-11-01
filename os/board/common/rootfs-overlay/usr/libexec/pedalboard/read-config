@@ -1,0 +1,23 @@
+#!/bin/sh
+#
+# Settings of pedalboard.txt (boot partition) to /run/pedalboard/config, as
+# shell-safe KEY='value' lines: the defaults, then the known keys of the
+# file with plain values. Run at boot (S00storage) and after a change made
+# from Settings (see settings).
+
+DEFAULTS=/etc/pedalboard/defaults
+CONFIG=/run/pedalboard/config
+
+mkdir -p /run/pedalboard
+{
+	cat "$DEFAULTS"
+	[ -r /boot/pedalboard.txt ] &&
+		tr -d '\r' </boot/pedalboard.txt |
+		sed -n 's/^[[:space:]]*\([a-z_]*\)[[:space:]]*=[[:space:]]*\([A-Za-z0-9_.:,-]*\)[[:space:]]*$/\1 \2/p' |
+			while read -r key value; do
+				case "$key" in
+				audio_device | sample_rate | period | periods | display_rotation | wifi_country)
+					echo "$key='$value'" ;;
+				esac
+			done
+} >"$CONFIG.tmp" && chmod 644 "$CONFIG.tmp" && mv -f "$CONFIG.tmp" "$CONFIG"

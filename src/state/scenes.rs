@@ -30,7 +30,26 @@ pub struct SceneSwitch {
 }
 
 pub fn default_scene_name(slot: usize) -> String {
-    format!("Scene {}", slot + 1)
+    format!("Scene {}", slot.saturating_add(1))
+}
+
+/// Turn a block on or off as the scene has it (`on`; unchanged when the
+/// scene does not know it), with the command for the audio chain
+fn set_enabled(
+    enabled: &mut bool,
+    on: Option<&bool>,
+    instance_id: usize,
+    switch: &mut SceneSwitch,
+) {
+    if let Some(&on) = on {
+        if *enabled != on {
+            *enabled = on;
+            switch.commands.push(ChainCommand::SetEnabled {
+                instance_id,
+                enabled: on,
+            });
+        }
+    }
 }
 
 impl EffectChainState {
@@ -91,7 +110,7 @@ impl EffectChainState {
 
     pub fn rename_scene(&mut self, slot: usize, name: &str) -> Result<()> {
         if slot >= SCENE_COUNT {
-            return Err(anyhow!("No scene {}", slot + 1));
+            return Err(anyhow!("No scene {}", slot.saturating_add(1)));
         }
         self.store_scene();
         let name = name.trim();
@@ -118,6 +137,8 @@ impl EffectChainState {
         if self.scenes.len() < SCENE_COUNT {
             self.scenes.resize(SCENE_COUNT, None);
         }
+        // `scene` is public: keep it a slot
+        self.scene = self.scene.min(SCENE_COUNT - 1);
         let name = self.scene_name(self.scene);
         self.scenes[self.scene] = Some(self.capture_scene(name));
     }
@@ -132,7 +153,9 @@ impl EffectChainState {
         collect_ids(&self.nodes, &mut ids);
         let mut scenes = self.scenes.clone();
         scenes.resize(SCENE_COUNT, None);
-        scenes[self.scene] = Some(self.capture_scene(self.scene_name(self.scene)));
+        if let Some(current) = scenes.get_mut(self.scene) {
+            *current = Some(self.capture_scene(self.scene_name(self.scene)));
+        }
         for scene in scenes.iter_mut().flatten() {
             scene.enabled.retain(|id, _| ids.contains(id));
             scene.params.retain(|id, _| ids.contains(id));
@@ -147,7 +170,7 @@ impl EffectChainState {
     /// know (added since) keep their state.
     pub fn select_scene(&mut self, slot: usize) -> Result<SceneSwitch> {
         if slot >= SCENE_COUNT {
-            return Err(anyhow!("No scene {}", slot + 1));
+            return Err(anyhow!("No scene {}", slot.saturating_add(1)));
         }
         self.store_scene();
         self.scene = slot;
@@ -169,15 +192,7 @@ impl EffectChainState {
             let instance_id = node_id(node);
             match node {
                 ChainNode::Plugin { enabled, .. } => {
-                    if let Some(&on) = target.enabled.get(&id) {
-                        if *enabled != on {
-                            *enabled = on;
-                            switch.commands.push(ChainCommand::SetEnabled {
-                                instance_id,
-                                enabled: on,
-                            });
-                        }
-                    }
+                    set_enabled(enabled, target.enabled.get(&id), instance_id, &mut switch);
                     if let (Some(values), Some(wanted)) = (params, target.params.get(&id)) {
                         for (index, (value, wanted)) in values.iter_mut().zip(wanted).enumerate() {
                             if value != wanted {
@@ -199,15 +214,7 @@ impl EffectChainState {
                     pan,
                     ..
                 } => {
-                    if let Some(&on) = target.enabled.get(&id) {
-                        if *enabled != on {
-                            *enabled = on;
-                            switch.commands.push(ChainCommand::SetEnabled {
-                                instance_id,
-                                enabled: on,
-                            });
-                        }
-                    }
+                    set_enabled(enabled, target.enabled.get(&id), instance_id, &mut switch);
                     let Some(wanted) = target.splits.get(&id) else {
                         continue;
                     };

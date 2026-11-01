@@ -7,6 +7,7 @@
 //! call them off the UI thread.
 
 use std::process::{Command, Output};
+use tracing::{debug, warn};
 
 /// A network seen by the last scan
 #[derive(Debug, Clone, PartialEq)]
@@ -69,7 +70,10 @@ pub fn addresses() -> Vec<Address> {
         "show",
     ])
     .map(|out| parse_addresses(&out))
-    .unwrap_or_default()
+    .unwrap_or_else(|e| {
+        debug!(error = %e, "No network addresses from NetworkManager");
+        Vec::new()
+    })
 }
 
 /// The Wi-Fi device, driven through NetworkManager
@@ -163,7 +167,9 @@ impl Wifi {
                 // with the wrong one behind: remove it, the next try starts
                 // clean (other failures, e.g. a timeout, keep it)
                 if !saved && e == WifiError::WrongPassword {
-                    let _ = self.forget(ssid);
+                    if let Err(e) = self.forget(ssid) {
+                        warn!(ssid = %ssid, error = %e, "Profile with a wrong password not removed");
+                    }
                 }
                 Err(e)
             }
@@ -220,19 +226,17 @@ fn error(stderr: &str) -> WifiError {
 /// Split a line of `nmcli -t` output: fields are separated by ':', with
 /// '\:' and '\\' escaped
 fn split_terse(line: &str) -> Vec<String> {
-    let mut fields = vec![String::new()];
+    let mut fields = Vec::new();
+    let mut field = String::new();
     let mut chars = line.chars();
     while let Some(c) = chars.next() {
         match c {
-            '\\' => {
-                if let Some(next) = chars.next() {
-                    fields.last_mut().unwrap().push(next);
-                }
-            }
-            ':' => fields.push(String::new()),
-            c => fields.last_mut().unwrap().push(c),
+            '\\' => field.extend(chars.next()),
+            ':' => fields.push(std::mem::take(&mut field)),
+            c => field.push(c),
         }
     }
+    fields.push(field);
     fields
 }
 

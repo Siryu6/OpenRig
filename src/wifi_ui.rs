@@ -6,11 +6,11 @@ use std::thread;
 use std::time::Duration;
 
 use slint::{ComponentHandle, Weak};
-use tracing::{info, warn};
+use tracing::{debug, error, info, warn};
 
 use pedalboard::wifi::{self, Network, Wifi, WifiError};
 
-use crate::{model, App, WifiNetwork};
+use crate::{model, ui, App, WifiNetwork};
 
 enum Command {
     Refresh {
@@ -33,11 +33,12 @@ pub fn setup(app: &App) {
         .name("wifi".into())
         .spawn(move || worker(rx, weak))
     {
-        warn!("Wi-Fi: cannot start the worker: {e}");
+        error!(error = %e, "Wi-Fi settings disabled, cannot start the worker");
         return;
     }
 
     let send = move |command| {
+        // The worker only stops with the app
         let _ = tx.send(command);
     };
     let s = send.clone();
@@ -93,7 +94,7 @@ fn worker(rx: Receiver<Command>, app: Weak<App>) {
                 wifi.set_enabled(on)
             }
             Command::Connect { ssid, password } => {
-                info!("Wi-Fi: joining {ssid}");
+                info!(ssid = %ssid, "Joining Wi-Fi network");
                 let busy = ssid.clone();
                 ui(&app, move |app| {
                     app.set_wifi_busy_ssid(busy.into());
@@ -117,7 +118,7 @@ fn worker(rx: Receiver<Command>, app: Weak<App>) {
         let message = match result {
             Ok(()) => String::new(),
             Err(e) => {
-                warn!("Wi-Fi: {e}");
+                warn!(error = %e, "Wi-Fi command failed");
                 e.to_string()
             }
         };
@@ -139,7 +140,7 @@ fn publish_addresses(app: &Weak<App>) {
 /// DHCP hands out the address a few seconds after joining a network
 fn publish_addresses_later(app: &Weak<App>) {
     let app = app.clone();
-    let _ = thread::Builder::new()
+    let spawned = thread::Builder::new()
         .name("wifi-address".into())
         .spawn(move || {
             for _ in 0..3 {
@@ -147,6 +148,9 @@ fn publish_addresses_later(app: &Weak<App>) {
                 publish_addresses(&app);
             }
         });
+    if let Err(e) = spawned {
+        warn!(error = %e, "Addresses not refreshed after joining");
+    }
 }
 
 /// Publish the radio state and the networks; a rescan shows the cached list first
@@ -154,6 +158,7 @@ fn refresh(wifi: &Wifi, app: &Weak<App>, rescan: bool, message: String) {
     let enabled = match wifi.status() {
         Ok(status) => status.enabled,
         Err(e) => {
+            warn!(error = %e, "Wi-Fi status unreadable");
             let message = e.to_string();
             ui(app, move |app| app.set_wifi_message(message.into()));
             return;
@@ -169,7 +174,10 @@ fn refresh(wifi: &Wifi, app: &Weak<App>, rescan: bool, message: String) {
         return;
     }
 
-    let cached = wifi.networks(false).unwrap_or_default();
+    let cached = wifi.networks(false).unwrap_or_else(|e| {
+        debug!(error = %e, "Known Wi-Fi networks unreadable");
+        Vec::new()
+    });
     ui(app, move |app| {
         app.set_wifi_status("on".into());
         app.set_wifi_networks(model(cached.iter().map(view).collect()));
@@ -196,14 +204,4 @@ fn view(network: &Network) -> WifiNetwork {
         connected: network.connected,
         saved: network.saved,
     }
-}
-
-/// Run on the UI thread
-fn ui(app: &Weak<App>, f: impl FnOnce(&App) + Send + 'static) {
-    let app = app.clone();
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(app) = app.upgrade() {
-            f(&app);
-        }
-    });
 }

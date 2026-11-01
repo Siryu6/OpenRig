@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
 import {
     PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus,
-    T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile, RoutingOutput, RoutingBlock, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot
+    T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile, RoutingOutput, RoutingBlock, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot, SystemSetting
 } from "types.slint";
 // Pages
 import { PluginRack } from "pages/rack.slint";
@@ -29,7 +29,7 @@ import { PlotEvents } from "components/plot.slint";
 
 // Re-export the data types used by the Rust side
 export { ChoiceSearch, Encoder, Features, PlotEvents, TextEdit, TextEditing, Theme }
-export { PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot }
+export { PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot, SystemSetting }
 
 export component App inherits Window {
     title: "OpenRig";
@@ -368,6 +368,18 @@ export component App inherits Window {
     callback midi-channel-changed(int);
     callback midi-clock-changed(bool);
     callback light-theme-changed(bool);
+    in-out property <int> dsp-cores: 0;
+    in property <int> dsp-max-cores: 1;
+    callback dsp-cores-changed(int);
+    in property <bool> system-available: false;
+    in property <[SystemSetting]> system-settings: [];
+    in property <string> system-summary: "";
+    in property <bool> system-changed: false;
+    in property <bool> system-busy: false;
+    in property <string> system-message: "";
+    callback system-step(string, int);
+    callback system-apply();
+    callback system-revert();
     callback midi-learn-toggled(bool);
     callback midi-learn-touch(int);             // target touched while learning
     callback midi-learn-clear(int);             // forget the controller of a target
@@ -1248,6 +1260,27 @@ export component App inherits Window {
                 }
                 light-theme-changed(on) => {
                     root.light-theme-changed(on);
+                }
+                dsp-cores: root.dsp-cores;
+                dsp-max-cores: root.dsp-max-cores;
+                dsp-cores-changed(cores) => {
+                    root.dsp-cores = cores;
+                    root.dsp-cores-changed(cores);
+                }
+                system-available: root.system-available;
+                system-settings: root.system-settings;
+                system-summary: root.system-summary;
+                system-changed: root.system-changed;
+                system-busy: root.system-busy;
+                system-message: root.system-message;
+                system-step(key, delta) => {
+                    root.system-step(key, delta);
+                }
+                system-apply => {
+                    root.system-apply();
+                }
+                system-revert => {
+                    root.system-revert();
                 }
                 wifi-status: root.wifi-status;
                 wifi-networks: root.wifi-networks;

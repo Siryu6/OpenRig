@@ -226,7 +226,11 @@ impl Board {
                             &mut delta,
                         )?;
                         // Seesaw counts clockwise down; buttons pull low
-                        Ok((-i32::from_be_bytes(delta), levels & (1 << pin) == 0))
+                        // (saturating: a garbled read of i32::MIN must not overflow)
+                        Ok((
+                            i32::from_be_bytes(delta).saturating_neg(),
+                            levels & (1 << pin) == 0,
+                        ))
                     })
                     .collect()
             }
@@ -277,7 +281,7 @@ impl Tracker {
         now: Instant,
         out: &mut Vec<Event>,
     ) {
-        self.counts += counts;
+        self.counts = self.counts.saturating_add(counts);
         let detents = self.counts / steps;
         if detents != 0 {
             self.counts -= detents * steps;
@@ -288,7 +292,9 @@ impl Tracker {
                 self.down_since = Some(now);
                 self.long_sent = false;
             }
-            (true, Some(since)) if !self.long_sent && now - since >= LONG_PRESS => {
+            (true, Some(since))
+                if !self.long_sent && now.saturating_duration_since(since) >= LONG_PRESS =>
+            {
                 self.long_sent = true;
                 out.push(Event::LongPress { index });
             }
@@ -345,12 +351,20 @@ impl Encoders {
     /// Reads every board once
     pub fn poll(&mut self, bus: &mut dyn Bus, now: Instant) -> std::io::Result<Vec<Event>> {
         let steps = i32::from(self.settings.steps.max(1));
-        let sign = if self.settings.reverse { -1 } else { 1 };
+        let reverse = self.settings.reverse;
         let mut events = Vec::new();
         let mut index = 0;
         for board in &self.boards {
             for (counts, down) in board.read(bus)? {
-                self.trackers[index].update(index, sign * counts, down, steps, now, &mut events);
+                let counts = if reverse {
+                    counts.saturating_neg()
+                } else {
+                    counts
+                };
+                // One tracker per encoder of each board (see `open`)
+                if let Some(tracker) = self.trackers.get_mut(index) {
+                    tracker.update(index, counts, down, steps, now, &mut events);
+                }
                 index += 1;
             }
         }
@@ -358,7 +372,8 @@ impl Encoders {
     }
 }
 
-/// Simulated boards, for the tests and to try the app without them
+/// Simulated boards, for the tests
+#[cfg(test)]
 pub mod sim {
     use super::*;
     use std::collections::BTreeMap;

@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tracing::info;
+use tracing::{debug, info};
 
 use super::snapshot::{PluginConfig, Preset};
 use super::store;
@@ -30,9 +30,9 @@ impl PresetManager {
             manager.presets.insert(preset.id.clone(), preset);
         }
         info!(
-            "Loaded {} presets from {:?}",
-            manager.presets.len(),
-            manager.presets_dir
+            count = manager.presets.len(),
+            dir = %manager.presets_dir.display(),
+            "Presets loaded"
         );
         Ok(manager)
     }
@@ -41,7 +41,7 @@ impl PresetManager {
     pub fn save_preset(&mut self, preset: &Preset) -> Result<()> {
         let previous = self.files.get(&preset.id).map(PathBuf::as_path);
         let path = store::save(&self.presets_dir, &preset.id, preset, previous)?;
-        info!("Saved preset '{}' to {:?}", preset.name, path);
+        info!(name = %preset.name, path = %path.display(), "Preset saved");
         self.files.insert(preset.id.clone(), path);
         self.presets.insert(preset.id.clone(), preset.clone());
         Ok(())
@@ -76,14 +76,14 @@ impl PresetManager {
             .cloned()
             .ok_or_else(|| anyhow!("Preset not found: {}", id))?;
         self.current_preset_id = Some(id.to_string());
-        info!("Loaded preset '{}'", preset.name);
+        debug!(name = %preset.name, "Preset made current");
         Ok(preset)
     }
 
     pub fn delete_preset(&mut self, id: &str) -> Result<()> {
-        if !self.presets.contains_key(id) {
+        let Some(name) = self.presets.get(id).map(|p| p.name.clone()) else {
             return Err(anyhow!("Preset not found: {}", id));
-        }
+        };
         // The file first: if it cannot be deleted, the preset stays listed
         // rather than coming back at the next start
         let path = self
@@ -98,11 +98,11 @@ impl PresetManager {
             }
         }
         self.files.remove(id);
-        let preset = self.presets.remove(id).expect("checked above");
+        self.presets.remove(id);
         if self.current_preset_id.as_deref() == Some(id) {
             self.current_preset_id = None;
         }
-        info!("Deleted preset '{}'", preset.name);
+        info!(name = %name, "Preset deleted");
         Ok(())
     }
 

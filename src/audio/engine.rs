@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossbeam_channel::{bounded, Receiver};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use tracing::info;
+use tracing::debug;
 
 use super::chain_switcher::ChainControl;
 use super::jack_client::{ActiveJack, JackClientBuilder};
@@ -24,7 +24,7 @@ impl AudioEngine {
         tuner: Arc<Mutex<Tuner>>,
         looper: Arc<Mutex<Looper>>,
     ) -> Result<Self> {
-        info!("Starting audio engine");
+        debug!("Starting the audio engine");
         let (tuner_tx, tuner_rx) = bounded(16);
         let routing = Routing::load(&crate::state::data_dir());
         let jack = JackClientBuilder::new("pedalboard")
@@ -86,6 +86,6 @@ impl AudioEngine {
 
 impl Drop for AudioEngine {
     fn drop(&mut self) {
-        info!("Shutting down audio engine");
+        debug!("Stopping the audio engine");
     }
 }

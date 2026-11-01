@@ -2,12 +2,12 @@
 //! encoders wired to the board.
 //! Changes apply at once: the inputs are opened again on their new GPIOs.
 
-use std::cell::RefCell;
+use std::cell::{RefCell, RefMut};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use slint::{ComponentHandle, ModelRc, VecModel};
-use tracing::warn;
+use slint::{ComponentHandle, ModelRc, VecModel, Weak};
+use tracing::{error, warn};
 
 use pedalboard::hardware::{
     Encoder, Hardware, I2cEncoders, I2cModule, ENCODER_STEPS, MAX_FOOTSWITCHES, MAX_PIN,
@@ -22,6 +22,16 @@ struct Board {
     gpio: Option<crate::gpio::Gpio>,
 }
 
+/// The board, for a callback; `None` (logged) when a callback run from
+/// inside another (a Slint re-entry) would borrow it twice
+fn borrow(board: &RefCell<Board>) -> Option<RefMut<'_, Board>> {
+    let borrowed = board.try_borrow_mut().ok();
+    if borrowed.is_none() {
+        warn!("Hardware settings in use, change skipped");
+    }
+    borrowed
+}
+
 pub fn setup(app: &App, state: &Arc<AppState>) {
     app.global::<Features>().set_gpio(cfg!(feature = "gpio"));
     let board = Rc::new(RefCell::new(Board {
@@ -33,48 +43,40 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
 
     let (weak, st, b) = (app.as_weak(), state.clone(), board.clone());
     app.on_hardware_step(move |what, index, delta| {
-        let Some(app) = weak.upgrade() else { return };
-        let mut board = b.borrow_mut();
-        let mut hardware = board.hardware.clone();
-        step(&mut hardware, &what, index, delta.signum());
-        change(&app, &st, &mut board, hardware);
+        edit(&weak, &st, &b, |hardware| {
+            step(hardware, &what, index, delta.signum())
+        });
     });
     let (weak, st, b) = (app.as_weak(), state.clone(), board.clone());
     app.on_hardware_set_encoder(move |on| {
-        let Some(app) = weak.upgrade() else { return };
-        let mut board = b.borrow_mut();
-        let mut hardware = board.hardware.clone();
-        hardware.encoder = on.then(|| {
-            // The reference wiring when free, else free pins
-            let mut encoder = Encoder::default();
-            let mut free = hardware.clone();
-            for pin in [&mut encoder.a, &mut encoder.b] {
-                *pin = free.free_pin(*pin).unwrap_or(*pin);
-                free.footswitches.push(*pin);
-            }
-            encoder.button = free.free_pin(13);
-            encoder
+        edit(&weak, &st, &b, |hardware| {
+            hardware.encoder = on.then(|| {
+                // The reference wiring when free, else free pins
+                let mut encoder = Encoder::default();
+                let mut free = hardware.clone();
+                for pin in [&mut encoder.a, &mut encoder.b] {
+                    *pin = free.free_pin(*pin).unwrap_or(*pin);
+                    free.footswitches.push(*pin);
+                }
+                encoder.button = free.free_pin(13);
+                encoder
+            });
         });
-        change(&app, &st, &mut board, hardware);
     });
     let (weak, st, b) = (app.as_weak(), state.clone(), board.clone());
     app.on_hardware_set_i2c(move |on| {
-        let Some(app) = weak.upgrade() else { return };
-        let mut board = b.borrow_mut();
-        let mut hardware = board.hardware.clone();
-        hardware.i2c_encoders = on.then(|| I2cEncoders::new(I2cModule::Seesaw));
-        change(&app, &st, &mut board, hardware);
+        edit(&weak, &st, &b, |hardware| {
+            hardware.i2c_encoders = on.then(|| I2cEncoders::new(I2cModule::Seesaw));
+        });
     });
     let (weak, st) = (app.as_weak(), state.clone());
     app.on_hardware_set_encoder_button(move |on| {
-        let Some(app) = weak.upgrade() else { return };
-        let mut board = board.borrow_mut();
-        let mut hardware = board.hardware.clone();
-        let free = hardware.free_pin(13);
-        if let Some(encoder) = &mut hardware.encoder {
-            encoder.button = if on { free } else { None };
-        }
-        change(&app, &st, &mut board, hardware);
+        edit(&weak, &st, &board, |hardware| {
+            let free = hardware.free_pin(13);
+            if let Some(encoder) = &mut hardware.encoder {
+                encoder.button = if on { free } else { None };
+            }
+        });
     });
 }
 
@@ -105,12 +107,14 @@ fn step(hardware: &mut Hardware, what: &str, index: i32, delta: i32) {
             hardware.footswitches.pop();
         }
         "footswitch" => {
-            if let Some(&pin) = usize::try_from(index)
-                .ok()
-                .and_then(|i| hardware.footswitches.get(i))
-            {
+            let Some(i) = usize::try_from(index).ok() else {
+                return;
+            };
+            if let Some(&pin) = hardware.footswitches.get(i) {
                 let next = next_pin(hardware, pin);
-                hardware.footswitches[index as usize] = next;
+                if let Some(slot) = hardware.footswitches.get_mut(i) {
+                    *slot = next;
+                }
             }
         }
         "encoder-a" | "encoder-b" | "encoder-button" => {
@@ -126,7 +130,9 @@ fn step(hardware: &mut Hardware, what: &str, index: i32, delta: i32) {
                 },
             };
             let next = next_pin(hardware, pin);
-            let encoder = hardware.encoder.as_mut().unwrap();
+            let Some(encoder) = hardware.encoder.as_mut() else {
+                return;
+            };
             match what {
                 "encoder-a" => encoder.a = next,
                 "encoder-b" => encoder.b = next,
@@ -167,12 +173,28 @@ fn step(hardware: &mut Hardware, what: &str, index: i32, delta: i32) {
     }
 }
 
+/// Change a copy of the hardware with `f`, then save and apply it
+fn edit(
+    app: &Weak<App>,
+    state: &Arc<AppState>,
+    board: &RefCell<Board>,
+    f: impl FnOnce(&mut Hardware),
+) {
+    let Some(app) = app.upgrade() else { return };
+    let Some(mut board) = borrow(board) else {
+        return;
+    };
+    let mut hardware = board.hardware.clone();
+    f(&mut hardware);
+    change(&app, state, &mut board, hardware);
+}
+
 fn change(app: &App, state: &Arc<AppState>, board: &mut Board, hardware: Hardware) {
     if hardware == board.hardware {
         return;
     }
     if let Err(e) = hardware.save(&pedalboard::state::data_dir()) {
-        warn!("Hardware: {e:#}");
+        error!(error = format_args!("{e:#}"), "Hardware settings not saved");
         app.set_hardware_message(format!("{e:#}").into());
         return;
     }
@@ -215,12 +237,12 @@ fn apply(app: &App, state: &Arc<AppState>, board: &mut Board) {
                 board.gpio = Some(gpio);
                 let errors: Vec<String> = errors.iter().map(|e| format!("{e:#}")).collect();
                 if !errors.is_empty() {
-                    warn!("GPIO: {}", errors.join("; "));
+                    warn!(errors = %errors.join("; "), "Some hardware inputs not opened");
                     app.set_hardware_message(format!("Not working: {}", errors.join("; ")).into());
                 }
             }
             Err(e) => {
-                warn!("GPIO disabled: {e:#}");
+                error!(error = format_args!("{e:#}"), "GPIO disabled");
                 app.set_hardware_message(format!("{e:#}").into());
             }
         }

@@ -8,7 +8,14 @@ from `os/`, for:
 | Board | Image | Kernel |
 |---|---|---|
 | Raspberry Pi 5 (and Pi 500) | `os/output/rpi5/images/sdcard.img` | Raspberry Pi 6.18 (rpi-6.18.y), `PREEMPT_RT` |
-| x86_64 mini PC, UEFI (Intel graphics) | `os/output/x86_64/images/disk.img` | mainline 6.18 LTS, `PREEMPT_RT` |
+| x86_64 mini PC, UEFI, Intel graphics, x86-64-v3 CPU (AVX2) | `os/output/x86_64/images/disk.img` | mainline 6.18 LTS, `PREEMPT_RT` |
+
+The x86_64 image is built for x86-64-v3: the CPU needs AVX2 and FMA
+(Intel Haswell, 2013, and later, e.g. the N100; AMD Excavator / Zen and
+later). It does not start on older CPUs or on low-power Celerons and
+Pentiums without AVX2 (J4125, N4020, J3455…): check with
+`grep -o avx2 /proc/cpuinfo` before buying. The neural amp models run
+about 1.8 times faster than with the baseline instruction set.
 
 Kernel fixes taken from newer Raspberry Pi kernels go in `os/board/rpi5/patches`
 (why each one is there: its README).

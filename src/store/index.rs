@@ -140,6 +140,10 @@ impl Index {
                 if !artifact.root.is_empty() && !valid_relative(&artifact.root) {
                     bail!("Invalid archive root in the catalog: {}", package.id);
                 }
+                // Both name the archive in the cache
+                if !valid_hex(&artifact.sha256) || !valid_format(&artifact.format) {
+                    bail!("Invalid archive in the catalog: {}", package.id);
+                }
             }
         }
         Ok(index)
@@ -214,6 +218,22 @@ pub fn valid_bundle(bundle: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'+'))
 }
 
+/// A checksum: hex digits only
+fn valid_hex(text: &str) -> bool {
+    !text.is_empty() && text.len() <= 128 && text.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// An archive format, used as a file extension: "tar.xz", "deb"…
+fn valid_format(format: &str) -> bool {
+    !format.is_empty()
+        && format.len() <= 16
+        && !format.starts_with('.')
+        && !format.contains("..")
+        && format
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.')
+}
+
 /// A relative path without `..`, `.`, empty or absolute components
 pub fn valid_relative(path: &str) -> bool {
     !path.starts_with('/')
@@ -268,5 +288,10 @@ mod tests {
         assert!(!valid_relative("a//b"));
         assert!(valid_bundle("gx_sd1.lv2"));
         assert!(!valid_bundle(".lv2"));
+        let bad = sample("2099-01-01T00:00:00Z").replace(r#""sha256":"00""#, r#""sha256":"../x""#);
+        assert!(Index::parse(bad.as_bytes()).is_err());
+        let bad =
+            sample("2099-01-01T00:00:00Z").replace(r#""format":"tar.xz""#, r#""format":"/x""#);
+        assert!(Index::parse(bad.as_bytes()).is_err());
     }
 }

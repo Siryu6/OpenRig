@@ -6,14 +6,15 @@
 //! tail of long responses (rooms) is convolved by a worker thread, which has
 //! a whole tail block of time to do it, so the callback cost stays flat.
 
-use std::cell::UnsafeCell;
 use std::f64::consts::PI;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use anyhow::{anyhow, Context, Result};
+
+use crate::sync::MutexExt;
 use fft_convolver::FFTConvolver;
 
 /// Longest impulse response kept (long reverbs are cut)
@@ -44,17 +45,30 @@ impl ImpulseResponse {
             .with_context(|| format!("Cannot read impulse response {}", path.display()))?;
         let spec = reader.spec();
         let channels = spec.channels.max(1) as usize;
+        if spec.sample_rate == 0 {
+            return Err(anyhow!(
+                "Invalid impulse response {}: no sample rate",
+                path.display()
+            ));
+        }
         let interleaved: Vec<f32> = match spec.sample_format {
             hound::SampleFormat::Float => reader.into_samples::<f32>().collect::<Result<_, _>>()?,
             hound::SampleFormat::Int => {
-                let scale = 1.0 / (1u64 << (spec.bits_per_sample - 1)) as f32;
+                let bits = u32::from(spec.bits_per_sample).clamp(1, 32);
+                let scale = 1.0 / (1u64 << (bits - 1)) as f32;
                 reader
                     .into_samples::<i32>()
                     .map(|s| s.map(|s| s as f32 * scale))
                     .collect::<Result<_, _>>()?
             }
         };
-        let side = |c: usize| -> Vec<f32> { interleaved.chunks(channels).map(|f| f[c]).collect() };
+        // Whole frames only: a truncated file may end inside one
+        let side = |c: usize| -> Vec<f32> {
+            interleaved
+                .chunks_exact(channels)
+                .filter_map(|f| f.get(c).copied())
+                .collect()
+        };
         let rate = spec.sample_rate as f32;
         let energy = |samples: &[f32]| band_energy(samples, rate);
         let (samples, side_energy) = match channel {
@@ -65,7 +79,7 @@ impl ImpulseResponse {
             }
             None => (
                 interleaved
-                    .chunks(channels)
+                    .chunks_exact(channels)
                     .map(|frame| frame.iter().sum::<f32>() / channels as f32)
                     .collect(),
                 None,
@@ -88,7 +102,12 @@ impl ImpulseResponse {
     }
 
     /// Prepare raw mono samples recorded at `file_rate` for `sample_rate`
-    pub fn from_samples(samples: Vec<f32>, file_rate: f32, sample_rate: f32) -> Result<Self> {
+    pub fn from_samples(mut samples: Vec<f32>, file_rate: f32, sample_rate: f32) -> Result<Self> {
+        if !(file_rate >= 1.0 && file_rate.is_finite()) {
+            return Err(anyhow!("invalid sample rate {file_rate}"));
+        }
+        // What is cut anyway, not resampled
+        samples.truncate((MAX_SECONDS * file_rate) as usize + 1);
         let mut samples = if (file_rate - sample_rate).abs() > 0.5 {
             resample(&samples, file_rate as f64, sample_rate as f64)
         } else {
@@ -159,16 +178,15 @@ const PENDING: u8 = 1;
 const DONE: u8 = 2;
 
 /// Buffers exchanged with the worker. `state` says who owns them: the
-/// audio thread when IDLE or DONE, the worker when PENDING.
+/// audio thread when IDLE or DONE, the worker when PENDING. The locks are
+/// never contended then (a bare compare-and-swap): the audio thread only
+/// tries them, and plays silence for a block in the case it cannot happen.
 struct Shared {
-    input: UnsafeCell<Box<[f32]>>,
-    output: UnsafeCell<Box<[f32]>>,
+    input: Mutex<Box<[f32]>>,
+    output: Mutex<Box<[f32]>>,
     state: AtomicU8,
     stop: AtomicBool,
 }
-
-// Access to the buffers is serialized by `state` (acquire / release).
-unsafe impl Sync for Shared {}
 
 /// Tail of the response, starting `2 * TAIL_BLOCK` samples in. Input block
 /// k is handed over when complete, at k+1; its result is only needed from
@@ -188,8 +206,8 @@ impl Tail {
     fn start(mut convolver: FFTConvolver<f32>) -> Result<Self> {
         let block = || vec![0.0f32; TAIL_BLOCK].into_boxed_slice();
         let shared = Arc::new(Shared {
-            input: UnsafeCell::new(block()),
-            output: UnsafeCell::new(block()),
+            input: Mutex::new(block()),
+            output: Mutex::new(block()),
             state: AtomicU8::new(IDLE),
             stop: AtomicBool::new(false),
         });
@@ -207,10 +225,12 @@ impl Tail {
                         std::thread::park();
                     }
                     // PENDING: the worker owns the buffers
-                    let (input, output) =
-                        unsafe { (&*shared.input.get(), &mut *shared.output.get()) };
-                    if convolver.process(input, output).is_err() {
-                        output.fill(0.0);
+                    {
+                        let input = shared.input.locked();
+                        let mut output = shared.output.locked();
+                        if convolver.process(&input, &mut output).is_err() {
+                            output.fill(0.0);
+                        }
                     }
                     shared.state.store(DONE, Ordering::Release);
                 }
@@ -255,12 +275,17 @@ impl Tail {
                 self.output.fill(0.0);
                 self.late = false;
             }
-            DONE => self
-                .output
-                .copy_from_slice(unsafe { &*self.shared.output.get() }),
+            DONE => match self.shared.output.try_lock() {
+                Ok(result) => self.output.copy_from_slice(&result),
+                Err(_) => self.output.fill(0.0),
+            },
             _ => self.output.fill(0.0),
         }
-        unsafe { &mut *self.shared.input.get() }.copy_from_slice(&self.input);
+        match self.shared.input.try_lock() {
+            Ok(mut block) => block.copy_from_slice(&self.input),
+            // Not handed over: this block gets no tail
+            Err(_) => return,
+        }
         self.shared.state.store(PENDING, Ordering::Release);
         if let Some(worker) = &self.worker {
             worker.thread().unpark();

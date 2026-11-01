@@ -8,10 +8,9 @@
 //! handed to the plugin after its next `run`, followed by `end_run`. Nothing
 //! on the audio side allocates or locks.
 
-use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread::{JoinHandle, Thread};
 
@@ -47,22 +46,21 @@ struct Schedule {
     schedule_work: unsafe extern "C" fn(*mut c_void, u32, *const c_void) -> u32,
 }
 
-/// Single-producer single-consumer ring of size-prefixed messages
+/// Single-producer single-consumer ring of size-prefixed messages. The
+/// bytes between `read` and `write` belong to the reader, the rest to the
+/// writer; the positions publish them (acquire / release), so the bytes
+/// themselves are relaxed atomics: no unsafe, no lock.
 struct Ring {
-    buffer: Box<[UnsafeCell<u8>]>,
+    buffer: Box<[AtomicU8]>,
     /// Positions written and read so far (wrapping), each owned by one side
     write: AtomicUsize,
     read: AtomicUsize,
 }
 
-// One thread writes and one reads; the bytes between `read` and `write`
-// belong to the reader, the rest to the writer (acquire / release).
-unsafe impl Sync for Ring {}
-
 impl Ring {
     fn new(capacity: usize) -> Self {
         Self {
-            buffer: (0..capacity).map(|_| UnsafeCell::new(0)).collect(),
+            buffer: (0..capacity.max(1)).map(|_| AtomicU8::new(0)).collect(),
             write: AtomicUsize::new(0),
             read: AtomicUsize::new(0),
         }
@@ -72,25 +70,26 @@ impl Ring {
         self.buffer.len()
     }
 
-    /// Copy `data` in at position `at`, wrapping around the end
+    /// The byte at position `at`, wrapping around the end
+    fn byte(&self, at: usize) -> Option<&AtomicU8> {
+        self.buffer.get(at % self.capacity())
+    }
+
+    /// Copy `data` in at position `at`
     fn copy_in(&self, at: usize, data: &[u8]) {
-        let base = self.buffer.as_ptr() as *mut u8;
-        let start = at % self.capacity();
-        let first = data.len().min(self.capacity() - start);
-        unsafe {
-            std::ptr::copy_nonoverlapping(data.as_ptr(), base.add(start), first);
-            std::ptr::copy_nonoverlapping(data.as_ptr().add(first), base, data.len() - first);
+        for (i, value) in data.iter().enumerate() {
+            if let Some(byte) = self.byte(at.wrapping_add(i)) {
+                byte.store(*value, Ordering::Relaxed);
+            }
         }
     }
 
-    /// Copy the bytes at position `at` out into `out`, wrapping around
+    /// Copy the bytes at position `at` out into `out`
     fn copy_out(&self, at: usize, out: &mut [u8]) {
-        let base = self.buffer.as_ptr() as *const u8;
-        let start = at % self.capacity();
-        let first = out.len().min(self.capacity() - start);
-        unsafe {
-            std::ptr::copy_nonoverlapping(base.add(start), out.as_mut_ptr(), first);
-            std::ptr::copy_nonoverlapping(base, out.as_mut_ptr().add(first), out.len() - first);
+        for (i, value) in out.iter_mut().enumerate() {
+            if let Some(byte) = self.byte(at.wrapping_add(i)) {
+                *value = byte.load(Ordering::Relaxed);
+            }
         }
     }
 
@@ -102,11 +101,14 @@ impl Ring {
     fn push(&self, message: &[u8]) -> bool {
         let write = self.write.load(Ordering::Relaxed);
         let read = self.read.load(Ordering::Acquire);
-        let free = self.capacity() - write.wrapping_sub(read);
+        // None if the positions make no sense (see `pop`)
+        let Some(free) = self.capacity().checked_sub(write.wrapping_sub(read)) else {
+            return false;
+        };
         let Ok(size) = u32::try_from(message.len()) else {
             return false;
         };
-        if HEADER + message.len() > free {
+        if HEADER.saturating_add(message.len()) > free {
             return false;
         }
         self.copy_in(write, &size.to_ne_bytes());
@@ -121,13 +123,23 @@ impl Ring {
     /// Take the oldest message into `out` (as large as the ring); its size
     fn pop(&self, out: &mut [u8]) -> Option<usize> {
         let read = self.read.load(Ordering::Relaxed);
-        if self.write.load(Ordering::Acquire) == read {
+        let write = self.write.load(Ordering::Acquire);
+        if write == read {
             return None;
         }
+        let used = write.wrapping_sub(read);
         let mut size = [0u8; HEADER];
         self.copy_out(read, &mut size);
         let size = u32::from_ne_bytes(size) as usize;
-        self.copy_out(read.wrapping_add(HEADER), &mut out[..size]);
+        // Never larger than what was written (`push` checks), nor than
+        // `out` then. Else two threads pushed at once (a plugin breaking
+        // the Worker contract) and mixed up the messages: drop them all.
+        let sane = used <= self.capacity() && used >= HEADER && size <= used - HEADER;
+        let Some(out) = out.get_mut(..size).filter(|_| sane) else {
+            self.read.store(write, Ordering::Release);
+            return None;
+        };
+        self.copy_out(read.wrapping_add(HEADER), out);
         self.read
             .store(read.wrapping_add(HEADER + size), Ordering::Release);
         Some(size)
@@ -145,9 +157,15 @@ pub struct Channel {
 }
 
 /// `schedule_work`: called by the plugin, from `run` most of the time
+///
+/// # Safety
+/// `handle` is the one of our `Schedule` (a live `Channel`, kept by the
+/// `Feature` that outlives the instance); `data` holds `size` bytes.
 unsafe extern "C" fn schedule_work(handle: *mut c_void, size: u32, data: *const c_void) -> u32 {
-    let channel = &*(handle as *const Channel);
-    let Some(job) = message(size, data) else {
+    // SAFETY: see the function's contract
+    let channel = unsafe { &*(handle as *const Channel) };
+    // SAFETY: see the function's contract
+    let Some(job) = (unsafe { message(size, data) }) else {
         return ERR_UNKNOWN;
     };
     // Counted before the worker can take it
@@ -163,9 +181,15 @@ unsafe extern "C" fn schedule_work(handle: *mut c_void, size: u32, data: *const 
 }
 
 /// `respond`: called by the plugin from `work`, on the worker thread
+///
+/// # Safety
+/// `handle` is the `Channel` the worker thread passed to `work`, alive while
+/// it runs; `data` holds `size` bytes.
 unsafe extern "C" fn respond(handle: *mut c_void, size: u32, data: *const c_void) -> u32 {
-    let channel = &*(handle as *const Channel);
-    match message(size, data) {
+    // SAFETY: see the function's contract
+    let channel = unsafe { &*(handle as *const Channel) };
+    // SAFETY: see the function's contract
+    match unsafe { message(size, data) } {
         Some(response) if channel.responses.push(response) => SUCCESS,
         Some(_) => ERR_NO_SPACE,
         None => ERR_UNKNOWN,
@@ -173,11 +197,16 @@ unsafe extern "C" fn respond(handle: *mut c_void, size: u32, data: *const c_void
 }
 
 /// The bytes a plugin passes, if they make sense
+///
+/// # Safety
+/// A non-null `data` points to `size` readable bytes that stay unchanged
+/// for `'a` (the LV2 Worker contract: until the call returns).
 unsafe fn message<'a>(size: u32, data: *const c_void) -> Option<&'a [u8]> {
     match (size, data.is_null()) {
         (0, _) => Some(&[]),
         (_, true) => None,
-        (size, false) => Some(std::slice::from_raw_parts(data as *const u8, size as usize)),
+        // SAFETY: see the function's contract
+        (size, false) => Some(unsafe { std::slice::from_raw_parts(data.cast(), size as usize) }),
     }
 }
 
@@ -188,7 +217,8 @@ pub struct Feature {
     schedule: Box<Schedule>,
 }
 
-// The pointers only point into the Channel, which is Sync.
+// SAFETY: the raw pointer of `schedule` only points to the Channel, which is
+// Sync and kept alive by `channel`.
 unsafe impl Send for Feature {}
 
 impl Feature {
@@ -224,6 +254,8 @@ impl Default for Feature {
 #[derive(Clone, Copy)]
 struct Handle(*mut c_void);
 
+// SAFETY: the Worker extension lets `work` run on another thread than `run`
+// (and the plugin's `instantiate` thread); the handle is only used so.
 unsafe impl Send for Handle {}
 
 /// Worker thread of one plugin instance. Must be dropped before the
@@ -237,8 +269,8 @@ pub struct Worker {
     thread: Option<JoinHandle<()>>,
 }
 
-// The interface is static plugin data; the handle is only used as the
-// Worker extension allows.
+// SAFETY: the interface is static plugin data; the handle is only used as
+// the Worker extension allows (see `Handle`).
 unsafe impl Send for Worker {}
 
 impl Worker {
@@ -252,7 +284,8 @@ impl Worker {
         handle: *mut c_void,
     ) -> std::io::Result<Self> {
         let channel = feature.channel.clone();
-        let work = interface.as_ref().work;
+        // SAFETY: valid until the Worker is dropped (the caller's contract)
+        let work = unsafe { interface.as_ref() }.work;
         let (thread_channel, thread_handle) = (channel.clone(), Handle(handle));
         let thread = std::thread::Builder::new()
             .name("lv2-worker".into())
@@ -264,13 +297,20 @@ impl Worker {
                     match channel.jobs.pop(&mut job) {
                         Some(size) => {
                             if let Some(work) = work {
-                                work(
-                                    handle.0,
-                                    respond,
-                                    respond_to,
-                                    size as u32,
-                                    job.as_ptr().cast(),
-                                );
+                                // SAFETY: the plugin's own `work`, on its
+                                // handle (valid while the Worker lives: this
+                                // thread is joined on drop), with our
+                                // `respond` and its live Channel, and `size`
+                                // bytes of `job`
+                                unsafe {
+                                    work(
+                                        handle.0,
+                                        respond,
+                                        respond_to,
+                                        size as u32,
+                                        job.as_ptr().cast(),
+                                    )
+                                };
                             }
                             channel.pending.fetch_sub(1, Ordering::AcqRel);
                         }
@@ -294,13 +334,17 @@ impl Worker {
     /// After each `run` (audio thread): hand the responses of the finished
     /// jobs to the plugin, then end its cycle
     pub fn end_run(&mut self) {
+        // SAFETY: valid until the Worker is dropped (`start`'s contract)
         let interface = unsafe { self.interface.as_ref() };
         while let Some(size) = self.channel.responses.pop(&mut self.response) {
             if let Some(work_response) = interface.work_response {
+                // SAFETY: the plugin's own callback on its live handle, from
+                // the audio thread after `run`, with `size` bytes
                 unsafe { work_response(self.handle.0, size as u32, self.response.as_ptr().cast()) };
             }
         }
         if let Some(end_run) = interface.end_run {
+            // SAFETY: as above
             unsafe { end_run(self.handle.0) };
         }
     }
@@ -324,9 +368,12 @@ impl Drop for Worker {
     }
 }
 
+// A fake C plugin drives the worker through raw pointers, as lilv would
 #[cfg(test)]
+#[allow(unsafe_op_in_unsafe_fn, clippy::undocumented_unsafe_blocks)]
 mod tests {
     use super::*;
+    use crate::sync::MutexExt;
     use std::time::{Duration, Instant};
 
     #[test]
@@ -377,7 +424,7 @@ mod tests {
     unsafe extern "C" fn work_response(handle: *mut c_void, size: u32, data: *const c_void) -> u32 {
         let plugin = &*(handle as *const Plugin);
         let response = std::slice::from_raw_parts(data as *const u8, size as usize);
-        plugin.received.lock().unwrap().push(response.to_vec());
+        plugin.received.locked().push(response.to_vec());
         SUCCESS
     }
 
@@ -422,10 +469,7 @@ mod tests {
             worker.end_run();
             std::thread::sleep(Duration::from_millis(1));
         }
-        assert_eq!(
-            *plugin.received.lock().unwrap(),
-            vec![vec![2u8, 4], vec![10]]
-        );
+        assert_eq!(*plugin.received.locked(), vec![vec![2u8, 4], vec![10]]);
         assert!(plugin.end_runs.load(Ordering::Relaxed) >= 1);
         drop(worker);
     }

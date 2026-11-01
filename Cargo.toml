@@ -22,6 +22,12 @@ name = "pedalboard-splash"
 path = "src/bin/splash.rs"
 required-features = ["splash"]
 
+# Times the effect chain offline on one or more cores: `pedalboard-bench`
+[[bin]]
+name = "pedalboard-bench"
+path = "src/bin/bench.rs"
+required-features = ["nam"]
+
 [features]
 default = ["winit", "lv2", "nam", "tone3000", "midi", "update", "store"]
 # Desktop window (X11 / Wayland)
@@ -43,10 +49,10 @@ tone3000 = ["dep:ureq", "dep:qrcodegen", "dep:zune-jpeg", "dep:png"]
 # MIDI input from USB / DIN interfaces (ALSA on Linux: libasound2-dev / alsa-lib)
 midi = ["dep:midir"]
 # pedalboard-splash (Linux framebuffer)
-splash = ["dep:png", "dep:libc"]
+splash = ["dep:png"]
 # "Check for updates" in Settings: latest release on GitHub; on the
 # pedalboard OS, downloads it and hands it to the system installer
-update = ["dep:ureq", "dep:ring", "dep:libc"]
+update = ["dep:ureq", "dep:ring"]
 # Plugin store: downloads the signed catalog index and installs LV2 bundles
 # into the data directory (minisign check, tar.xz / tar.gz in pure Rust)
 store = ["dep:ureq", "dep:ring", "dep:minisign-verify", "dep:tar", "dep:flate2", "dep:lzma-rs"]
@@ -97,7 +103,8 @@ qrcodegen = { version = "1.8", optional = true }
 midir = { version = "0.11.0", optional = true }  # MIDI input: ALSA, CoreMIDI, WinMM
 png = { version = "0.18", optional = true }
 zune-jpeg = { version = "0.5", optional = true }
-libc = { version = "0.2", optional = true }
+libc = "0.2"  # DSP workers: real-time scheduling
+bytemuck = "1"  # Byte views of the LV2 atom buffers, without unsafe
 minisign-verify = { version = "0.3", optional = true }
 tar = { version = "0.4", default-features = false, optional = true }
 flate2 = { version = "1", optional = true }
@@ -126,3 +133,18 @@ lto = "thin"
 # Slint's KMS backend asks for framebuffer modifiers even where the driver
 # takes none (virtio-gpu in QEMU…): copy that retries without them
 i-slint-backend-linuxkms = { path = "third_party/i-slint-backend-linuxkms" }
+
+# Runtime robustness: no panicking shortcuts outside tests (clippy.toml lets
+# tests use them), every unsafe block says why it is sound
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"

@@ -8,6 +8,7 @@
 use anyhow::{anyhow, bail, Result};
 use minisign_verify::{PublicKey, Signature};
 use std::path::Path;
+use tracing::warn;
 
 /// Public keys of the official catalog (the base64 line of `minisign.pub`).
 /// Several, so that a key can be replaced without breaking older apps.
@@ -24,13 +25,16 @@ pub const TRUSTED_KEYS_FILE: &str = "trusted-keys.pub";
 /// are skipped, so a `minisign.pub` file can be pasted as is)
 pub fn trusted_keys(store_dir: &Path) -> Vec<String> {
     let mut keys: Vec<String> = CATALOG_KEYS.iter().map(|k| k.to_string()).collect();
-    if let Ok(text) = std::fs::read_to_string(store_dir.join(TRUSTED_KEYS_FILE)) {
-        keys.extend(
+    let path = store_dir.join(TRUSTED_KEYS_FILE);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => keys.extend(
             text.lines()
                 .map(str::trim)
                 .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.contains(':'))
                 .map(str::to_string),
-        );
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => warn!(path = %path.display(), error = %e, "Owner catalog keys not read"),
     }
     keys
 }
@@ -45,7 +49,7 @@ pub fn verify(data: &[u8], signature: &str, keys: &[String]) -> Result<()> {
         Signature::decode(signature).map_err(|_| anyhow!("Unreadable catalog signature"))?;
     for key in keys {
         let Ok(key) = PublicKey::from_base64(key) else {
-            tracing::warn!("Ignoring an invalid catalog key");
+            warn!("Invalid catalog key ignored");
             continue;
         };
         if key.verify(data, &signature, false).is_ok() {
