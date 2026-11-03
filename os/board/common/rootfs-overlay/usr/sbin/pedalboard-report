@@ -1,7 +1,8 @@
 #!/bin/sh
 #
-# What to paste in a bug report: versions, settings, the audio interface,
-# its driver and how JACK opened it, and the log of JACK and the app.
+# What to paste in a bug report: versions, settings, the display, the audio
+# interface, its driver and how JACK opened it, and the log of JACK and the
+# app.
 # Read-only. Run as root over SSH, e.g.
 #
 #   pedalboard-report > /tmp/report.txt
@@ -41,6 +42,59 @@ if [ -e "$boot" ] && dir=$(mktemp -d); then
 	fi
 	rmdir "$dir"
 fi
+
+section "Display"
+grep '^display_rotation=' /run/pedalboard/config 2>/dev/null ||
+	grep '^display_rotation=' /etc/pedalboard/defaults
+for c in /sys/class/drm/card*-*; do
+	[ -r "$c/status" ] || continue
+	printf '%s: %s, %s, modes: %s\n' "${c##*/}" "$(cat "$c/status")" \
+		"$(cat "$c/enabled" 2>/dev/null)" "$(tr '\n' ' ' <"$c/modes" 2>/dev/null)"
+done
+for d in /sys/class/drm/card[0-9]*; do
+	case "${d##*/}" in *-*) continue ;; esac
+	[ -e "$d/device/driver" ] || continue
+	driver=$(readlink "$d/device/driver")
+	echo "${d##*/}: driver ${driver##*/}"
+done
+echo "modules:"
+lsmod | grep -i -E 'panel|ili|il79600|drm|vc4|goodix|edt|touch|regulator|pwm_bl|i2c_mux'
+
+# Raspberry Pi: the bootloader (it detects DSI displays and applies their
+# overlay) and the display nodes the overlays added to the device tree
+bl=/proc/device-tree/chosen/bootloader
+if [ -d "$bl" ]; then
+	echo "bootloader:"
+	for f in version build-timestamp update-timestamp; do
+		[ -r "$bl/$f" ] || continue
+		case "$f" in
+		*-timestamp)
+			n=$((0x$(od -An -tx1 "$bl/$f" | tr -d ' \n')))
+			printf '  %s: %s (%s)\n' "$f" "$n" "$(date -u -d "@$n" 2>/dev/null)"
+			;;
+		*) printf '  %s: %s\n' "$f" "$(tr -d '\0' <"$bl/$f")" ;;
+		esac
+	done
+fi
+if [ -d /proc/device-tree ]; then
+	echo "device tree display nodes:"
+	find /proc/device-tree -name compatible 2>/dev/null | while read -r f; do
+		compat=$(tr '\0' ' ' <"$f")
+		case "$compat" in
+		*dsi* | *panel* | *ili* | *goodix* | *backlight* | *touchscreen*)
+			node=${f%/compatible}
+			status=$(tr -d '\0' <"$node/status" 2>/dev/null)
+			echo "  ${node#/proc/device-tree}: $compat${status:+($status)}"
+			;;
+		esac
+	done
+fi
+
+section "Input devices"
+grep -E '^(N|H):' /proc/bus/input/devices
+
+section "Kernel messages (display)"
+dmesg | grep -i -E 'dsi|panel|ili|drm|vc4|goodix|gt911|touch|backlight|i2c|regulator|v3d' | tail -80
 
 section "Sound cards"
 cat /proc/asound/cards
