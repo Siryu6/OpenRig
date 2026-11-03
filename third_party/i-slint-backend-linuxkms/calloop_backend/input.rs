@@ -211,6 +211,19 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
         };
         let window = adapter.window();
         let screen_size = window.size().to_logical(window.scale_factor());
+        // Touchscreens and tablets report positions on the panel, which does
+        // not turn with SLINT_KMS_ROTATION
+        let rotation = adapter.rotation();
+        let absolute = |transform: &dyn Fn(u32, u32) -> (f64, f64)| {
+            let (x, y) = rotation.screen_to_window_position(
+                (screen_size.width, screen_size.height),
+                |width, height| {
+                    let (x, y) = transform(width as u32, height as u32);
+                    (x as f32, y as f32)
+                },
+            );
+            LogicalPosition::new(x, y)
+        };
 
         for event in &mut self.libinput {
             if self.libinput_event_hook.as_ref().is_some_and(|hook| hook(&event)) {
@@ -234,13 +247,12 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                             window.dispatch_event_with_result(event).map_err(Self::Error::other)?;
                         }
                         input::event::PointerEvent::MotionAbsolute(abs_motion_event) => {
-                            let mouse_pos = LogicalPosition {
-                                x: abs_motion_event.absolute_x_transformed(screen_size.width as u32)
-                                    as _,
-                                y: abs_motion_event
-                                    .absolute_y_transformed(screen_size.height as u32)
-                                    as _,
-                            };
+                            let mouse_pos = absolute(&|width, height| {
+                                (
+                                    abs_motion_event.absolute_x_transformed(width),
+                                    abs_motion_event.absolute_y_transformed(height),
+                                )
+                            });
                             self.mouse_pos.set(Some(mouse_pos));
                             let event = WindowEvent::PointerMoved { position: mouse_pos };
                             window.dispatch_event_with_result(event).map_err(Self::Error::other)?;
@@ -271,10 +283,9 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                 }
                 input::Event::Touch(touch_event) => match touch_event {
                     input::event::TouchEvent::Down(touch_down_event) => {
-                        let pos = LogicalPosition::new(
-                            touch_down_event.x_transformed(screen_size.width as u32) as _,
-                            touch_down_event.y_transformed(screen_size.height as u32) as _,
-                        );
+                        let pos = absolute(&|width, height| {
+                            (touch_down_event.x_transformed(width), touch_down_event.y_transformed(height))
+                        });
                         let slot = touch_down_event.slot().unwrap_or(0) as i32;
                         set_touch_pos(&mut self.last_touch_positions, slot, pos);
                         window.dispatch_event(WindowEvent::internal(InternalEvent::Touch {
@@ -293,10 +304,9 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                         }));
                     }
                     input::event::TouchEvent::Motion(touch_motion_event) => {
-                        let pos = LogicalPosition::new(
-                            touch_motion_event.x_transformed(screen_size.width as u32) as _,
-                            touch_motion_event.y_transformed(screen_size.height as u32) as _,
-                        );
+                        let pos = absolute(&|width, height| {
+                            (touch_motion_event.x_transformed(width), touch_motion_event.y_transformed(height))
+                        });
                         let slot = touch_motion_event.slot().unwrap_or(0) as i32;
                         set_touch_pos(&mut self.last_touch_positions, slot, pos);
                         window.dispatch_event(WindowEvent::internal(InternalEvent::Touch {

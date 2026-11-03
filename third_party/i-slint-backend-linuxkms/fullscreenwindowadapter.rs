@@ -112,6 +112,12 @@ impl FullscreenWindowAdapter {
         }))
     }
 
+    /// How the screen is turned (SLINT_KMS_ROTATION)
+    #[allow(unused)]
+    pub fn rotation(&self) -> RenderingRotation {
+        self.rotation
+    }
+
     pub fn set_loop_signal(&self, signal: calloop::LoopSignal) {
         *self.loop_signal.borrow_mut() = Some(signal);
     }

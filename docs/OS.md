@@ -59,7 +59,7 @@ is 1.99 (`RUST_BIN_VERSION` in `os/Makefile`, newer than Buildroot's own),
 which `rust-version` in `Cargo.toml` keeps the lockfile compatible with.
 Slint's KMS backend is a patched copy in `third_party/` (see its
 `PATCHED.md`): it could not display on drivers without framebuffer
-modifiers (virtio-gpu in QEMU).
+modifiers (virtio-gpu in QEMU), and touch did not turn with the screen.
 
 ### Test in QEMU
 
@@ -104,7 +104,7 @@ The first partition (FAT, readable from any computer) holds
 | `audio_device` | `auto` | First USB interface or sound HAT (HDMI is skipped), or a card name from `/proc/asound/cards`: `AudioBox`, `pisound`… |
 | `sample_rate` | `48000` | Hz |
 | `period`, `periods` | `128`, `2` | JACK buffer: 128 × 2 at 48 kHz adds about 5 ms each way |
-| `display_rotation` | `0` | 0, 90, 180 or 270 |
+| `display_rotation` | `0` | 0, 90, 180 or 270 (clockwise; touch turns too) |
 | `wifi_country` | empty | Two letters (`FR`, `US`…): the Wi-Fi channels allowed there |
 
 Values are read at boot; restart after editing. Keys are lowercase and
@@ -117,6 +117,30 @@ On the Pi, firmware settings of your own (a sound HAT's overlay, e.g.
 `SYSTEM` partition numbered `boot_partition` in `autoboot.txt`: 2 on a new
 card), which `config.txt` includes. Updates keep it, and the kernel
 arguments added to `cmdline.txt` there.
+
+### Raspberry Pi Touch Display 2
+
+The official DSI touch display (5", 7" or 10.1") works on a Pi 5 without
+any setting: the firmware detects it and loads its overlay.
+
+- **Cable**: the 22-way to 15-way cable for the 5" and 7" models (the
+  15-way to 15-way one does not fit the Pi 5), the 22-way to 22-way cable
+  for the 10.1". Either `DISP` connector works.
+- **Bootloader**: the Pi 5 detects the display in its EEPROM bootloader;
+  the 10.1" needs a recent one. Update it once with Raspberry Pi Imager
+  (Misc utility images → Bootloader) or `sudo rpi-eeprom-update -a` on
+  Raspberry Pi OS.
+- **Rotation**: the panel is portrait (720 x 1280, or 1200 x 1920 for the
+  10.1"). Set `display_rotation=90` (or `270`, depending on which way the
+  display is mounted) in `pedalboard.txt`, or in Settings → Audio & system
+  → Screen rotation: the picture and the touch turn together.
+- **Without detection** (old bootloader, or detection fails on `DISP0`),
+  load the overlay in `extra.txt`, adding `,dsi0` for the `DISP0`
+  connector, e.g. `dtoverlay=vc4-kms-dsi-ili9881-7inch,dsi0`. The others
+  are `vc4-kms-dsi-ili9881-5inch` and `vc4-kms-dsi-ili79600-10-1inch`.
+
+With an HDMI screen connected too, the UI opens on the first one found:
+leave only one display connected.
 
 ## Storage
 
@@ -184,9 +208,11 @@ cat /etc/pedalboard-release   # version of the image
 pedalboard-report > /tmp/report.txt   # everything a bug report needs
 ```
 
-`pedalboard-report` gathers the versions, settings, sound cards and how
-JACK opened them, the HAT and `extra.txt` (Pi), the kernel's audio
-messages and the log of jackd and the app. Attach its output to an issue.
+`pedalboard-report` gathers the versions, settings, the display (outputs
+and their modes, drivers, touch devices; on a Pi the bootloader and the
+display overlays applied), sound cards and how JACK opened them, the HAT
+and `extra.txt` (Pi), the kernel's display and audio messages and the log
+of jackd and the app. Attach its output to an issue.
 
 `/var/log` is in RAM: the logs start again at each boot.
 

@@ -71,6 +71,34 @@ impl RenderingRotation {
         }
     }
 
+    /// Maps a position on the screen (the panel as the display reports it,
+    /// where touchscreens and tablets report their positions too) to the
+    /// rotated window. `window_size` is the size of the rotated window; the
+    /// position is given by `transform`, called with the screen's width and
+    /// height in the same units (like libinput's `x_transformed`).
+    #[allow(unused)]
+    pub fn screen_to_window_position(
+        &self,
+        window_size: (f32, f32),
+        transform: impl FnOnce(f32, f32) -> (f32, f32),
+    ) -> (f32, f32) {
+        let (width, height) = match self {
+            RenderingRotation::NoRotation | RenderingRotation::Rotate180 => window_size,
+            RenderingRotation::Rotate90 | RenderingRotation::Rotate270 => {
+                (window_size.1, window_size.0)
+            }
+        };
+        let (x, y) = transform(width, height);
+        // The inverse of the renderer's transform: rotate by `degrees()` after
+        // translating by `translation_after_rotation`
+        match self {
+            RenderingRotation::NoRotation => (x, y),
+            RenderingRotation::Rotate90 => (y, width - x),
+            RenderingRotation::Rotate180 => (width - x, height - y),
+            RenderingRotation::Rotate270 => (height - y, x),
+        }
+    }
+
     #[allow(unused)]
     pub fn translation_after_rotation(&self, screen_size: PhysicalSize) -> (f32, f32) {
         match self {
@@ -101,6 +129,45 @@ pub(crate) mod noop_presenter {
     impl crate::display::Presenter for NoopPresenter {
         fn present(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             Ok(())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Where the renderer draws a window position: rotated by `degrees()`
+    /// (clockwise, y down) after the translation
+    fn window_to_screen(rotation: RenderingRotation, screen: PhysicalSize, p: (f32, f32)) -> (f32, f32) {
+        let (tx, ty) = rotation.translation_after_rotation(screen);
+        let (x, y) = (p.0 + tx, p.1 + ty);
+        let (sin, cos) = rotation.degrees().to_radians().sin_cos();
+        (x * cos - y * sin, x * sin + y * cos)
+    }
+
+    #[test]
+    fn screen_positions_map_back_to_the_window() {
+        let screen = PhysicalSize::new(720, 1280);
+        for rotation in [
+            RenderingRotation::NoRotation,
+            RenderingRotation::Rotate90,
+            RenderingRotation::Rotate180,
+            RenderingRotation::Rotate270,
+        ] {
+            let window = rotation.screen_size_to_rotated_window_size(screen);
+            let window = (window.width as f32, window.height as f32);
+            for p in [(0., 0.), (100., 30.), (window.0, window.1), (window.0 / 3., window.1)] {
+                let s = window_to_screen(rotation, screen, p);
+                let back = rotation.screen_to_window_position(window, |w, h| {
+                    assert_eq!((w, h), (720., 1280.));
+                    s
+                });
+                assert!(
+                    (back.0 - p.0).abs() < 0.01 && (back.1 - p.1).abs() < 0.01,
+                    "{rotation:?}: {p:?} -> {s:?} -> {back:?}"
+                );
+            }
         }
     }
 }

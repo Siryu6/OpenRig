@@ -14,6 +14,22 @@ GENIMAGE_TMP="${BUILD_DIR}/genimage.tmp"
 # kernel, extra.txt, and cmdline.base: the image's cmdline.txt, which
 # updates compare the card's with to keep the arguments added to it
 rm -f "${BINARIES_DIR}/rpi-firmware/pedalboard.txt" # settings partition
+
+# Device tree overlays, built with the kernel (`make all` builds them all):
+# the rpi-firmware package's are built for another kernel version, whose
+# drivers can have other compatible strings (the Touch Display 2's do), and
+# miss the newer ones (vc4-kms-dsi-ili79600-10-1inch). The firmware loads
+# them from here: the one of a display it detects, those of extra.txt.
+OVERLAYS=("${BUILD_DIR}"/linux-*/arch/arm64/boot/dts/overlays)
+if [ ${#OVERLAYS[@]} -ne 1 ] || [ ! -f "${OVERLAYS[0]}/overlay_map.dtb" ]; then
+	echo "No overlays built with the kernel: ${OVERLAYS[*]}" >&2
+	exit 1
+fi
+rm -rf "${BINARIES_DIR}/rpi-firmware/overlays"
+mkdir -p "${BINARIES_DIR}/rpi-firmware/overlays"
+cp -f "${OVERLAYS[0]}"/*.dtbo "${OVERLAYS[0]}"/overlay_map.dtb \
+	"${OVERLAYS[0]}"/hat_map.dtb "${OVERLAYS[0]}"/README \
+	"${BINARIES_DIR}/rpi-firmware/overlays/"
 cp -f "${BOARD_DIR}/extra.txt" "${BINARIES_DIR}/rpi-firmware/extra.txt"
 cp -f "${BINARIES_DIR}/rpi-firmware/cmdline.txt" "${BINARIES_DIR}/rpi-firmware/cmdline.base"
 FILES=()
