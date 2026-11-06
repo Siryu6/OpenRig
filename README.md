@@ -172,6 +172,14 @@ pull-ups); the GPIOs are set in Settings → Hardware. External encoder
 boards go on the I2C bus (SDA GPIO 2, SCL GPIO 3, 3.3 V), enabled in the
 OS image.
 
+Do not wire switches to the GPIOs an audio HAT uses. 2-channel I2S HATs
+take GPIO 18–21. 8-channel HATs (HiFiBerry DAC8x, RaspiAudio 8x8) take
+GPIO 18–27, and GPIO 5 to detect their inputs. Those HATs overlap the
+default footswitches (27, 22, 23) and encoder (5). OpenRig asks the
+kernel which GPIOs a driver holds and leaves those inputs out; Settings →
+Hardware says which. With an 8-channel HAT, GPIO 4, 6, 12, 13, 16 and 17
+stay free (7–11 too when SPI is off).
+
 Guitar-oriented LV2 packages: `guitarix-lv2`, `x42-plugins`, `calf-plugins`,
 `dragonfly-reverb-lv2`, `lsp-plugins-lv2`.
 

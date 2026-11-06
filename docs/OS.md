@@ -211,8 +211,9 @@ pedalboard-report > /tmp/report.txt   # everything a bug report needs
 `pedalboard-report` gathers the versions, settings, the display (outputs
 and their modes, drivers, touch devices; on a Pi the bootloader and the
 display overlays applied), sound cards and how JACK opened them, the HAT
-and `extra.txt` (Pi), the kernel's display and audio messages and the log
-of jackd and the app. Attach its output to an issue.
+and `extra.txt` (Pi), the kernel's display and audio messages, the
+footswitch and encoder pins (`hardware.json`) and the kernel's GPIO
+messages, and the log of jackd and the app. Attach its output to an issue.
 
 `/var/log` is in RAM: the logs start again at each boot.
 
