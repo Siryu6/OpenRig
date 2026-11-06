@@ -6,13 +6,14 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::format::{
-    is_safe_relative_path, Dependencies, FileDependency, Meta, PluginDependency, Report, Rig,
-    Source, Tone3000Model,
+    is_safe_relative_path, BlockDisplay, Dependencies, FileDependency, Meta, PluginDependency,
+    RackDisplay, Report, Rig, Source, Tone3000Model,
 };
 use super::CatalogPlugin;
-use crate::plugins::scanner;
+use crate::plugins::scanner::{self, PluginCategory};
 use crate::presets::Preset;
 use crate::tone_info::ToneInfo;
+use crate::ui::slint_bridge::rack_color;
 
 /// What the exporting pedalboard knows
 pub struct Context<'a> {
@@ -22,6 +23,10 @@ pub struct Context<'a> {
     pub catalog: &'a [CatalogPlugin],
     /// Display name of an installed plugin
     pub plugin_name: &'a dyn Fn(&str) -> Option<String>,
+    /// Family and LV2 class of an installed plugin
+    pub plugin_class: &'a dyn Fn(&str) -> Option<(PluginCategory, String)>,
+    /// Who exports it, as the user set it once (may be empty)
+    pub author: String,
     /// Version of this app
     pub app_version: &'a str,
     /// Export time, RFC 3339 UTC (empty when unknown)
@@ -70,6 +75,10 @@ pub fn export(preset: &Preset, context: &Context, options: Options) -> Result<Ex
         }
         dropped = drop_unsafe_paths(chain);
     }
+    if let Some(preset) = value.as_object_mut() {
+        // Kept for exports to come; the manifest below carries them
+        preset.remove(RIG_MODELS_FIELD);
+    }
     let meta = Meta {
         name: preset.name.trim().chars().take(80).collect(),
         description: preset.description.chars().take(4000).collect(),
@@ -80,7 +89,12 @@ pub fn export(preset: &Preset, context: &Context, options: Options) -> Result<Ex
             .filter(|t| !t.is_empty())
             .take(16)
             .collect(),
-        author: String::new(),
+        author: context
+            .author
+            .trim()
+            .chars()
+            .take(super::format::limits::SHORT_TEXT)
+            .collect(),
         app_version: context.app_version.to_string(),
         created: context.created.clone(),
     };
@@ -109,13 +123,21 @@ pub fn export(preset: &Preset, context: &Context, options: Options) -> Result<Ex
     let files = files
         .into_iter()
         .map(|(path, blocks)| FileDependency {
-            source: resolve_file(&path, context.models_dir),
+            source: resolve_file(&path, context.models_dir)
+                .or_else(|| {
+                    preset
+                        .rig_models
+                        .get(&path)
+                        .map(|m| Source::Tone3000(m.clone()))
+                })
+                .unwrap_or_else(|| local_file(&path)),
             path,
             blocks,
         })
         .collect();
 
     rig.dependencies = Dependencies { plugins, files };
+    rig.display = display(&rig, context);
     let report = rig.validate();
     Ok(Exported {
         rig,
@@ -189,36 +211,95 @@ fn resolve_plugin(uri: &str, context: &Context) -> PluginDependency {
     }
 }
 
-fn resolve_file(path: &str, models_dir: &Path) -> Source {
+/// How the rack draws each block, by the app's own rules
+fn display(rig: &Rig, context: &Context) -> RackDisplay {
+    let view = rig.chain();
+    let blocks = view
+        .plugins()
+        .iter()
+        .map(|placed| {
+            let block = placed.block;
+            let shape = scanner::shape(&block.uri);
+            let (category, class) = (context.plugin_class)(&block.uri).unzip();
+            let (color, rgb) = rack_color(block.color.as_deref(), shape, category.as_ref());
+            let look = BlockDisplay {
+                kind: if shape.is_empty() { "plugin" } else { shape }.to_string(),
+                category: category
+                    .as_ref()
+                    .and_then(category_name)
+                    .unwrap_or_default()
+                    .to_string(),
+                lv2_class: class.unwrap_or_default(),
+                color: color.to_string(),
+                color_hex: format!("#{rgb:06x}"),
+            };
+            (block.instance_id.to_string(), look)
+        })
+        .collect();
+    RackDisplay { blocks }
+}
+
+/// Name of a plugin family in rigs; none for an unknown one
+fn category_name(category: &PluginCategory) -> Option<&'static str> {
+    Some(match category {
+        PluginCategory::Dynamics => "dynamics",
+        PluginCategory::Distortion => "distortion",
+        PluginCategory::Filter => "filter",
+        PluginCategory::Modulation => "modulation",
+        PluginCategory::Delay => "delay",
+        PluginCategory::Reverb => "reverb",
+        PluginCategory::Simulator => "simulator",
+        PluginCategory::Utility => "utility",
+        PluginCategory::Generator => "generator",
+        PluginCategory::Routing => "routing",
+        PluginCategory::Unknown => return None,
+    })
+}
+
+/// Preset field holding the TONE3000 source of the models a rig import
+/// could not get, by path (see `Preset::rig_models`)
+const RIG_MODELS_FIELD: &str = "rig_models";
+
+/// A TONE3000 model downloaded here: its tone and model ids from the
+/// `tone.json` of its folder
+fn resolve_file(path: &str, models_dir: &Path) -> Option<Source> {
     let relative = Path::new(path);
     let file = relative
         .file_name()
         .map(|f| f.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string());
     let folder = models_dir.join(relative.parent().unwrap_or(Path::new("")));
-    if let Some(info) = ToneInfo::read(&folder).filter(|i| i.id > 0) {
-        let (model_id, model_name) = match info.model_of(&file) {
-            Some((id, name)) => (Some(id), name),
-            None => (
-                None,
-                relative
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-            ),
-        };
-        return Source::Tone3000(Tone3000Model {
-            tone_id: info.id,
-            model_id,
-            tone_title: info.title,
-            model_name,
-            url: info.url,
-            license: info.license,
-            creator: info.creator,
-            gear: info.gear,
-            format: info.format,
-        });
-    }
+    let info = ToneInfo::read(&folder).filter(|i| i.id > 0)?;
+    let (model_id, model_name) = match info.model_of(&file) {
+        Some((id, name)) => (Some(id), name),
+        None => (
+            None,
+            relative
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        ),
+    };
+    Some(Source::Tone3000(Tone3000Model {
+        tone_id: info.id,
+        model_id,
+        tone_title: info.title,
+        model_name,
+        url: info.url,
+        license: info.license,
+        creator: info.creator,
+        gear: info.gear,
+        format: info.format,
+    }))
+}
+
+/// A file only this pedalboard has
+fn local_file(path: &str) -> Source {
+    let relative = Path::new(path);
+    let file = relative
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string());
     let extension = relative
         .extension()
         .map(|e| e.to_string_lossy().to_ascii_lowercase())

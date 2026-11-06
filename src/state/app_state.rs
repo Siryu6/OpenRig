@@ -891,6 +891,8 @@ pub struct AppState {
     light_theme: AtomicBool,
     /// Cores the effect chain runs on (0: as many as useful)
     dsp_cores: AtomicUsize,
+    /// Name written as the author of exported rigs
+    rig_author: Mutex<String>,
 }
 
 /// What the footswitches do
@@ -974,6 +976,9 @@ struct Session {
     /// Cores for the effect chain, 0 for all
     #[serde(default)]
     dsp_cores: usize,
+    /// Author of exported rigs
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    rig_author: String,
 }
 
 impl AppState {
@@ -1006,6 +1011,7 @@ impl AppState {
             param_layouts,
             light_theme: AtomicBool::new(false),
             dsp_cores: AtomicUsize::new(0),
+            rig_author: Mutex::default(),
         })
     }
 
@@ -1171,6 +1177,7 @@ impl AppState {
             midi: self.midi_settings(),
             light_theme: self.light_theme(),
             dsp_cores: self.dsp_cores(),
+            rig_author: self.rig_author(),
         };
         std::fs::create_dir_all(&self.data_dir)?;
         Ok(serde_json::to_vec_pretty(&session)?)
@@ -1217,6 +1224,7 @@ impl AppState {
         self.light_theme
             .store(session.light_theme, Ordering::Relaxed);
         self.dsp_cores.store(session.dsp_cores, Ordering::Relaxed);
+        *self.rig_author.locked() = session.rig_author;
         let mut midi = session.midi;
         if midi.channel > 16 {
             midi.channel = crate::midi::OMNI;
@@ -1771,6 +1779,22 @@ impl AppState {
         self.mark_dirty();
     }
 
+    /// Name written as the author of exported rigs ("" when not set)
+    pub fn rig_author(&self) -> String {
+        self.rig_author.locked().clone()
+    }
+
+    /// Set the author of exported rigs, kept with the session
+    pub fn set_rig_author(&self, name: &str) {
+        let name: String = name
+            .trim()
+            .chars()
+            .take(crate::rigs::format::limits::SHORT_TEXT)
+            .collect();
+        *self.rig_author.locked() = name;
+        self.mark_dirty();
+    }
+
     /// Cores the effect chain may use, 0 for all of them
     pub fn dsp_cores(&self) -> usize {
         self.dsp_cores.load(Ordering::Relaxed)
@@ -2014,6 +2038,10 @@ impl AppState {
     pub fn save_preset(&self, name: String) -> Result<String> {
         let mut preset = Preset::new(name);
         self.store_chain(&mut preset);
+        // A copy of a preset imported from a rig still lacks its models
+        if let Some(current) = self.preset_manager.locked().current_preset() {
+            preset.rig_models.clone_from(&current.rig_models);
+        }
         let id = self.preset_manager.locked().add_preset(preset)?;
         debug!(id = %id, "Chain saved as a new preset");
         self.mark_dirty();
@@ -2747,6 +2775,18 @@ mod tests {
         ));
         assert_eq!(chain.colors.get(&split).map(String::as_str), Some("red"));
         assert_eq!(chain.colors.len(), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn session_keeps_the_rig_author() {
+        let (state, dir) = state();
+        assert_eq!(state.rig_author(), "");
+        state.set_rig_author("  Siryu ");
+        state.save_session().unwrap();
+        let restored = AppState::with_host(Arc::new(Lv2Host::demo()), dir.clone()).unwrap();
+        assert!(restored.restore_session().unwrap());
+        assert_eq!(restored.rig_author(), "Siryu");
         let _ = std::fs::remove_dir_all(dir);
     }
 

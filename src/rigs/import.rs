@@ -284,6 +284,22 @@ pub fn install(plan: &Plan, installer: &mut dyn Installer) -> Result<Outcome> {
     }
     installer.progress(done, total, "");
     remap(&mut outcome.preset, &paths);
+    // Models not got: the preset keeps where they come from, for its next
+    // export
+    for item in &plan.items {
+        let Subject::File { path } = &item.subject else {
+            continue;
+        };
+        if item.step == Step::Ready || paths.contains_key(path) {
+            continue;
+        }
+        if let Some(Source::Tone3000(model)) = plan.rig.dependencies.file(path).map(|f| &f.source) {
+            outcome
+                .preset
+                .rig_models
+                .insert(path.clone(), model.clone());
+        }
+    }
     Ok(outcome)
 }
 
@@ -314,6 +330,8 @@ fn preset_of(rig: &Rig) -> Result<Preset> {
     };
     preset.created_at = fresh.created_at;
     preset.modified_at = fresh.modified_at;
+    // Only `install` fills it, from the manifest
+    preset.rig_models.clear();
     Ok(preset)
 }
 

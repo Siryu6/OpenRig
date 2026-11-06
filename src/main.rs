@@ -142,6 +142,58 @@ pub(crate) fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> bool {
 thread_local! {
     /// Counts toasts, so the same text shown twice restarts the timeout
     static STATUS_SHOWN: Cell<u32> = const { Cell::new(0) };
+    /// A toast announcing a new chain, kept while that chain is built
+    static PINNED: std::cell::RefCell<Option<Pinned>> = const { std::cell::RefCell::new(None) };
+}
+
+/// How long the chain errors are added to a pinned toast
+const PIN_TIME: Duration = Duration::from_secs(15);
+
+struct Pinned {
+    message: String,
+    since: std::time::Instant,
+    /// Chain errors since
+    errors: Vec<String>,
+}
+
+/// Show a toast that the errors of the chain being built (a block without
+/// its model) add to instead of replacing, for `PIN_TIME`
+pub(crate) fn show_status_pinned(app: &App, message: SharedString) {
+    PINNED.with(|p| {
+        *p.borrow_mut() = Some(Pinned {
+            message: message.to_string(),
+            since: std::time::Instant::now(),
+            errors: Vec::new(),
+        })
+    });
+    show_status(app, message);
+}
+
+/// An error of the chain builder: with the pinned toast if it is recent
+fn show_chain_error(app: &App, error: String) {
+    let merged = PINNED.with(|p| {
+        let mut pinned = p.borrow_mut();
+        match pinned.as_mut() {
+            Some(pin) if pin.since.elapsed() < PIN_TIME => {
+                pin.errors.push(error.clone());
+                Some(with_chain_errors(&pin.message, &pin.errors))
+            }
+            _ => {
+                *pinned = None;
+                None
+            }
+        }
+    });
+    show_status(app, merged.unwrap_or(error).into());
+}
+
+/// `message`, then the chain errors that came after it
+fn with_chain_errors(message: &str, errors: &[String]) -> String {
+    match errors {
+        [] => message.to_string(),
+        [one] => format!("{message}. Not loaded: {one}"),
+        [first, ..] => format!("{message}. {} blocks not loaded: {first}", errors.len()),
+    }
 }
 
 /// Show a toast for `STATUS_SECONDS`
@@ -284,13 +336,9 @@ pub(crate) fn block_tint(
     instance_id: usize,
     uri: &str,
 ) -> u32 {
-    chain
-        .colors
-        .get(&instance_id)
-        .and_then(|c| views::block_color(c))
-        .unwrap_or_else(|| {
-            views::default_block_color(scanner::shape(uri), state.plugin_category(uri).as_ref())
-        })
+    let chosen = chain.colors.get(&instance_id).map(String::as_str);
+    let category = state.plugin_category(uri);
+    views::rack_color(chosen, scanner::shape(uri), category.as_ref()).1
 }
 
 /// URI of the plugin `instance_id`, if it is one
@@ -1353,7 +1401,7 @@ fn start_poll_timer(
 
             // Errors from the chain builder
             if let Some(message) = state.poll_audio_error() {
-                show_status(&app, message.into());
+                show_chain_error(&app, message);
             }
 
             // Hide the status message after a while
@@ -1699,5 +1747,20 @@ mod tests {
         ));
         assert!(matches_words("Peavey 5150", ""));
         assert!(!matches_words("Peavey 5150", "5150 mesa"));
+    }
+
+    #[test]
+    fn chain_errors_follow_the_pinned_toast() {
+        use super::with_chain_errors;
+        let added = "Preset \"Lead\" added, 1 item missing";
+        assert_eq!(with_chain_errors(added, &[]), added);
+        assert_eq!(
+            with_chain_errors(added, &["Amp: no model".into()]),
+            format!("{added}. Not loaded: Amp: no model")
+        );
+        assert_eq!(
+            with_chain_errors(added, &["Amp: no model".into(), "Cab: no IR".into()]),
+            format!("{added}. 2 blocks not loaded: Amp: no model")
+        );
     }
 }

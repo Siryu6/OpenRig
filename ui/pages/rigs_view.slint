@@ -1,10 +1,11 @@
 import { Theme } from "../theme.slint";
 import { Badge, Button, EmptyState, Icon, SectionHeader, Toggle } from "../components/controls.slint";
+import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 
 // A .openrig file found in the rigs folder or on a USB drive
 export struct RigFileInfo {
     name: string,
-    detail: string, // "6 blocks · 2 to download", or why it cannot be read
+    detail: string, // "Lead.openrig · 06/11/2026 18:30 · 6 blocks", or why it cannot be read
     usb: bool,
     readable: bool,
 }
@@ -22,6 +23,7 @@ export global Rigs {
     in-out property <[RigFileInfo]> files: [];
     in-out property <string> preset-name: "";   // what Export exports
     in-out property <bool> include-midi: false;
+    in-out property <string> author: "";         // written in exported rigs
     in-out property <bool> usb: false;           // a removable drive is mounted
     in-out property <string> note: "";           // last export / list message
     in-out property <bool> busy: false;          // exporting or installing
@@ -36,6 +38,7 @@ export global Rigs {
 
     callback opened();
     callback export(bool); // to the USB drive too
+    callback set-author(string);
     callback open-file(int);
     callback install();
     callback close-plan();
@@ -93,6 +96,9 @@ component ItemRow inherits Rectangle {
 // one (from <data>/rigs or a USB drive) with the plugins and models it needs
 export component RigsPanel inherits Rectangle {
     callback close();
+
+    private property <bool> editing-author: false;
+    private property <string> author-text: "";
 
     background: Theme.background;
     TouchArea { }
@@ -168,6 +174,30 @@ export component RigsPanel inherits Rectangle {
                         font-size: Theme.font-caption;
                         wrap: word-wrap;
                         overflow: elide;
+                    }
+                }
+                // Who exported it, set once and kept
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+                    spacing: 0px;
+                    Text {
+                        text: "Author";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-caption;
+                        horizontal-alignment: center;
+                    }
+                    Button {
+                        max-width: 160px;
+                        icon: "edit";
+                        text: Rigs.author != "" ? Rigs.author : "Your name";
+                        variant: "ghost";
+                        font-size: Theme.font-small;
+                        enabled: !Rigs.busy;
+                        clicked => {
+                            root.author-text = Rigs.author;
+                            root.editing-author = true;
+                        }
                     }
                 }
                 VerticalLayout {
@@ -389,6 +419,50 @@ export component RigsPanel inherits Rectangle {
                 spacing: Theme.space-sm;
                 for item in Rigs.plan-items: ItemRow {
                     item: item;
+                }
+            }
+        }
+    }
+
+    // Author name: title + keyboard
+    if root.editing-author: Rectangle {
+        background: Theme.scrim;
+        TouchArea { }
+
+        VerticalLayout {
+            Rectangle {
+                vertical-stretch: 1;
+                background: Theme.panel;
+                VerticalLayout {
+                    alignment: center;
+                    padding-left: Theme.space-lg;
+                    spacing: 2px;
+                    Text {
+                        text: "Author of your rigs";
+                        color: Theme.text-primary;
+                        font-size: Theme.font-headline;
+                        font-weight: Theme.weight-bold;
+                    }
+                    Text {
+                        text: "Written in every rig you export. Leave it empty to stay anonymous.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                    }
+                }
+            }
+            VirtualKeyboard {
+                current-text: root.author-text;
+                placeholder: "Your name";
+                submit-label: "Save";
+                text-changed(t) => {
+                    root.author-text = t;
+                }
+                submit => {
+                    Rigs.set-author(root.author-text);
+                    root.editing-author = false;
+                }
+                cancel => {
+                    root.editing-author = false;
                 }
             }
         }

@@ -9,9 +9,10 @@ use std::path::{Path, PathBuf};
 
 use pedalboard::audio::{ChainNode, SplitType};
 use pedalboard::midi::{MidiAssign, MidiTarget};
+use pedalboard::plugins::scanner::PluginCategory;
 use pedalboard::presets::{Preset, PresetChain, SavedMidiAssign, SceneSnapshot};
 use pedalboard::rigs::export::{self, Options};
-use pedalboard::rigs::format::{Code, Level, Rig, Source};
+use pedalboard::rigs::format::{BlockKind, Code, Level, Rig, Source};
 use pedalboard::rigs::import::{self, Installer, Step, Subject};
 use pedalboard::rigs::CatalogPlugin;
 use pedalboard::tone_info::{ModelInfo, ToneInfo};
@@ -148,18 +149,29 @@ fn catalog() -> Vec<CatalogPlugin> {
 
 fn exported(options: Options) -> export::Exported {
     let models = models_dir();
+    let result = export_from(&preset(), &models, options);
+    fs::remove_dir_all(&models).unwrap();
+    result
+}
+
+/// Export `preset` from a board with the models of `models` and the
+/// compressor installed
+fn export_from(preset: &Preset, models: &Path, options: Options) -> export::Exported {
     let catalog = catalog();
     let name = |uri: &str| (uri == COMP).then(|| "ZamComp".to_string());
+    let class = |uri: &str| {
+        (uri == COMP).then(|| (PluginCategory::Dynamics, "CompressorPlugin".to_string()))
+    };
     let context = export::Context {
-        models_dir: &models,
+        models_dir: models,
         catalog: &catalog,
         plugin_name: &name,
+        plugin_class: &class,
+        author: "  Siryu ".into(),
         app_version: "0.11.0",
         created: "2026-11-06T18:30:00Z".into(),
     };
-    let result = export::export(&preset(), &context, options).unwrap();
-    fs::remove_dir_all(&models).unwrap();
-    result
+    export::export(preset, &context, options).unwrap()
 }
 
 #[test]
@@ -169,6 +181,7 @@ fn export_resolves_every_source() {
     assert_eq!(rig.meta.name, "Plexi Crunch");
     assert_eq!(rig.meta.tags, ["rock"]);
     assert_eq!(rig.meta.app_version, "0.11.0");
+    assert_eq!(rig.meta.author, "Siryu");
 
     let deps = &rig.dependencies;
     assert_eq!(
@@ -425,4 +438,95 @@ fn preset_survives_the_round_trip() {
     let chain = preset.chain.unwrap();
     assert_eq!(chain.midi.len(), 1);
     assert_eq!(chain.files.len(), 3);
+}
+
+#[test]
+fn export_says_how_the_app_draws_each_block() {
+    let mut preset = preset();
+    let chain = preset.chain.as_mut().unwrap();
+    chain.colors = HashMap::from([(4, "blue".to_string()), (5, "nonsense".to_string())]);
+    let models = models_dir();
+    let rig = export_from(&preset, &models, Options::default()).rig;
+    fs::remove_dir_all(&models).unwrap();
+
+    let look = |id: &str| {
+        let b = &rig.display.blocks[id];
+        (
+            b.kind.as_str(),
+            b.category.as_str(),
+            b.color.as_str(),
+            b.color_hex.as_str(),
+        )
+    };
+    // Family colours, the user's when it is one of the palette
+    assert_eq!(look("1"), ("plugin", "dynamics", "pink", "#8c4a64"));
+    assert_eq!(look("2"), ("amp", "", "red", "#9a3a33"));
+    assert_eq!(look("4"), ("cab", "", "blue", "#3e5a87"));
+    assert_eq!(look("5"), ("cab", "", "orange", "#a35a2c"));
+    // Not installed here: no family, the neutral colour
+    assert_eq!(look("6"), ("plugin", "", "silver", "#696c72"));
+    assert_eq!(rig.display.blocks["1"].lv2_class, "CompressorPlugin");
+    assert_eq!(
+        rig.display.blocks.len(),
+        5,
+        "plugin blocks only, not splits"
+    );
+
+    // The crate reads it back as the typed view
+    let back = Rig::from_slice(&rig.to_vec_pretty().unwrap()).unwrap();
+    let view = back.chain();
+    let amp = view.plugins()[1].block;
+    assert_eq!(amp.kind, Some(BlockKind::Amp));
+    assert_eq!(amp.rack_color.as_ref().unwrap().hex, "#9a3a33");
+    assert!(back
+        .validate()
+        .issues
+        .iter()
+        .all(|i| i.code != Code::BadDisplay));
+}
+
+#[test]
+fn reexport_keeps_the_tone3000_models_not_downloaded() {
+    let rig = exported(Options::default()).rig;
+    // A board without TONE3000: both models stay missing
+    let models = temp("reexport");
+    fs::create_dir_all(models.join("My IRs")).unwrap();
+    fs::write(models.join(OWN_IR), "RIFF").unwrap();
+    let installed = |_: &str| true;
+    let context = import::Context {
+        models_dir: &models,
+        catalog: &[],
+        installed: &installed,
+        tone3000: false,
+    };
+    let plan = import::plan(rig.clone(), &context).unwrap();
+    let mut installer = FakeInstaller {
+        models: models.clone(),
+        ..FakeInstaller::default()
+    };
+    let outcome = import::install(&plan, &mut installer).unwrap();
+    assert_eq!(
+        outcome.preset.rig_models.keys().collect::<Vec<_>>(),
+        [AMP_MODEL, OLD_CAB]
+    );
+
+    // Saved and loaded again, then exported from this board
+    let json = serde_json::to_string(&outcome.preset).unwrap();
+    let preset: Preset = serde_json::from_str(&json).unwrap();
+    let again = export_from(&preset, &models, Options::default()).rig;
+    fs::remove_dir_all(&models).unwrap();
+    for path in [AMP_MODEL, OLD_CAB] {
+        assert_eq!(
+            again.dependencies.file(path).unwrap().source,
+            rig.dependencies.file(path).unwrap().source,
+            "{path}"
+        );
+    }
+    // The own IR is here, without tone.json: still local
+    assert!(matches!(
+        again.dependencies.file(OWN_IR).unwrap().source,
+        Source::Local { .. }
+    ));
+    // The rig does not carry the field: its manifest does
+    assert!(again.preset.get("rig_models").is_none());
 }

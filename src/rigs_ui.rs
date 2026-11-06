@@ -58,6 +58,15 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
     }
     {
         let (weak, st) = (app.as_weak(), state.clone());
+        rigs.on_set_author(move |name| {
+            st.set_rig_author(&name);
+            if let Some(app) = weak.upgrade() {
+                app.global::<Rigs>().set_author(st.rig_author().into());
+            }
+        });
+    }
+    {
+        let (weak, st) = (app.as_weak(), state.clone());
         rigs.on_open_file(move |index| {
             if let Some(app) = weak.upgrade() {
                 open_file(&app, &st, index);
@@ -90,6 +99,7 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
 fn opened(app: &App, state: &Arc<AppState>) {
     let rigs = app.global::<Rigs>();
     rigs.set_preset_name(state.current_preset_name().into());
+    rigs.set_author(state.rig_author().into());
     if !rigs.get_busy() {
         rigs.set_note("".into());
     }
@@ -117,11 +127,21 @@ fn list(weak: &Weak<App>) {
 }
 
 fn file_info(file: &RigFile) -> RigFileInfo {
+    // First what tells apart two rigs of the same name: file and date
+    let file_name = file
+        .path
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let detail = match &file.rig {
         Ok(rig) => {
             let chain = rig.chain();
             let blocks = chain.plugins().len();
-            let mut parts = vec![plural(blocks, "block")];
+            let mut parts = vec![file_name];
+            if let Some(date) = export_date(&rig.meta.created) {
+                parts.push(date);
+            }
+            parts.push(plural(blocks, "block"));
             let files = rig.dependencies.files.len();
             if files > 0 {
                 parts.push(plural(files, "model"));
@@ -139,6 +159,16 @@ fn file_info(file: &RigFile) -> RigFileInfo {
         usb: file.removable,
         readable: file.rig.is_ok(),
     }
+}
+
+/// When a rig was exported, in local time ("06/11/2026 18:30")
+fn export_date(created: &str) -> Option<String> {
+    let time = chrono::DateTime::parse_from_rfc3339(created).ok()?;
+    Some(
+        time.with_timezone(&chrono::Local)
+            .format("%d/%m/%Y %H:%M")
+            .to_string(),
+    )
 }
 
 fn plural(n: usize, word: &str) -> String {
@@ -182,6 +212,7 @@ fn export_current(app: &App, state: &Arc<AppState>, usb: bool) {
     let options = export::Options {
         include_midi: rigs.get_include_midi(),
     };
+    let author = state.rig_author();
     rigs.set_busy(true);
     rigs.set_note("Exporting…".into());
     let (weak, st) = (app.as_weak(), state.clone());
@@ -190,11 +221,18 @@ fn export_current(app: &App, state: &Arc<AppState>, usb: bool) {
             let catalog = catalog();
             let scanner = st.lv2_host.scanner();
             let plugin_name = |uri: &str| scanner.find_by_uri(uri).map(|p| p.name.clone());
+            let plugin_class = |uri: &str| {
+                scanner
+                    .find_by_uri(uri)
+                    .map(|p| (p.category.clone(), p.class.clone()))
+            };
             let models_dir = st.models_dir();
             let context = export::Context {
                 models_dir: &models_dir,
                 catalog: &catalog,
                 plugin_name: &plugin_name,
+                plugin_class: &plugin_class,
+                author,
                 app_version: env!("CARGO_PKG_VERSION"),
                 created: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             };
@@ -573,5 +611,7 @@ fn finish(app: &App, state: &Arc<AppState>, plan: &Plan, result: anyhow::Result<
         "Rig imported"
     );
     rigs.set_plan_summary(message.clone().into());
-    show_status(app, message.into());
+    // Blocks without their model report it as the chain is built: added
+    // to this summary rather than hiding it
+    crate::show_status_pinned(app, message.into());
 }
