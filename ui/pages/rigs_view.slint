@@ -154,7 +154,7 @@ export component RigsPanel inherits Rectangle {
             }
         }
 
-        Segmented {
+        if RigsOnline.available: Segmented {
             vertical-stretch: 0;
             options: ["This pedalboard", "openrig.eu"];
             current-index: Rigs.tab;
