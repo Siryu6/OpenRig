@@ -8,6 +8,7 @@ pub mod monitor;
 pub mod persist;
 pub mod plugins;
 pub mod presets;
+pub mod rigs;
 pub mod state;
 #[cfg(feature = "store")]
 pub mod store;
@@ -15,6 +16,7 @@ pub mod sync;
 pub mod system_config;
 #[cfg(feature = "tone3000")]
 pub mod tone3000;
+pub mod tone_info;
 pub mod ui;
 #[cfg(feature = "update")]
 pub mod update;

@@ -2040,6 +2040,22 @@ impl AppState {
         Ok(preset.id)
     }
 
+    /// Save `preset` (an imported rig) as a new preset, without loading it
+    pub fn add_preset(&self, preset: Preset) -> Result<String> {
+        let id = self.preset_manager.locked().add_preset(preset)?;
+        self.mark_dirty();
+        Ok(id)
+    }
+
+    /// The chain as it is now, as a preset named after the current one (its
+    /// description and tags too), for a rig export; not saved
+    pub fn current_as_preset(&self) -> Preset {
+        let current = self.preset_manager.locked().current_preset().cloned();
+        let mut preset = current.unwrap_or_else(|| Preset::new("Unsaved".into()));
+        self.store_chain(&mut preset);
+        preset
+    }
+
     /// Put the current chain into `preset`
     fn store_chain(&self, preset: &mut Preset) {
         let chain = self.chain();
