@@ -7,8 +7,8 @@
 
 <p align="center">
   <a href="https://openrig.eu">Website</a> ·
-  <a href="https://openrig.eu/docs/">User guide</a> ·
-  <a href="https://openrig.eu/docs/getting-started/hardware/">Build one</a> ·
+  <a href="https://docs.openrig.eu/">User guide</a> ·
+  <a href="https://docs.openrig.eu/getting-started/hardware/">Build one</a> ·
   <a href="https://github.com/Siryu6/OpenRig/releases/latest">Download</a>
 </p>
 
@@ -34,23 +34,23 @@ OpenRig turns a small computer into a multi-effects pedalboard. It ships as
 a bootable OS image that starts straight into a touch UI, runs effects in
 real time with JACK, and updates itself without risking the board.
 
-- **[Rack](https://openrig.eu/docs/using/rack/)**: the whole signal flow on one screen, serial
+- **[Rack](https://docs.openrig.eu/using/rack/)**: the whole signal flow on one screen, serial
   blocks plus A/B, Mix and left/right splits, mono or stereo.
-- **[Neural amps, pedals and cabinets](https://openrig.eu/docs/using/neural-blocks/)**: Neural
+- **[Neural amps, pedals and cabinets](https://docs.openrig.eu/using/neural-blocks/)**: Neural
   Amp Modeler captures and impulse responses as built-in blocks, next to any
-  compatible [LV2 plugin](https://openrig.eu/docs/setup/lv2/).
-- **[Plugin store](https://openrig.eu/docs/setup/store/)**: free LV2 plugins built for the
+  compatible [LV2 plugin](https://docs.openrig.eu/setup/lv2/).
+- **[Plugin store](https://docs.openrig.eu/setup/store/)**: free LV2 plugins built for the
   board, installed in one tap from a signed catalog; your own bundles still load.
-- **[TONE3000](https://openrig.eu/docs/using/tone3000/)**: link your account and download
+- **[TONE3000](https://docs.openrig.eu/using/tone3000/)**: link your account and download
   captures right on the pedalboard, with credits and licenses kept.
-- **[Live](https://openrig.eu/docs/using/live/)**: 8 scenes per preset, setlists, stomp mode,
-  tap tempo, [tuner and looper](https://openrig.eu/docs/using/tuner-looper/).
-- **[Inputs and outputs](https://openrig.eu/docs/setup/routing/)**: every input and output of
+- **[Live](https://docs.openrig.eu/using/live/)**: 8 scenes per preset, setlists, stomp mode,
+  tap tempo, [tuner and looper](https://docs.openrig.eu/using/tuner-looper/).
+- **[Inputs and outputs](https://docs.openrig.eu/setup/routing/)**: every input and output of
   the interface, with Send and Return blocks anywhere in the rack: a dry signal for reamping, a
   bass DI, a separate monitor mix.
-- **[MIDI](https://openrig.eu/docs/using/midi/)**: Helix-style map for presets, scenes and
+- **[MIDI](https://docs.openrig.eu/using/midi/)**: Helix-style map for presets, scenes and
   stomps, clock and CC learn.
-- **[Updates](https://openrig.eu/docs/setup/updates/)**: a read-only system with signed A/B
+- **[Updates](https://docs.openrig.eu/setup/updates/)**: a read-only system with signed A/B
   updates that roll back when the new system does not start.
 
 It is a young project: expect rough edges, and
@@ -58,18 +58,18 @@ It is a young project: expect rough edges, and
 
 ## Get started
 
-1. **[Gather the hardware](https://openrig.eu/docs/getting-started/hardware/)**: a Raspberry Pi 5
+1. **[Gather the hardware](https://docs.openrig.eu/getting-started/hardware/)**: a Raspberry Pi 5
    (or an x86_64 mini PC with AVX2, e.g. an Intel N100), a class-compliant USB audio interface, a
    touchscreen and a micro SD card. Footswitches and a MIDI pedal are optional.
 2. **Write the image** from the [latest release](https://github.com/Siryu6/OpenRig/releases/latest):
-   [Raspberry Pi 5](https://openrig.eu/docs/getting-started/raspberry-pi/) or
-   [x86_64 mini PC](https://openrig.eu/docs/getting-started/mini-pc/).
-3. **[First start](https://openrig.eu/docs/getting-started/first-start/)**: levels, Wi-Fi,
+   [Raspberry Pi 5](https://docs.openrig.eu/getting-started/raspberry-pi/) or
+   [x86_64 mini PC](https://docs.openrig.eu/getting-started/mini-pc/).
+3. **[First start](https://docs.openrig.eu/getting-started/first-start/)**: levels, Wi-Fi,
    TONE3000 and your first sound.
 
-Then the [tour of the screen](https://openrig.eu/docs/using/tour/) shows where everything is.
-When something goes wrong, see [Troubleshooting](https://openrig.eu/docs/help/troubleshooting/)
-and the [FAQ](https://openrig.eu/docs/help/faq/).
+Then the [tour of the screen](https://docs.openrig.eu/using/tour/) shows where everything is.
+When something goes wrong, see [Troubleshooting](https://docs.openrig.eu/help/troubleshooting/)
+and the [FAQ](https://docs.openrig.eu/help/faq/).
 
 To try the app on a Linux desktop without the image, the release also holds
 `openrig-<version>-linux-x86_64.tar.gz` (and `aarch64`): it needs JACK and
@@ -79,12 +79,12 @@ lilv (`apt install jackd2 liblilv-0-0`); start JACK, then `./pedalboard`.
 
 | | |
 |---|---|
-| **Getting started** | [Hardware](https://openrig.eu/docs/getting-started/hardware/) · [Raspberry Pi 5](https://openrig.eu/docs/getting-started/raspberry-pi/) · [Mini PC](https://openrig.eu/docs/getting-started/mini-pc/) · [First start](https://openrig.eu/docs/getting-started/first-start/) |
-| **Playing** | [Tour](https://openrig.eu/docs/using/tour/) · [Rack](https://openrig.eu/docs/using/rack/) · [Block editor](https://openrig.eu/docs/using/editor/) · [Neural blocks](https://openrig.eu/docs/using/neural-blocks/) · [TONE3000](https://openrig.eu/docs/using/tone3000/) · [Presets, scenes and setlists](https://openrig.eu/docs/using/presets/) · [Live](https://openrig.eu/docs/using/live/) · [Tuner and looper](https://openrig.eu/docs/using/tuner-looper/) · [MIDI](https://openrig.eu/docs/using/midi/) |
-| **Setting up** | [Settings](https://openrig.eu/docs/setup/settings/) · [Inputs and outputs](https://openrig.eu/docs/setup/routing/) · [Updates](https://openrig.eu/docs/setup/updates/) · [Footswitches](https://openrig.eu/docs/setup/footswitches/) · [LV2 plugins](https://openrig.eu/docs/setup/lv2/) · [pedalboard.txt](https://openrig.eu/docs/setup/pedalboard-txt/) · [Performance](https://openrig.eu/docs/setup/performance/) |
-| **Help** | [Troubleshooting](https://openrig.eu/docs/help/troubleshooting/) · [SSH access](https://openrig.eu/docs/help/ssh/) · [FAQ](https://openrig.eu/docs/help/faq/) |
+| **Getting started** | [Hardware](https://docs.openrig.eu/getting-started/hardware/) · [Raspberry Pi 5](https://docs.openrig.eu/getting-started/raspberry-pi/) · [Mini PC](https://docs.openrig.eu/getting-started/mini-pc/) · [First start](https://docs.openrig.eu/getting-started/first-start/) |
+| **Playing** | [Tour](https://docs.openrig.eu/using/tour/) · [Rack](https://docs.openrig.eu/using/rack/) · [Block editor](https://docs.openrig.eu/using/editor/) · [Neural blocks](https://docs.openrig.eu/using/neural-blocks/) · [TONE3000](https://docs.openrig.eu/using/tone3000/) · [Presets, scenes and setlists](https://docs.openrig.eu/using/presets/) · [Live](https://docs.openrig.eu/using/live/) · [Tuner and looper](https://docs.openrig.eu/using/tuner-looper/) · [MIDI](https://docs.openrig.eu/using/midi/) |
+| **Setting up** | [Settings](https://docs.openrig.eu/setup/settings/) · [Inputs and outputs](https://docs.openrig.eu/setup/routing/) · [Updates](https://docs.openrig.eu/setup/updates/) · [Footswitches](https://docs.openrig.eu/setup/footswitches/) · [LV2 plugins](https://docs.openrig.eu/setup/lv2/) · [pedalboard.txt](https://docs.openrig.eu/setup/pedalboard-txt/) · [Performance](https://docs.openrig.eu/setup/performance/) |
+| **Help** | [Troubleshooting](https://docs.openrig.eu/help/troubleshooting/) · [SSH access](https://docs.openrig.eu/help/ssh/) · [FAQ](https://docs.openrig.eu/help/faq/) |
 
-The guide is built from [Siryu6/openrig-site](https://github.com/Siryu6/openrig-site):
+The guide is built from [Siryu6/openrig-doc](https://github.com/Siryu6/openrig-doc):
 fixes are welcome there.
 
 ## Build from source

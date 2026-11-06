@@ -1,7 +1,7 @@
 # Inputs, outputs, sends and returns
 
 How OpenRig uses an interface with more than one input and two outputs. The
-[user guide](https://openrig.eu/docs/setup/routing/) shows the Routing page;
+[user guide](https://docs.openrig.eu/setup/routing/) shows the Routing page;
 this page covers the signal path and the files.
 
 ## Ports

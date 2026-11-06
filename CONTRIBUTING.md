@@ -1,8 +1,8 @@
 # Contributing to OpenRig
 
 Thanks for helping! Every kind of help is welcome: bug reports, hardware
-reports, ideas, documentation and code. The full guide is on the site:
-[openrig.eu/docs/dev/contributing](https://openrig.eu/docs/dev/contributing/).
+reports, ideas, documentation and code. The full guide is on the docs site:
+[docs.openrig.eu/dev/contributing](https://docs.openrig.eu/dev/contributing/).
 
 By taking part, you agree to follow the [code of conduct](CODE_OF_CONDUCT.md).
 
@@ -28,7 +28,7 @@ Security problems: see [SECURITY.md](SECURITY.md), not a public issue.
    ```
 
 3. Update the docs in `docs/` with the change. User-facing pages live in the
-   [site repository](https://github.com/Siryu6/openrig-site).
+   [docs repository](https://github.com/Siryu6/openrig-doc).
 
 For a large change, open an issue first so we can agree on the approach.
 
