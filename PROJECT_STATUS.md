@@ -32,8 +32,8 @@ Last update: 2026-10-19.
   (`time:beatsPerMinute` designation or BPM unit). The last footswitch taps
   the tempo; held 0.8 s it opens the tuner, any switch closes it. Keys
   `1`–`8` and `t` on a keyboard.
-- Tuner, looper (overdub layers, undo), GPIO footswitches (press and
-  release edges) and encoder.
+- Tuner, looper (overdub layers, undo, count-in and bar quantization),
+  GPIO footswitches (press and release edges) and encoder.
 - Resource monitor: DSP load of the audio callback, JACK load, xruns, CPU,
   memory, temperature, Raspberry Pi under-voltage / throttling. Chain
   crossfades (e.g. mono / stereo switch) are left out of the DSP load. The

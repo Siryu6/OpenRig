@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
 import { LooperState } from "../types.slint";
-import { Button, Display, FocusRing, Icon, Slider } from "../components/controls.slint";
+import { Button, Display, FocusRing, Icon, Slider, Stepper } from "../components/controls.slint";
 
 export { LooperState }
 
@@ -86,14 +86,61 @@ export global TimeFormat {
     }
 }
 
-// Looper: status, transport and level.
+// Beats of the bar as LEDs: the first one (the downbeat) in the accent
+// colour, the current one lit
+component BeatLeds inherits HorizontalLayout {
+    in property <int> beats: 4;
+    in property <int> beat: 0;
+    in property <color> tone;
+
+    spacing: 6px;
+    alignment: end;
+    for i in root.beats: VerticalLayout {
+        alignment: center;
+        Rectangle {
+            width: i == 0 ? 16px : 12px;
+            height: self.width;
+            border-radius: self.width / 2;
+            background: i + 1 == root.beat ? root.tone : Theme.led-off;
+            border-width: 1px;
+            border-color: i + 1 == root.beat ? root.tone : Theme.edge-dark-soft;
+        }
+    }
+}
+
+export global Meter {
+    // Beats per bar -> "4/4"; 6, 9 and 12 are compound: "6/8" (the tempo
+    // counts eighth notes)
+    pure public function signature(beats: int) -> string {
+        return beats + (beats == 6 || beats == 9 || beats == 12 ? "/8" : "/4");
+    }
+}
+
+// Looper: status, transport, level, and the count-in and bar settings.
 export component LooperView inherits Rectangle {
     in property <LooperState> state: LooperState.Stopped;
     in property <float> loop-length: 0.0;      // seconds
     in property <float> current-position: 0.0; // seconds
     in property <int> layer-count: 0;
     in property <float> level: 1.0;            // 0.0 .. 1.0
+    // Bar (0: counting in) and beat (0: off the grid) at the playhead, beats
+    // in its bar, bars in the loop (0: not whole bars), recording on to the
+    // end of the bar
+    in property <int> bar: 0;
+    in property <int> beat: 0;
+    in property <int> beats: 4;
+    in property <int> loop-bars: 0;
+    in property <bool> ending: false;
+    // Settings
+    in property <float> tempo: 120;
+    in property <bool> tempo-clock: false;     // set by a MIDI clock
+    in property <int> beats-per-bar: 4;
+    in property <bool> count-in: false;
+    in property <bool> quantize: false;
+    in property <float> click-level: 0.5;
 
+    callback tempo-changed(float);
+    callback settings-changed(int, bool, bool, float);
     callback record-clicked();
     callback play-clicked();
     callback stop-clicked();
@@ -101,12 +148,13 @@ export component LooperView inherits Rectangle {
     callback undo-clicked();
     callback clear-clicked();
     callback level-changed(float);
-    // Encoder focus: Record, Overdub, Play, Stop, Undo, Clear, level
+    // Encoder focus: Record, Overdub, Play, Stop, Undo, Clear, level, tempo,
+    // bar, count-in, quantize, click level
     in property <int> focused: -1;
     in property <bool> adjusting;
 
     private property <color> state-color:
-        root.state == LooperState.Recording ? Theme.danger :
+        root.state == LooperState.Recording || root.state == LooperState.CountIn ? Theme.danger :
         root.state == LooperState.Overdubbing ? Theme.warning :
         root.state == LooperState.Playing ? Theme.success : Theme.text-muted;
     private property <float> progress: root.loop-length > 0 ? max(0, min(1, root.current-position / root.loop-length)) : 0;
@@ -140,7 +188,9 @@ export component LooperView inherits Rectangle {
                         }
                     }
                     Text {
-                        text: root.state == LooperState.Recording ? "RECORDING" :
+                        text: root.state == LooperState.CountIn ? "COUNT-IN" :
+                            root.state == LooperState.Recording && root.ending ? "RECORDING TO BAR END" :
+                            root.state == LooperState.Recording ? "RECORDING" :
                             root.state == LooperState.Overdubbing ? "OVERDUBBING" :
                             root.state == LooperState.Playing ? "PLAYING" :
                             root.loop-length > 0 ? "STOPPED" : "EMPTY";
@@ -152,6 +202,12 @@ export component LooperView inherits Rectangle {
                     Rectangle {
                         horizontal-stretch: 1;
                     }
+                    if root.loop-bars > 0: Text {
+                        text: (root.loop-bars == 1 ? "1 bar" : root.loop-bars + " bars") + "  ·  ";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        vertical-alignment: center;
+                    }
                     Text {
                         text: root.layer-count == 1 ? "1 layer" : root.layer-count + " layers";
                         color: Theme.text-secondary;
@@ -162,9 +218,10 @@ export component LooperView inherits Rectangle {
 
                 HorizontalLayout {
                     spacing: Theme.space-sm;
+                    // Counting in: the beat; else the time
                     Text {
-                        text: TimeFormat.format(root.current-position);
-                        color: Theme.text-primary;
+                        text: root.state == LooperState.CountIn ? root.beat : TimeFormat.format(root.current-position);
+                        color: root.state == LooperState.CountIn ? root.state-color : Theme.text-primary;
                         font-size: Theme.font-display;
                         font-weight: Theme.weight-bold;
                     }
@@ -172,13 +229,29 @@ export component LooperView inherits Rectangle {
                         alignment: end;
                         padding-bottom: 6px;
                         Text {
-                            text: "/ " + TimeFormat.format(root.loop-length);
+                            text: root.state == LooperState.CountIn ? "/ " + root.beats : "/ " + TimeFormat.format(root.loop-length);
                             color: Theme.text-secondary;
                             font-size: Theme.font-title;
                         }
                     }
                     Rectangle {
                         horizontal-stretch: 1;
+                    }
+                    if root.beat > 0: VerticalLayout {
+                        alignment: center;
+                        spacing: Theme.space-xs;
+                        Text {
+                            text: root.bar > 0 ? "BAR " + root.bar : "GET READY";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-caption;
+                            font-weight: Theme.weight-bold;
+                            horizontal-alignment: right;
+                        }
+                        BeatLeds {
+                            beats: root.beats;
+                            beat: root.beat;
+                            tone: root.state-color;
+                        }
                     }
                 }
 
@@ -205,7 +278,7 @@ export component LooperView inherits Rectangle {
                 focused: root.focused == 0;
                 label: "Record";
                 tone: Theme.danger;
-                active: root.state == LooperState.Recording;
+                active: root.state == LooperState.Recording || root.state == LooperState.CountIn;
                 clicked => {
                     root.record-clicked();
                 }
@@ -293,6 +366,69 @@ export component LooperView inherits Rectangle {
                 font-weight: Theme.weight-semibold;
                 horizontal-alignment: right;
                 vertical-alignment: center;
+            }
+        }
+
+        // ---------------- Count-in and bars ----------------
+        HorizontalLayout {
+            spacing: Theme.space-md;
+            Stepper {
+                horizontal-stretch: 1;
+                focused: root.focused == 7;
+                adjusting: root.adjusting;
+                text: round(root.tempo) + " BPM";
+                can-decrement: !root.tempo-clock && root.tempo > 40;
+                can-increment: !root.tempo-clock && root.tempo < 240;
+                decrement => {
+                    root.tempo-changed(round(root.tempo) - 1);
+                }
+                increment => {
+                    root.tempo-changed(round(root.tempo) + 1);
+                }
+            }
+            Stepper {
+                horizontal-stretch: 1;
+                focused: root.focused == 8;
+                adjusting: root.adjusting;
+                text: Meter.signature(root.beats-per-bar);
+                can-decrement: root.beats-per-bar > 2;
+                can-increment: root.beats-per-bar < 12;
+                decrement => {
+                    root.settings-changed(root.beats-per-bar - 1, root.count-in, root.quantize, root.click-level);
+                }
+                increment => {
+                    root.settings-changed(root.beats-per-bar + 1, root.count-in, root.quantize, root.click-level);
+                }
+            }
+            Button {
+                focused: root.focused == 9;
+                text: "Count-in";
+                active: root.count-in;
+                clicked => {
+                    root.settings-changed(root.beats-per-bar, !root.count-in, root.quantize, root.click-level);
+                }
+            }
+            Button {
+                focused: root.focused == 10;
+                text: "Quantize";
+                active: root.quantize;
+                clicked => {
+                    root.settings-changed(root.beats-per-bar, root.count-in, !root.quantize, root.click-level);
+                }
+            }
+            Stepper {
+                horizontal-stretch: 1;
+                focused: root.focused == 11;
+                adjusting: root.adjusting;
+                text: "Click " + round(root.click-level * 100) + "%";
+                can-decrement: root.click-level > 0;
+                can-increment: root.click-level < 1;
+                decrement => {
+                    root.settings-changed(root.beats-per-bar, root.count-in, root.quantize, max(0, round(root.click-level * 10 - 1) / 10));
+                }
+                increment => {
+                    root.settings-changed(root.beats-per-bar, root.count-in, root.quantize, min(1, round(root.click-level * 10 + 1) / 10));
+                }
             }
         }
     }

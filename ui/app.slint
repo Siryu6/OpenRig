@@ -77,7 +77,7 @@ export component App inherits Window {
     private property <int> page-focus: 0;
     private property <int> page-slots: root.current-view == 4 ? root.presets.length
         : root.current-view == 9 ? root.live-tiles.length + 3
-        : root.current-view == 5 ? 7
+        : root.current-view == 5 ? 12
         : root.current-view == 3 ? 2 : 0;
     private property <int> browser-selected-index: 0;
 
@@ -100,6 +100,19 @@ export component App inherits Window {
     in-out property <float> looper-position: 0.0;
     in-out property <int> looper-layers: 0;
     in-out property <float> looper-level: 1.0;
+    // Bar and beat at the playhead (bar 0: counting in; beat 0: off the
+    // grid), beats in its bar, bars in the loop (0: not whole bars), and the
+    // recording going on to the end of the bar
+    in-out property <int> looper-bar: 0;
+    in-out property <int> looper-beat: 0;
+    in-out property <int> looper-beats: 4;
+    in-out property <int> looper-bars: 0;
+    in-out property <bool> looper-ending: false;
+    // Settings: bar, count-in, bar quantization, click level
+    in-out property <int> looper-beats-per-bar: 4;
+    in-out property <bool> looper-count-in: false;
+    in-out property <bool> looper-quantize: false;
+    in-out property <float> looper-click-level: 0.5;
 
     // Plugins / chain
     in-out property <[PluginItem]> available-plugins: [];
@@ -394,6 +407,7 @@ export component App inherits Window {
     callback looper-undo();
     callback looper-clear();
     callback looper-level-changed(float);
+    callback looper-settings-changed(int, bool, bool, float);
 
     callback set-stereo-mode(bool);
     callback wifi-refresh(bool);                     // rescan
@@ -537,14 +551,35 @@ export component App inherits Window {
         }
     }
 
-    // The value a page's encoder adjusts: tempo, looper level, reference pitch
+    // The value a page's encoder adjusts: tempo, looper level / tempo / bar /
+    // click level, reference pitch
     function page-value() -> float {
-        root.current-view == 9 ? root.tempo : root.current-view == 5 ? root.looper-level : root.tuner-reference-pitch
+        root.current-view == 9 ? root.tempo
+            : root.current-view == 5 ? (root.page-focus == 7 ? root.tempo : root.page-focus == 8 ? root.looper-beats-per-bar
+                : root.page-focus == 11 ? root.looper-click-level : root.looper-level)
+            : root.tuner-reference-pitch
+    }
+
+    // Encoder steps per unit of the page value (levels move by 5 %)
+    function page-scale() -> float {
+        root.current-view == 5 && (root.page-focus == 6 || root.page-focus == 11) ? 20 : 1
+    }
+
+    function set-looper-settings(beats: int, count-in: bool, quantize: bool, click-level: float) {
+        root.looper-beats-per-bar = max(2, min(12, beats));
+        root.looper-count-in = count-in;
+        root.looper-quantize = quantize;
+        root.looper-click-level = max(0, min(1, click-level));
+        root.looper-settings-changed(root.looper-beats-per-bar, count-in, quantize, root.looper-click-level);
     }
 
     function set-page-value(v: float) {
-        if (root.current-view == 9) {
+        if (root.current-view == 9 || (root.current-view == 5 && root.page-focus == 7)) {
             root.set-tempo(max(40, min(240, v)));
+        } else if (root.current-view == 5 && root.page-focus == 8) {
+            root.set-looper-settings(v, root.looper-count-in, root.looper-quantize, root.looper-click-level);
+        } else if (root.current-view == 5 && root.page-focus == 11) {
+            root.set-looper-settings(root.looper-beats-per-bar, root.looper-count-in, root.looper-quantize, v);
         } else if (root.current-view == 5) {
             root.looper-level = max(0, min(1, v));
             root.looper-level-changed(root.looper-level);
@@ -581,11 +616,15 @@ export component App inherits Window {
             } else {
                 root.looper-clear();
             }
+        } else if (root.current-view == 5 && i == 9) {
+            root.set-looper-settings(root.looper-beats-per-bar, !root.looper-count-in, root.looper-quantize, root.looper-click-level);
+        } else if (root.current-view == 5 && i == 10) {
+            root.set-looper-settings(root.looper-beats-per-bar, root.looper-count-in, !root.looper-quantize, root.looper-click-level);
         } else if (root.current-view == 3 && i == 0) {
             root.tuner-mute-enabled = !root.tuner-mute-enabled;
             root.tuner-mute-toggled(root.tuner-mute-enabled);
         } else {
-            // Tempo, looper level, reference pitch
+            // Tempo, looper level, tempo, bar and click, reference pitch
             root.adjust-from = root.page-value();
             root.adjusting = true;
         }
@@ -1019,7 +1058,24 @@ export component App inherits Window {
                 current-position: root.looper-position;
                 layer-count: root.looper-layers;
                 level: root.looper-level;
+                bar: root.looper-bar;
+                beat: root.looper-beat;
+                beats: root.looper-beats;
+                loop-bars: root.looper-bars;
+                ending: root.looper-ending;
+                tempo: root.tempo;
+                tempo-clock: root.tempo-clock;
+                beats-per-bar: root.looper-beats-per-bar;
+                count-in: root.looper-count-in;
+                quantize: root.looper-quantize;
+                click-level: root.looper-click-level;
 
+                tempo-changed(bpm) => {
+                    root.set-tempo(max(40, min(240, bpm)));
+                }
+                settings-changed(beats, count-in, quantize, click-level) => {
+                    root.set-looper-settings(beats, count-in, quantize, click-level);
+                }
                 record-clicked => {
                     root.looper-record();
                 }
@@ -1541,8 +1597,7 @@ export component App inherits Window {
                         root.arrange-stop = mod(stop, 2);
                     }
                 } else if (root.adjusting) {
-                    root.set-page-value(round(root.page-value() * (root.current-view == 5 ? 20 : 1) + d)
-                        / (root.current-view == 5 ? 20 : 1));
+                    root.set-page-value(round(root.page-value() * root.page-scale() + d) / root.page-scale());
                 } else if (root.page-slots > 0) {
                     root.page-focus = max(0, min(root.page-slots - 1, root.page-focus + d));
                 } else if (root.current-view == 1) {

@@ -8,7 +8,7 @@ use std::time::Duration;
 use tracing::{debug, info, warn};
 
 use super::tempo::TapTempo;
-use crate::audio::{ChainControl, ChainNode, Looper, SplitType, Tuner};
+use crate::audio::{ChainControl, ChainNode, Looper, LooperSettings, SplitType, Tuner};
 use crate::midi::{MidiAssign, MidiSettings, MidiTarget, Step};
 use crate::plugins::scanner::PluginInfo;
 use crate::plugins::{ChainCommand, ChainSpec, Lv2Host, SignalMap};
@@ -974,6 +974,9 @@ struct Session {
     /// Cores for the effect chain, 0 for all
     #[serde(default)]
     dsp_cores: usize,
+    /// Count-in and bar quantization of the looper
+    #[serde(default)]
+    looper: LooperSettings,
 }
 
 impl AppState {
@@ -1171,6 +1174,7 @@ impl AppState {
             midi: self.midi_settings(),
             light_theme: self.light_theme(),
             dsp_cores: self.dsp_cores(),
+            looper: self.looper_settings(),
         };
         std::fs::create_dir_all(&self.data_dir)?;
         Ok(serde_json::to_vec_pretty(&session)?)
@@ -1217,6 +1221,7 @@ impl AppState {
         self.light_theme
             .store(session.light_theme, Ordering::Relaxed);
         self.dsp_cores.store(session.dsp_cores, Ordering::Relaxed);
+        self.looper.locked().set_settings(session.looper);
         let mut midi = session.midi;
         if midi.channel > 16 {
             midi.channel = crate::midi::OMNI;
@@ -1749,6 +1754,26 @@ impl AppState {
     pub fn tap_tempo(&self) -> Option<f32> {
         let bpm = self.tap.locked().tap(std::time::Instant::now())?;
         Some(self.set_tempo(bpm.round()))
+    }
+
+    // === Looper ===
+
+    /// Run a looper control (see [`Looper::control`]) at the current tempo
+    pub fn looper_control<R>(&self, f: impl FnOnce(&mut Looper) -> R) -> R {
+        let bpm = self.tempo();
+        Looper::control(&self.looper, |looper| {
+            looper.set_tempo(bpm);
+            f(looper)
+        })
+    }
+
+    pub fn looper_settings(&self) -> LooperSettings {
+        self.looper.locked().settings()
+    }
+
+    pub fn set_looper_settings(&self, settings: LooperSettings) {
+        self.looper.locked().set_settings(settings);
+        self.mark_dirty();
     }
 
     // === Footswitches ===
