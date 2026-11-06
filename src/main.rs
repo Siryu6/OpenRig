@@ -12,6 +12,8 @@ mod live_ui;
 mod midi_io;
 mod midi_ui;
 mod plugin_view;
+#[cfg(feature = "rigs-online")]
+mod rigs_online_ui;
 mod rigs_ui;
 mod routing_ui;
 mod scope_ui;
@@ -1764,6 +1766,8 @@ fn main() -> Result<()> {
     catalog_ui::setup(&app, &state);
     live_ui::setup(&app, &state);
     rigs_ui::setup(&app, &state);
+    #[cfg(feature = "rigs-online")]
+    rigs_online_ui::setup(&app, &state);
     midi_ui::setup(&app, &state);
     let _routing_meters = routing_ui::setup(&app, &state, engine.as_deref());
     let _block_sound = block_sound::start(&app, &state);
