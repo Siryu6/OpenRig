@@ -7,6 +7,12 @@ license = "GPL-3.0-or-later"
 rust-version = "1.99"
 resolver = "3"
 
+# The app and the crates it shares with other projects (the rig format
+# with the community site). Both are built, checked and tested from here.
+[workspace]
+members = [".", "crates/openrig-rig"]
+default-members = [".", "crates/openrig-rig"]
+
 [lib]
 name = "pedalboard"
 path = "src/lib.rs"
@@ -71,6 +77,9 @@ lv2_raw = { version = "0.3", optional = true }  # Same major as the one lilv use
 
 # Concurrency
 crossbeam-channel = "0.5"  # Lock-free channels for RT-safe communication
+
+# Shareable rigs (.openrig): the format, shared with the community site
+openrig-rig = { path = "crates/openrig-rig" }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

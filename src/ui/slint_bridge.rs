@@ -399,7 +399,12 @@ pub const BLOCK_COLORS: [(&str, &str, u32); 10] = [
 /// Colour of a block the user has not coloured: its family, like the
 /// category colours of hardware modelers (amps red, delays green...)
 pub fn default_block_color(shape: &str, category: Option<&PluginCategory>) -> u32 {
-    let name = match (shape, category) {
+    block_color(default_block_color_name(shape, category)).unwrap_or(BLOCK_COLORS[0].2)
+}
+
+/// Name of the colour of a block the user has not coloured
+pub fn default_block_color_name(shape: &str, category: Option<&PluginCategory>) -> &'static str {
+    match (shape, category) {
         ("amp" | "combo", _) => "red",
         ("cab", _) => "orange",
         ("pedal", _) | (_, Some(PluginCategory::Distortion)) => "yellow",
@@ -410,8 +415,23 @@ pub fn default_block_color(shape: &str, category: Option<&PluginCategory>) -> u3
         (_, Some(PluginCategory::Filter)) => "purple",
         (_, Some(PluginCategory::Dynamics)) => "pink",
         _ => "silver",
-    };
-    block_color(name).unwrap_or(BLOCK_COLORS[0].2)
+    }
+}
+
+/// Colour a block is drawn in, name and RGB: the user's `chosen` one when
+/// it is a colour of the palette, else its family's
+pub fn rack_color(
+    chosen: Option<&str>,
+    shape: &str,
+    category: Option<&PluginCategory>,
+) -> (&'static str, u32) {
+    chosen
+        .and_then(|name| BLOCK_COLORS.iter().skip(1).find(|(n, _, _)| *n == name))
+        .map(|(name, _, rgb)| (*name, *rgb))
+        .unwrap_or_else(|| {
+            let name = default_block_color_name(shape, category);
+            (name, block_color(name).unwrap_or(BLOCK_COLORS[0].2))
+        })
 }
 
 /// RGB of a colour name; None for the default look or an unknown name

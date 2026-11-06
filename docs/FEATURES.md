@@ -135,6 +135,11 @@ What OpenRig does, in more technical detail than the
   recalls bypass, parameters and split settings instantly, without
   rebuilding the chain; a setlist maps footswitch slots to presets, all
   preloaded in memory.
+- **Rigs**: share a preset as a `.openrig` file with the plugins and models
+  it needs (built-in, store, TONE3000 or local). Importing one installs
+  what the store and your TONE3000 account can provide, then adds it as a
+  new preset. Files live in `<data>/rigs` and on mounted USB drives. See
+  [RIGS.md](RIGS.md).
 - **Live page**: 8 switch tiles in Stomp (block on/off, assignable),
   Scenes or Setlist mode, tempo display with TAP. The last footswitch taps
   the tempo and, held, opens the tuner. The tempo drives the BPM ports of

@@ -106,6 +106,36 @@ struct PictureState {
 }
 
 static PICTURES: OnceLock<Arc<Pictures>> = OnceLock::new();
+/// The account, for the other pages that download with it (rig import)
+static ACCOUNT: OnceLock<Arc<Shared>> = OnceLock::new();
+
+/// Whether a TONE3000 account is connected
+pub(crate) fn connected() -> bool {
+    ACCOUNT
+        .get()
+        .is_some_and(|shared| shared.settings.locked().connected())
+}
+
+/// Run `f` with the account's token, refreshed and tried once more when
+/// TONE3000 refuses it. Network: off the UI thread.
+pub(crate) fn with_account<T>(mut f: impl FnMut(&str) -> anyhow::Result<T>) -> anyhow::Result<T> {
+    let shared = ACCOUNT.get().ok_or(AuthError::SignedOut)?;
+    // Network and file errors are kept apart from the account ones
+    let mut failure = None;
+    let result = shared.call(|token| {
+        f(token).map_err(|e| {
+            e.downcast::<AuthError>().unwrap_or_else(|e| {
+                failure = Some(e);
+                AuthError::Unavailable(String::new())
+            })
+        })
+    });
+    match (result, failure) {
+        (Ok(value), _) => Ok(value),
+        (Err(_), Some(e)) => Err(e),
+        (Err(e), None) => Err(e.into()),
+    }
+}
 
 impl Pictures {
     fn key(url: &str, side: u32) -> String {
@@ -417,6 +447,7 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
         pictures,
         account_avatar: Mutex::new(None),
     });
+    let _ = ACCOUNT.set(shared.clone()); // Set once: setup runs once
 
     // Check the stored session in the background; offline is fine, only a
     // revoked link signs out. At boot the network comes up after the app:

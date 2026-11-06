@@ -1,0 +1,80 @@
+{
+  "format": 1,
+  "meta": {
+    "name": "Plexi Crunch",
+    "description": "Compressed crunch with a Plexi capture, a 4x12 cab and a room.",
+    "tags": ["crunch", "rock"],
+    "app_version": "0.11.0",
+    "created": "2026-11-06T18:30:00Z"
+  },
+  "preset": {
+    "id": "6f0d3c1e-5d0e-4a8e-9f7a-3c2b1a0e9d8c",
+    "name": "Plexi Crunch",
+    "description": "",
+    "created_at": 1793990000,
+    "modified_at": 1793990000,
+    "plugins": [],
+    "stereo_mode": false,
+    "tags": [],
+    "chain": {
+      "nodes": [
+        { "Plugin": { "instance_id": 1, "uri": "urn:zamaudio:ZamComp", "enabled": true, "num_inputs": 1, "num_outputs": 1 } },
+        { "Plugin": { "instance_id": 2, "uri": "urn:pedalboard:nam", "enabled": true, "num_inputs": 1, "num_outputs": 1 } },
+        { "Split": {
+            "instance_id": 3, "split_type": "Mix", "enabled": true,
+            "top_chain": [
+              { "Plugin": { "instance_id": 4, "uri": "urn:pedalboard:ir", "enabled": true, "num_inputs": 1, "num_outputs": 1 } }
+            ],
+            "bottom_chain": [
+              { "Plugin": { "instance_id": 5, "uri": "urn:pedalboard:ir", "enabled": false, "num_inputs": 1, "num_outputs": 1 } }
+            ],
+            "ab_select_a": true, "mix_ratio": 0.6, "pan": [0.0, 0.0],
+            "num_inputs": 1, "num_outputs": 1
+        } },
+        { "Plugin": { "instance_id": 6, "uri": "urn:pedalboard:ir-space", "enabled": true, "num_inputs": 1, "num_outputs": 1 } }
+      ],
+      "params": { "1": [0.0, 10.0], "2": [0.0, 0.0, 1.0, 0.0, -80.0, 5.0, 6.0, 5.0, 1.0, 1.0] },
+      "params_by_symbol": { "1": { "attack": 0.0, "release": 10.0 } },
+      "files": {
+        "2": "Tone3000/Amps/Plexi 1959 [41234]/Crunch [987654].nam",
+        "4": "Tone3000/Cabs/V30 4x12 [5521]/SM57 [77001].wav",
+        "5": "My IRs/greenback.wav",
+        "6": "Tone3000/Spaces/Small Room [8810]/Room [99120].wav"
+      },
+      "colors": { "2": "red" },
+      "scenes": [ { "name": "Rhythm", "enabled": {}, "params": {} }, null, { "name": "Lead", "enabled": {}, "params": {} } ],
+      "scene": 0,
+      "bpm": 96.0,
+      "stomps": [1, null, 6]
+    }
+  },
+  "dependencies": {
+    "plugins": [
+      { "uri": "urn:zamaudio:ZamComp", "name": "ZamComp", "source": { "type": "store", "package": "zam-plugins", "version": "4.5", "plugin_id": "zam-comp" } },
+      { "uri": "urn:pedalboard:nam", "name": "Amp", "source": { "type": "builtin", "kind": "nam" } },
+      { "uri": "urn:pedalboard:ir", "name": "Cabinet", "source": { "type": "builtin", "kind": "ir" } },
+      { "uri": "urn:pedalboard:ir-space", "name": "Space", "source": { "type": "builtin", "kind": "ir-space" } }
+    ],
+    "files": [
+      { "path": "Tone3000/Amps/Plexi 1959 [41234]/Crunch [987654].nam", "blocks": [2],
+        "source": { "type": "tone3000", "tone_id": 41234, "model_id": 987654, "tone_title": "Plexi 1959", "model_name": "Crunch",
+                    "url": "https://www.tone3000.com/tones/plexi-1959-41234", "license": "CC BY 4.0", "creator": "someone", "gear": "amp", "format": "nam" } },
+      { "path": "Tone3000/Cabs/V30 4x12 [5521]/SM57 [77001].wav", "blocks": [4],
+        "source": { "type": "tone3000", "tone_id": 5521, "model_id": 77001, "tone_title": "V30 4x12", "model_name": "SM57",
+                    "url": "https://www.tone3000.com/tones/v30-4x12-5521", "creator": "cabguy", "gear": "cab", "format": "ir" } },
+      { "path": "My IRs/greenback.wav", "blocks": [5], "source": { "type": "local", "what": "impulse response", "name": "greenback.wav" } },
+      { "path": "Tone3000/Spaces/Small Room [8810]/Room [99120].wav", "blocks": [6],
+        "source": { "type": "tone3000", "tone_id": 8810, "model_id": 99120, "tone_title": "Small Room", "model_name": "Room",
+                    "url": "https://www.tone3000.com/tones/small-room-8810", "license": "CC0", "creator": "roomie", "gear": "space", "format": "ir" } }
+    ]
+  },
+  "display": {
+    "blocks": {
+      "1": { "kind": "plugin", "category": "dynamics", "lv2_class": "CompressorPlugin", "color": "pink", "color_hex": "#8c4a64" },
+      "2": { "kind": "amp", "category": "simulator", "color": "red", "color_hex": "#9a3a33" },
+      "4": { "kind": "cab", "category": "simulator", "color": "orange", "color_hex": "#a35a2c" },
+      "5": { "kind": "cab", "category": "simulator", "color": "orange", "color_hex": "#a35a2c" },
+      "6": { "kind": "space", "category": "reverb", "color": "teal", "color_hex": "#30706e" }
+    }
+  }
+}
