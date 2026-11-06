@@ -2,6 +2,7 @@ import { Theme } from "../theme.slint";
 import { PresetInfo } from "../types.slint";
 import { Badge, Button, EmptyState, SectionHeader, Segmented } from "../components/controls.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
+import { Rigs, RigsPanel } from "rigs_view.slint";
 
 export { PresetInfo }
 
@@ -22,6 +23,7 @@ export component PresetManager inherits Rectangle {
 
 
     in-out property <bool> show-save-dialog: false;
+    in-out property <bool> show-rigs: false;
     in-out property <string> save-preset-name: "";
     private property <string> confirm-delete-id: "";
 
@@ -59,6 +61,16 @@ export component PresetManager inherits Rectangle {
                     font-size: Theme.font-body;
                     font-weight: Theme.weight-semibold;
                     overflow: elide;
+                }
+            }
+            Button {
+                horizontal-stretch: 0;
+                // Rigs: share or import a chain with what it needs
+                icon: "share";
+                variant: "ghost";
+                clicked => {
+                    root.show-rigs = true;
+                    Rigs.opened();
                 }
             }
             if root.current-preset-id != "": Button {
@@ -256,6 +268,13 @@ export component PresetManager inherits Rectangle {
                     root.show-save-dialog = false;
                 }
             }
+        }
+    }
+
+    // Rigs: share the chain with what it needs, or import one
+    if root.show-rigs: RigsPanel {
+        close => {
+            root.show-rigs = false;
         }
     }
 }

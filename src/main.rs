@@ -12,6 +12,7 @@ mod live_ui;
 mod midi_io;
 mod midi_ui;
 mod plugin_view;
+mod rigs_ui;
 mod routing_ui;
 mod scope_ui;
 mod strip_ui;
@@ -128,7 +129,6 @@ pub(crate) fn ui(app: &slint::Weak<App>, f: impl FnOnce(&App) + Send + 'static) 
 }
 
 /// Run `f` on a new thread; false (logged) when the system cannot start one
-#[cfg(any(feature = "store", feature = "tone3000"))]
 pub(crate) fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> bool {
     match std::thread::Builder::new().name(name.into()).spawn(f) {
         Ok(_) => true,
@@ -1660,6 +1660,7 @@ fn main() -> Result<()> {
     #[cfg(feature = "store")]
     catalog_ui::setup(&app, &state);
     live_ui::setup(&app, &state);
+    rigs_ui::setup(&app, &state);
     midi_ui::setup(&app, &state);
     let _routing_meters = routing_ui::setup(&app, &state, engine.as_deref());
     let _block_sound = block_sound::start(&app, &state);
