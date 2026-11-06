@@ -5,7 +5,9 @@
 //!
 //! Without the file, the defaults come from the environment, then from the
 //! reference build (4 footswitches on GPIO 17, 27, 22, 23; encoder on 5, 6,
-//! push button on 13):
+//! push button on 13). An input on a GPIO the kernel gave to a driver (an
+//! audio HAT's I2S lines, SPI...) is left out ([`Hardware::usable`]), so the
+//! defaults never take a HAT's pins:
 //! - `PEDALBOARD_FOOTSWITCH_PINS`: footswitch GPIOs, empty for none
 //! - `PEDALBOARD_ENCODER_PINS`: A,B[,button], empty for no encoder
 //! - `PEDALBOARD_ENCODER_STEPS`: quadrature steps per detent
@@ -235,6 +237,81 @@ impl Hardware {
     }
 }
 
+/// A GPIO line, as the kernel reports it
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Line {
+    Free,
+    /// Taken by a driver: its label (empty when the pin is set to another
+    /// function, I2S or SPI, rather than requested as a GPIO)
+    Used(String),
+}
+
+/// The inputs that can be opened, and those left out
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Usable {
+    /// Footswitch slot (0-based) and its GPIO
+    pub footswitches: Vec<(usize, u8)>,
+    pub encoder: Option<Encoder>,
+    /// Why an input is left out: "FS 2: GPIO 27 is used by the audio HAT
+    /// (I2S), left out"
+    pub skipped: Vec<String>,
+}
+
+impl Hardware {
+    /// The inputs whose GPIO is free. One the kernel gave to a driver is
+    /// left out: taking it would cut that driver off its pin (an audio HAT
+    /// loses outputs). `line` is `None` when the state cannot be read: the
+    /// input is tried, the kernel refuses it if it is taken.
+    pub fn usable(&self, line: impl Fn(u8) -> Option<Line>) -> Usable {
+        let mut usable = Usable::default();
+        let free = |pin: u8, user: &str, skipped: &mut Vec<String>| match line(pin) {
+            Some(Line::Used(consumer)) => {
+                skipped.push(format!(
+                    "{user}: GPIO {pin} is used by {}, left out",
+                    owner(pin, &consumer)
+                ));
+                false
+            }
+            Some(Line::Free) | None => true,
+        };
+        for (slot, &pin) in self.footswitches.iter().enumerate() {
+            if free(pin, &format!("FS {}", slot + 1), &mut usable.skipped) {
+                usable.footswitches.push((slot, pin));
+            }
+        }
+        if let Some(mut encoder) = self.encoder {
+            // Both pins, or no encoder: its button alone would only confirm
+            let a = free(encoder.a, "Encoder A", &mut usable.skipped);
+            let b = free(encoder.b, "Encoder B", &mut usable.skipped);
+            if a && b {
+                if let Some(button) = encoder.button {
+                    if !free(button, "Encoder button", &mut usable.skipped) {
+                        encoder.button = None;
+                    }
+                }
+                usable.encoder = Some(encoder);
+            }
+        }
+        usable
+    }
+}
+
+/// Who holds a GPIO: the driver's label, else what the pin is likely
+/// set to on a Raspberry Pi
+fn owner(pin: u8, consumer: &str) -> String {
+    if !consumer.is_empty() {
+        return format!("a driver ({consumer})");
+    }
+    match pin {
+        18..=27 => "the audio HAT (I2S)".into(),
+        7..=11 => "SPI".into(),
+        _ => match bus(pin) {
+            Some(bus) => bus.into(),
+            None => "a driver".into(),
+        },
+    }
+}
+
 /// What else may use a GPIO of the Raspberry Pi header
 fn bus(pin: u8) -> Option<&'static str> {
     match pin {
@@ -338,6 +415,69 @@ mod tests {
         assert_eq!(h.free_pin(200), Some(26));
         assert!(h.shared_pins().is_empty());
         assert_eq!(full.shared_pins().len(), 4);
+    }
+
+    /// GPIO lines as the Pi 5 reports them with an 8-channel audio HAT
+    /// (hifiberry-dac8x overlay): I2S on 18–27, the ADC detection on 5
+    fn dac8x(pin: u8) -> Option<Line> {
+        Some(match pin {
+            18..=27 => Line::Used(String::new()),
+            5 => Line::Used("hasadc".into()),
+            _ => Line::Free,
+        })
+    }
+
+    #[test]
+    fn busy_pins_left_out() {
+        let usable = Hardware::default().usable(dac8x);
+        assert_eq!(usable.footswitches, vec![(0, 17)]);
+        assert_eq!(usable.encoder, None);
+        assert_eq!(
+            usable.skipped,
+            vec![
+                "FS 2: GPIO 27 is used by the audio HAT (I2S), left out",
+                "FS 3: GPIO 22 is used by the audio HAT (I2S), left out",
+                "FS 4: GPIO 23 is used by the audio HAT (I2S), left out",
+                "Encoder A: GPIO 5 is used by a driver (hasadc), left out",
+            ]
+        );
+        // Free pins: everything opens
+        let all = Hardware::default().usable(|_| Some(Line::Free));
+        assert_eq!(all.footswitches, vec![(0, 17), (1, 27), (2, 22), (3, 23)]);
+        assert_eq!(all.encoder, Some(Encoder::default()));
+        assert!(all.skipped.is_empty());
+        // Unknown state: tried (the kernel refuses a taken line)
+        assert_eq!(Hardware::default().usable(|_| None), all);
+    }
+
+    #[test]
+    fn busy_encoder_button_left_out() {
+        let h = Hardware {
+            footswitches: vec![4, 16],
+            encoder: Some(Encoder {
+                a: 12,
+                b: 13,
+                button: Some(8),
+                steps: 4,
+            }),
+            i2c_encoders: None,
+        };
+        let usable = h.usable(|pin| {
+            Some(if pin == 8 {
+                Line::Used(String::new())
+            } else {
+                Line::Free
+            })
+        });
+        assert_eq!(usable.footswitches, vec![(0, 4), (1, 16)]);
+        assert_eq!(
+            usable.encoder.map(|e| (e.a, e.b, e.button)),
+            Some((12, 13, None))
+        );
+        assert_eq!(
+            usable.skipped,
+            vec!["Encoder button: GPIO 8 is used by SPI, left out"]
+        );
     }
 
     #[test]

@@ -3,7 +3,9 @@
 //!
 //! Inputs are wired between the GPIO and ground (internal pull-ups). What
 //! is wired where (BCM numbering) is set in Settings → Hardware
-//! ([`pedalboard::hardware`]).
+//! ([`pedalboard::hardware`]). The lines are taken through the kernel's GPIO
+//! character device: a GPIO a driver holds (an audio HAT's I2S data lines)
+//! is left alone, never switched to a plain input.
 //!
 //! The encoder sends key presses to the UI, so it drives whatever page is
 //! shown (rack selection, parameter focus, browser...): Left/Right when
@@ -16,10 +18,12 @@
 //! ([`crate::strip_ui`]).
 
 use anyhow::{Context, Result};
-use pedalboard::hardware::Hardware;
-use rppal::gpio::{Event, InputPin, Trigger};
+use gpiocdev::line::{Bias, EdgeDetection, EdgeKind, Value};
+use gpiocdev::{Chip, Request};
+use pedalboard::hardware::{Hardware, Line};
 use slint::platform::{Key, WindowEvent};
 use slint::ComponentHandle;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -46,12 +50,16 @@ fn press_key(app: &slint::Weak<App>, key: Key) {
     });
 }
 
-/// Keeps the pins (and their interrupt threads) and the I2C polling alive:
-/// dropping it frees them
+/// Keeps the inputs (a thread per GPIO line) and the I2C polling alive:
+/// dropping it stops them and frees the lines
 pub struct Gpio {
-    _pins: Vec<InputPin>,
+    stop: Arc<AtomicBool>,
+    threads: Vec<JoinHandle<()>>,
     i2c: Option<I2cPolling>,
 }
+
+/// How often an input thread checks whether it must stop
+const STOP_POLL: Duration = Duration::from_millis(100);
 
 /// How often the I2C encoders are read
 const I2C_POLL: Duration = Duration::from_millis(10);
@@ -163,60 +171,75 @@ impl Drop for I2cPolling {
 }
 
 impl Gpio {
-    /// Opens every input it can: one that fails (a GPIO taken by a driver)
-    /// is left out and reported in `errors`, the others work
+    /// Opens every input it can: one on a GPIO a driver holds (an audio
+    /// HAT's I2S lines) is left out, one that fails is reported; both are
+    /// in `errors`, the others work
     pub fn start(
         app: slint::Weak<App>,
         state: Arc<AppState>,
         hardware: &Hardware,
     ) -> Result<(Self, Vec<anyhow::Error>)> {
-        let gpio = rppal::gpio::Gpio::new().context("Cannot open the GPIO chip")?;
-        let input = |pin: u8, user: &str| -> Result<InputPin> {
-            Ok(gpio
-                .get(pin)
-                .with_context(|| format!("{user}: GPIO {pin} is not available"))?
-                .into_input_pullup())
+        let chip = header_chip()?;
+        let mut gpio = Self {
+            stop: Arc::new(AtomicBool::new(false)),
+            threads: Vec::new(),
+            i2c: None,
         };
-        let mut held = Vec::new();
-        let mut errors = Vec::new();
+        // The kernel's view of each line: a pin set to I2S, SPI... reads
+        // as used, and is never touched
+        let usable = hardware.usable(|pin| {
+            chip.line_info(pin.into()).ok().map(|info| {
+                if info.used {
+                    Line::Used(info.consumer)
+                } else {
+                    Line::Free
+                }
+            })
+        });
+        let mut errors: Vec<anyhow::Error> = usable
+            .skipped
+            .into_iter()
+            .map(|skipped| {
+                warn!(input = %skipped, "GPIO in use by a driver, input left out");
+                anyhow::anyhow!(skipped)
+            })
+            .collect();
+        let chip = chip.path().to_path_buf();
 
-        for (slot, &pin) in hardware.footswitches.iter().enumerate() {
+        for (slot, pin) in usable.footswitches {
             let user = format!("FS {}", slot + 1);
-            let mut input = match input(pin, &user) {
-                Ok(input) => input,
+            let request = match request(&chip, pin, &user, Some(DEBOUNCE)) {
+                Ok(request) => request,
                 Err(e) => {
                     errors.push(e);
                     continue;
                 }
             };
             let (app, state) = (app.clone(), state.clone());
-            let interrupt =
-                input.set_async_interrupt(Trigger::Both, Some(DEBOUNCE), move |event: Event| {
-                    // Wired to ground: pressed pulls the pin low
-                    let down = event.trigger == Trigger::FallingEdge;
-                    let state = state.clone();
-                    crate::ui(&app, move |app| {
-                        if down {
-                            crate::live_ui::footswitch_down(app, &state, slot);
-                        } else {
-                            crate::live_ui::footswitch_up(app, slot);
-                        }
-                    });
+            let watched = gpio.watch(request, &user, move |high| {
+                // Wired to ground: pressed pulls the pin low
+                let state = state.clone();
+                crate::ui(&app, move |app| {
+                    if high {
+                        crate::live_ui::footswitch_up(app, slot);
+                    } else {
+                        crate::live_ui::footswitch_down(app, &state, slot);
+                    }
                 });
-            if let Err(e) = interrupt {
-                errors.push(anyhow::Error::from(e).context(format!("{user}: GPIO {pin}")));
+            });
+            if let Err(e) = watched {
+                errors.push(e.context(format!("{user}: GPIO {pin}")));
                 continue;
             }
             info!(footswitch = slot + 1, gpio = pin, "Footswitch opened");
-            held.push(input);
         }
 
-        if let Some(encoder) = hardware.encoder {
-            if let Err(e) = Self::encoder(&input, &app, encoder, &mut held) {
+        if let Some(encoder) = usable.encoder {
+            if let Err(e) = gpio.encoder(&chip, &app, encoder) {
                 errors.push(e);
             }
         }
-        let i2c =
+        gpio.i2c =
             hardware
                 .i2c_encoders
                 .and_then(|settings| match I2cPolling::start(&app, settings) {
@@ -226,7 +249,39 @@ impl Gpio {
                         None
                     }
                 });
-        Ok((Self { _pins: held, i2c }, errors))
+        Ok((gpio, errors))
+    }
+
+    /// Calls `on_edge` with the new level (high: true) on each edge of the
+    /// line, from a thread of its own until `self` is dropped
+    fn watch(
+        &mut self,
+        request: Request,
+        user: &str,
+        mut on_edge: impl FnMut(bool) + Send + 'static,
+    ) -> Result<()> {
+        let stop = self.stop.clone();
+        let name = user.to_owned();
+        let thread = std::thread::Builder::new()
+            .name(format!("gpio {user}"))
+            .spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let edge = request
+                        .wait_edge_event(STOP_POLL)
+                        .and_then(|ready| ready.then(|| request.read_edge_event()).transpose());
+                    match edge {
+                        Ok(Some(edge)) => on_edge(edge.kind == EdgeKind::Rising),
+                        Ok(None) => {}
+                        Err(e) => {
+                            warn!(input = %name, error = %e, "GPIO input stopped");
+                            return;
+                        }
+                    }
+                }
+            })
+            .context("GPIO thread")?;
+        self.threads.push(thread);
+        Ok(())
     }
 
     /// The external encoders found: "5 encoders found (0x36, 0x49)"
@@ -236,99 +291,139 @@ impl Gpio {
 
     /// The encoder needs both its pins; its button is apart
     fn encoder(
-        input: &impl Fn(u8, &str) -> Result<InputPin>,
+        &mut self,
+        chip: &Path,
         app: &slint::Weak<App>,
         encoder: pedalboard::hardware::Encoder,
-        held: &mut Vec<InputPin>,
     ) -> Result<()> {
-        {
-            let steps = i32::from(encoder.steps.max(1));
-            let mut pin_a = input(encoder.a, "Encoder A")?;
-            let mut pin_b = input(encoder.b, "Encoder B")?;
-            // Current AB levels (bit 1 = A, bit 0 = B) and accumulated steps
-            let levels = Arc::new(AtomicU8::new(
-                (u8::from(pin_a.is_high()) << 1) | u8::from(pin_b.is_high()),
-            ));
-            let count = Arc::new(AtomicI32::new(0));
+        let steps = i32::from(encoder.steps.max(1));
+        let pin_a = request(chip, encoder.a, "Encoder A", None)?;
+        let pin_b = request(chip, encoder.b, "Encoder B", None)?;
+        let high = |request: &Request| -> Result<u8> {
+            Ok(u8::from(request.lone_value()? == Value::Active))
+        };
+        // Current AB levels (bit 1 = A, bit 0 = B) and accumulated steps
+        let levels = Arc::new(AtomicU8::new(
+            (high(&pin_a).context("Encoder A")? << 1) | high(&pin_b).context("Encoder B")?,
+        ));
+        let count = Arc::new(AtomicI32::new(0));
 
-            for (pin, bit) in [(&mut pin_a, 1u8), (&mut pin_b, 0u8)] {
-                let (levels, count, app) = (levels.clone(), count.clone(), app.clone());
-                pin.set_async_interrupt(Trigger::Both, None, move |event: Event| {
-                    let high = event.trigger == Trigger::RisingEdge;
-                    // Each pin has its own interrupt thread: update the
-                    // levels and the count atomically
-                    let old = if high {
-                        levels.fetch_or(1 << bit, Ordering::Relaxed)
-                    } else {
-                        levels.fetch_and(!(1 << bit), Ordering::Relaxed)
-                    };
-                    let new = if high {
-                        old | (1 << bit)
-                    } else {
-                        old & !(1 << bit)
-                    };
-                    let delta = QUADRATURE[((old << 2) | new) as usize] as i32;
-                    if delta == 0 {
-                        return;
-                    }
-                    let stepped = count.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-                        let total = n + delta;
-                        Some(if total.abs() >= steps { 0 } else { total })
+        for (pin, bit, user) in [(pin_a, 1u8, "Encoder A"), (pin_b, 0u8, "Encoder B")] {
+            let (levels, count, app) = (levels.clone(), count.clone(), app.clone());
+            self.watch(pin, user, move |high| {
+                // Each pin has its own thread: update the levels and the
+                // count atomically
+                let old = if high {
+                    levels.fetch_or(1 << bit, Ordering::Relaxed)
+                } else {
+                    levels.fetch_and(!(1 << bit), Ordering::Relaxed)
+                };
+                let new = if high {
+                    old | (1 << bit)
+                } else {
+                    old & !(1 << bit)
+                };
+                let delta = QUADRATURE[((old << 2) | new) as usize] as i32;
+                if delta == 0 {
+                    return;
+                }
+                let stepped = count.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                    let total = n + delta;
+                    Some(if total.abs() >= steps { 0 } else { total })
+                });
+                let total = stepped.unwrap_or_else(|n| n) + delta;
+                if total.abs() >= steps {
+                    press_key(
+                        &app,
+                        if total > 0 {
+                            Key::RightArrow
+                        } else {
+                            Key::LeftArrow
+                        },
+                    );
+                }
+            })
+            .context("Encoder")?;
+        }
+        info!(gpio_a = encoder.a, gpio_b = encoder.b, "Encoder opened");
+
+        // Without a push button, the touch screen confirms
+        if let Some(button) = encoder.button {
+            let pin_button = request(chip, button, "Encoder button", Some(DEBOUNCE))?;
+            let app = app.clone();
+            // Presses so far; the held one, until a long press consumes it
+            let presses = Arc::new(AtomicU32::new(0));
+            let held_press = Arc::new(AtomicU32::new(0));
+            self.watch(pin_button, "Encoder button", move |high| {
+                if !high {
+                    let press = presses.fetch_add(1, Ordering::Relaxed) + 1;
+                    held_press.store(press, Ordering::Relaxed);
+                    let (app, held_press) = (app.clone(), held_press.clone());
+                    let _ = slint::invoke_from_event_loop(move || {
+                        slint::Timer::single_shot(LONG_PRESS, move || {
+                            if held_press
+                                .compare_exchange(press, 0, Ordering::Relaxed, Ordering::Relaxed)
+                                .is_ok()
+                            {
+                                press_key(&app, Key::Escape);
+                            }
+                        });
                     });
-                    let total = stepped.unwrap_or_else(|n| n) + delta;
-                    if total.abs() >= steps {
-                        press_key(
-                            &app,
-                            if total > 0 {
-                                Key::RightArrow
-                            } else {
-                                Key::LeftArrow
-                            },
-                        );
-                    }
-                })
-                .context("Encoder")?;
-            }
-
-            info!(gpio_a = encoder.a, gpio_b = encoder.b, "Encoder opened");
-            held.extend([pin_a, pin_b]);
-            // Without a push button, the touch screen confirms
-            if let Some(button) = encoder.button {
-                let mut pin_button = input(button, "Encoder button")?;
-                let app = app.clone();
-                // Presses so far; the held one, until a long press consumes it
-                let presses = Arc::new(AtomicU32::new(0));
-                let held_press = Arc::new(AtomicU32::new(0));
-                pin_button
-                    .set_async_interrupt(Trigger::Both, Some(DEBOUNCE), move |event: Event| {
-                        if event.trigger == Trigger::FallingEdge {
-                            let press = presses.fetch_add(1, Ordering::Relaxed) + 1;
-                            held_press.store(press, Ordering::Relaxed);
-                            let (app, held_press) = (app.clone(), held_press.clone());
-                            let _ = slint::invoke_from_event_loop(move || {
-                                slint::Timer::single_shot(LONG_PRESS, move || {
-                                    if held_press
-                                        .compare_exchange(
-                                            press,
-                                            0,
-                                            Ordering::Relaxed,
-                                            Ordering::Relaxed,
-                                        )
-                                        .is_ok()
-                                    {
-                                        press_key(&app, Key::Escape);
-                                    }
-                                });
-                            });
-                        } else if held_press.swap(0, Ordering::Relaxed) != 0 {
-                            press_key(&app, Key::Return);
-                        }
-                    })
-                    .context("Encoder button")?;
-                info!(gpio = button, "Encoder button opened");
-                held.push(pin_button);
-            }
+                } else if held_press.swap(0, Ordering::Relaxed) != 0 {
+                    press_key(&app, Key::Return);
+                }
+            })
+            .context("Encoder button")?;
+            info!(gpio = button, "Encoder button opened");
         }
         Ok(())
     }
+}
+
+impl Drop for Gpio {
+    /// Stops the threads, which frees the lines
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        for thread in self.threads.drain(..) {
+            if thread.join().is_err() {
+                warn!("GPIO thread had panicked");
+            }
+        }
+    }
+}
+
+/// Labels of the chip of the 40-pin header: Pi 5 (RP1), Pi 4, older Pis
+const HEADER_CHIPS: [&str; 3] = ["pinctrl-rp1", "pinctrl-bcm2711", "pinctrl-bcm2835"];
+
+/// The GPIO chip of the Raspberry Pi header
+fn header_chip() -> Result<Chip> {
+    let chips = gpiocdev::chip::chips().context("Cannot list the GPIO chips")?;
+    chips
+        .iter()
+        .filter_map(|path| Chip::from_path(path).ok())
+        .find(|chip| {
+            chip.info()
+                .is_ok_and(|info| HEADER_CHIPS.contains(&info.label.as_str()))
+        })
+        .context("No Raspberry Pi GPIO chip found")
+}
+
+/// Takes a GPIO as an input with its pull-up, both edges reported. Through
+/// the kernel: it refuses a line a driver holds, and sets the pull-up
+/// itself (nothing is written to the GPIO registers behind its back)
+fn request(chip: &Path, pin: u8, user: &str, debounce: Option<Duration>) -> Result<Request> {
+    let mut builder = Request::builder();
+    builder
+        .on_chip(chip)
+        .with_consumer(format!("OpenRig {user}"))
+        .with_line(pin.into())
+        .as_input()
+        .with_bias(Bias::PullUp)
+        .with_edge_detection(EdgeDetection::BothEdges);
+    if let Some(debounce) = debounce {
+        builder.with_debounce_period(debounce);
+    }
+    builder
+        .request()
+        .with_context(|| format!("{user}: GPIO {pin} is not available"))
 }
