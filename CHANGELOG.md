@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/Siryu6/OpenRig/compare/v0.10.1...v0.11.0) - 2026-11-06
+
+### Added
+
+- *(looper)* count-in and bar-quantized recording ([#81](https://github.com/Siryu6/OpenRig/pull/81)) ([#82](https://github.com/Siryu6/OpenRig/pull/82))
+- *(rig)* export and import shareable rigs ([#85](https://github.com/Siryu6/OpenRig/pull/85))
+
+### Fixed
+
+- *(tone3000)* show the pictures TONE3000 now serves from assets.tone3000.com ([#84](https://github.com/Siryu6/OpenRig/pull/84))
+- *(gpio)* leave GPIOs held by a driver alone ([#83](https://github.com/Siryu6/OpenRig/pull/83))
+
+### Other
+
+- *(release)* give the rig crate its own tag name so release-plz finds the app's releases ([#87](https://github.com/Siryu6/OpenRig/pull/87))
+- point to docs.openrig.eu and Siryu6/openrig-doc ([#86](https://github.com/Siryu6/OpenRig/pull/86))
+
 ## [0.10.1](https://github.com/Siryu6/OpenRig/compare/v0.10.0...v0.10.1) - 2026-11-03
 
 ### Fixed
