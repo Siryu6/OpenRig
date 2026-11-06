@@ -206,6 +206,9 @@ pub struct DependencyView {
     #[serde(rename = "type")]
     pub kind: String,
     pub name: String,
+    /// Built-in blocks: the end of their URI ("nam")
+    #[serde(rename = "kind")]
+    pub builtin_kind: String,
     pub uri: String,
     pub tone_title: String,
     pub model_name: String,
@@ -214,6 +217,17 @@ pub struct DependencyView {
 }
 
 impl DependencyView {
+    /// The plugin URI, for plugins (built-in blocks have none in the view)
+    pub fn plugin_uri(&self) -> Option<String> {
+        match self.kind.as_str() {
+            "store" if !self.uri.is_empty() => Some(self.uri.clone()),
+            "builtin" if !self.builtin_kind.is_empty() => {
+                Some(format!("urn:pedalboard:{}", self.builtin_kind))
+            }
+            _ => None,
+        }
+    }
+
     /// Name to show
     pub fn label(&self) -> String {
         match self.kind.as_str() {

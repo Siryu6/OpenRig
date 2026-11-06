@@ -230,6 +230,20 @@ fn reads_a_rig_detail() {
     assert_eq!(detail.view.scenes.len(), 2);
     let labels: Vec<String> = detail.view.dependencies.iter().map(|d| d.label()).collect();
     assert_eq!(labels, ["Amp", "ZamComp", "Plexi · Crunch"]);
+    let uris: Vec<Option<String>> = detail
+        .view
+        .dependencies
+        .iter()
+        .map(|d| d.plugin_uri())
+        .collect();
+    assert_eq!(
+        uris,
+        [
+            Some("urn:pedalboard:nam".to_string()),
+            Some(COMP.to_string()),
+            None
+        ]
+    );
     assert_eq!(detail.versions[0].changelog, "Less gain");
     // A slug that is not one is not sent at all
     assert!(matches!(
