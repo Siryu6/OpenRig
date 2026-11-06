@@ -108,10 +108,10 @@ git submodule update --init --recursive
 cargo build --release                    # LV2 hosting + NAM block + TONE3000 + MIDI (default)
 cargo build --release --features gpio    # + footswitches / encoder on the Pi
 cargo build --no-default-features --features winit,lv2,midi   # without NAM nor TONE3000 (no cmake / C++)
-cargo build --no-default-features --features winit,lv2,nam,midi   # without TONE3000 Connect (no HTTPS client)
+cargo build --no-default-features --features winit,lv2,nam,midi   # without TONE3000 Connect nor openrig.eu (no HTTPS client)
 cargo build --no-default-features        # no liblilv, NAM, MIDI nor display: demo plugins, tests
 cargo build --release --features kms     # + full screen without X11 / Wayland (libinput, libgbm, EGL)
-cargo build --release --no-default-features --features kms,lv2,nam,tone3000,midi,gpio,splash,update,store   # as in the Pi image
+cargo build --release --no-default-features --features kms,lv2,nam,tone3000,midi,gpio,splash,update,store,rigs-online   # as in the Pi image
 cargo test
 ```
 
@@ -227,6 +227,7 @@ src/
 ├── midi_ui.rs           MIDI actions, learn in the block editor, Settings → MIDI
 ├── tone3000/            TONE3000: account (device flow, tokens), library (lists, search, downloads), limiter, pictures
 ├── tone3000_ui.rs       Settings → TONE3000 Connect, library page, Features.tone3000 flag
+├── rigs_online_ui.rs    Rigs panel → openrig.eu: browse, install, link, favourites, publish (feature rigs-online)
 ├── wifi.rs              Wi-Fi through NetworkManager (nmcli): scan, join, forget
 ├── wifi_ui.rs           Settings → Wi-Fi (worker thread running nmcli)
 ├── update.rs            Updates: latest GitHub release, app or system, download, request to the OS updater
