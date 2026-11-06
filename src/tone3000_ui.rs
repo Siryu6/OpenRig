@@ -9,9 +9,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
-use slint::{
-    ComponentHandle, Image, Model as _, Rgb8Pixel, Rgba8Pixel, SharedPixelBuffer, SharedString,
-};
+use slint::{ComponentHandle, Image, Model as _, Rgba8Pixel, SharedPixelBuffer, SharedString};
 use tracing::{debug, error, warn};
 
 use pedalboard::audio::ChainNode;
@@ -367,25 +365,6 @@ fn apply(app: &App, settings: &Settings) {
     app.global::<Features>().set_tone3000(settings.connected());
 }
 
-/// QR code of `text`, black on white with a quiet zone
-fn qr_image(text: &str) -> Image {
-    use qrcodegen::{QrCode, QrCodeEcc};
-    let Ok(code) = QrCode::encode_text(text, QrCodeEcc::Medium) else {
-        return Image::default();
-    };
-    const BORDER: i32 = 2;
-    const SCALE: i32 = 4;
-    let side = (code.size() + 2 * BORDER) * SCALE;
-    let mut buffer = SharedPixelBuffer::<Rgb8Pixel>::new(side as u32, side as u32);
-    for (i, pixel) in buffer.make_mut_slice().iter_mut().enumerate() {
-        let x = (i as i32 % side) / SCALE - BORDER;
-        let y = (i as i32 / side) / SCALE - BORDER;
-        let value = if code.get_module(x, y) { 0 } else { 255 };
-        *pixel = Rgb8Pixel::new(value, value, value);
-    }
-    Image::from_rgb8(buffer)
-}
-
 /// Checks of the stored session at start-up while the network is not up,
 /// and the wait between them (about a minute in all)
 const STARTUP_ATTEMPTS: u32 = 12;
@@ -395,7 +374,7 @@ fn show_code(app: &App, code: &DeviceCode) {
     let url = code.verification_uri.trim_start_matches("https://");
     app.set_t3k_url(url.trim_end_matches('/').into());
     app.set_t3k_user_code(code.user_code.as_str().into());
-    app.set_t3k_qr(qr_image(code.qr_url()));
+    app.set_t3k_qr(crate::qr_image(code.qr_url()));
     app.set_t3k_status("waiting".into());
 }
 

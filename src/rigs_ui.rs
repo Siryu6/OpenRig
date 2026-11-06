@@ -202,6 +202,35 @@ fn catalog() -> Vec<CatalogPlugin> {
     Vec::new()
 }
 
+/// The rig of `preset`, resolved with this pedalboard's plugins, store
+/// catalog and models. Not on the UI thread (the catalog may download).
+pub(crate) fn export_preset(
+    state: &AppState,
+    preset: &pedalboard::presets::Preset,
+    author: String,
+    options: export::Options,
+) -> anyhow::Result<export::Exported> {
+    let catalog = catalog();
+    let scanner = state.lv2_host.scanner();
+    let plugin_name = |uri: &str| scanner.find_by_uri(uri).map(|p| p.name.clone());
+    let plugin_class = |uri: &str| {
+        scanner
+            .find_by_uri(uri)
+            .map(|p| (p.category.clone(), p.class.clone()))
+    };
+    let models_dir = state.models_dir();
+    let context = export::Context {
+        models_dir: &models_dir,
+        catalog: &catalog,
+        plugin_name: &plugin_name,
+        plugin_class: &plugin_class,
+        author,
+        app_version: env!("CARGO_PKG_VERSION"),
+        created: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    };
+    export::export(preset, &context, options)
+}
+
 /// Export the chain as it is now, on a worker thread
 fn export_current(app: &App, state: &Arc<AppState>, usb: bool) {
     let rigs = app.global::<Rigs>();
@@ -218,25 +247,7 @@ fn export_current(app: &App, state: &Arc<AppState>, usb: bool) {
     let (weak, st) = (app.as_weak(), state.clone());
     let started = spawn("rigs-export", move || {
         let result = (|| {
-            let catalog = catalog();
-            let scanner = st.lv2_host.scanner();
-            let plugin_name = |uri: &str| scanner.find_by_uri(uri).map(|p| p.name.clone());
-            let plugin_class = |uri: &str| {
-                scanner
-                    .find_by_uri(uri)
-                    .map(|p| (p.category.clone(), p.class.clone()))
-            };
-            let models_dir = st.models_dir();
-            let context = export::Context {
-                models_dir: &models_dir,
-                catalog: &catalog,
-                plugin_name: &plugin_name,
-                plugin_class: &plugin_class,
-                author,
-                app_version: env!("CARGO_PKG_VERSION"),
-                created: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-            };
-            let exported = export::export(&preset, &context, options)?;
+            let exported = export_preset(&st, &preset, author, options)?;
             let path = rigs::write(&rigs::rigs_dir(&data_dir()), &exported.rig)?;
             info!(path = %path.display(), "Rig exported");
             let mut note = format!(
@@ -291,8 +302,7 @@ fn export_current(app: &App, state: &Arc<AppState>, usb: bool) {
     }
 }
 
-/// Open the rig `index` of the list: what it needs, on a worker thread
-/// (the catalog may have to be downloaded)
+/// Open the rig `index` of the list
 fn open_file(app: &App, state: &Arc<AppState>, index: i32) {
     let rig: Option<Rig> = with_page(|p| {
         usize::try_from(index)
@@ -304,6 +314,13 @@ fn open_file(app: &App, state: &Arc<AppState>, index: i32) {
     let Some(rig) = rig else {
         return;
     };
+    open_rig(app, state, rig, false);
+}
+
+/// Open `rig` in the import screen: what it needs, on a worker thread (the
+/// catalog may have to be downloaded); then install it right away with
+/// `install_now` (a rig downloaded from openrig.eu, the user tapped Install)
+pub(crate) fn open_rig(app: &App, state: &Arc<AppState>, rig: Rig, install_now: bool) {
     let rigs = app.global::<Rigs>();
     if rigs.get_busy() {
         return;
@@ -334,7 +351,12 @@ fn open_file(app: &App, state: &Arc<AppState>, index: i32) {
             rigs.set_busy(false);
             rigs.set_progress("".into());
             match result {
-                Ok(plan) => show_plan(app, plan),
+                Ok(plan) => {
+                    show_plan(app, plan);
+                    if install_now {
+                        install(app, &st);
+                    }
+                }
                 Err(e) => {
                     warn!(error = format_args!("{e:#}"), "Rig refused");
                     rigs.set_plan_summary("This rig cannot be imported".into());
