@@ -875,30 +875,34 @@ export component RigsOnlineOverlays inherits Rectangle {
             if RigsOnline.publish-state == "ready" || RigsOnline.publish-state == "failed" || RigsOnline.publish-state == "publishing": VerticalLayout {
                 vertical-stretch: 1;
                 spacing: Theme.space-sm;
-                SectionHeader {
-                    text: "STYLE";
-                }
-                HorizontalLayout {
-                    spacing: 6px;
-                    for i in 6: Chip {
-                        horizontal-stretch: 1;
-                        text: root.style-names[i + 1];
-                        selected: RigsOnline.publish-style == root.style-ids[i + 1];
-                        clicked => {
-                            RigsOnline.publish-style = root.style-ids[i + 1];
+                // A new version keeps the style of the rig
+                if RigsOnline.own-rig == "" || !RigsOnline.as-version: VerticalLayout {
+                    spacing: Theme.space-sm;
+                    SectionHeader {
+                        text: "STYLE";
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        for i in 6: Chip {
+                            horizontal-stretch: 1;
+                            text: root.style-names[i + 1];
+                            selected: RigsOnline.publish-style == root.style-ids[i + 1];
+                            clicked => {
+                                RigsOnline.publish-style = root.style-ids[i + 1];
+                            }
                         }
                     }
-                }
-                HorizontalLayout {
-                    spacing: 6px;
-                    for i in 6: Chip {
-                        horizontal-stretch: 1;
-                        text: root.style-names[i + 7];
-                        selected: RigsOnline.publish-style == root.style-ids[i + 7];
-                        clicked => {
-                            RigsOnline.publish-style = root.style-ids[i + 7];
+                    HorizontalLayout {
+                        spacing: 6px;
+                        for i in 6: Chip {
+                            horizontal-stretch: 1;
+                            text: root.style-names[i + 7];
+                            selected: RigsOnline.publish-style == root.style-ids[i + 7];
+                            clicked => {
+                                RigsOnline.publish-style = root.style-ids[i + 7];
+                            }
                         }
-                    }
+                }
                 }
                 SectionHeader {
                     text: "DESCRIPTION";
