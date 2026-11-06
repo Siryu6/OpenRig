@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: Documentation
-    url: https://openrig.eu/docs/
+    url: https://docs.openrig.eu/
     about: Setup, usage and troubleshooting guides.
   - name: Security vulnerability
     url: https://github.com/Siryu6/OpenRig/security/advisories/new

@@ -1,7 +1,7 @@
 # Features
 
 What OpenRig does, in more technical detail than the
-[user guide](https://openrig.eu/docs/).
+[user guide](https://docs.openrig.eu/).
 
 - **LV2 hosting**: plugins are discovered with lilv (`LV2_PATH` or the
   standard locations). Controls, ranges, units, toggles, integers and
@@ -220,4 +220,4 @@ What OpenRig does, in more technical detail than the
 - **Updates** (feature `update`, default): Settings → Updates checks the
   latest GitHub release and, on the OS image, installs it: the app alone
   when the system did not change, else the whole system. See
-  [Updates](https://openrig.eu/docs/setup/updates/).
+  [Updates](https://docs.openrig.eu/setup/updates/).

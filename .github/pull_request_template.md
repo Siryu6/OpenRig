@@ -9,5 +9,5 @@
 ## Checklist
 
 - [ ] `cargo fmt --check`, `cargo clippy --all-targets` and `cargo test` pass
-- [ ] Docs updated (`docs/`, and the [site](https://github.com/Siryu6/openrig-site) for user-facing changes)
+- [ ] Docs updated (`docs/`, and the [docs repository](https://github.com/Siryu6/openrig-doc) for user-facing changes)
 - [ ] Commit messages follow [conventional commits](https://www.conventionalcommits.org) (`feat:`, `fix:`…)
