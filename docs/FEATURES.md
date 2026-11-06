@@ -138,8 +138,10 @@ What OpenRig does, in more technical detail than the
 - **Rigs**: share a preset as a `.openrig` file with the plugins and models
   it needs (built-in, store, TONE3000 or local). Importing one installs
   what the store and your TONE3000 account can provide, then adds it as a
-  new preset. Files live in `<data>/rigs` and on mounted USB drives. See
-  [RIGS.md](RIGS.md).
+  new preset. Files live in `<data>/rigs` and on mounted USB drives. The
+  **openrig.eu** tab browses, installs, favourites and publishes rigs on
+  the community site, with the pedalboard linked to an account by a code.
+  See [RIGS.md](RIGS.md).
 - **Live page**: 8 switch tiles in Stomp (block on/off, assignable),
   Scenes or Setlist mode, tempo display with TAP. The last footswitch taps
   the tempo and, held, opens the tuner. The tempo drives the BPM ports of

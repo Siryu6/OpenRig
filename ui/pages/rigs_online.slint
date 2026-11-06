@@ -1,0 +1,983 @@
+import { Theme } from "../theme.slint";
+import { Badge, Button, Card, Chip, EmptyState, Icon, SectionHeader, Segmented, Toggle } from "../components/controls.slint";
+import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
+
+// A rig of openrig.eu, in a list or opened
+export struct OnlineRig {
+    slug: string,
+    name: string,
+    author: string,       // login
+    style: string,        // "Crunch"
+    detail: string,       // "v2 · 6 blocks · 3 scenes"
+    upvotes: int,
+    downloads: int,
+    store: int,           // store plugins it needs
+    tone3000: int,        // TONE3000 models it needs
+    favourite: bool,      // a favourite of the linked account
+}
+
+// One dependency of an opened rig, as the site reads it
+export struct OnlineDep {
+    label: string,
+    detail: string,
+    kind: string,         // "builtin", "store", "tone3000", other
+    here: bool,           // already on this pedalboard
+}
+
+// openrig.eu state and actions, set by Rust (`app.global::<RigsOnline>()`)
+export global RigsOnline {
+    in-out property <bool> available: false;     // built with the rigs-online feature
+    in-out property <string> site: "openrig.eu"; // host, as shown
+
+    // The list
+    in-out property <int> tab: 0;                // 0 browse, 1 favourites
+    in-out property <string> query: "";
+    in-out property <string> sort: "trending";
+    in-out property <string> style: "";          // "" = all
+    in-out property <[OnlineRig]> rigs: [];
+    in-out property <bool> loading: false;
+    in-out property <string> error: "";
+    in-out property <bool> has-more: false;
+    in-out property <string> count: "";          // "37 rigs"
+
+    // The opened rig
+    in-out property <bool> detail-open: false;
+    in-out property <bool> detail-loading: false;
+    in-out property <OnlineRig> detail;
+    in-out property <string> detail-description: "";
+    in-out property <[string]> detail-scenes: [];
+    in-out property <[OnlineDep]> detail-deps: [];
+    in-out property <string> detail-versions: "";
+    in-out property <string> detail-url: "";
+    in-out property <string> progress: "";       // downloading, or why it failed
+
+    // The account link
+    in-out property <bool> account-open: false;
+    in-out property <string> link-status: "signed-out"; // "signed-out" | "starting" | "waiting" | "linked"
+    in-out property <string> login: "";
+    in-out property <string> user-code: "";
+    in-out property <string> link-url: "";
+    in-out property <image> link-qr;
+    in-out property <string> link-error: "";
+
+    // Publishing the current preset
+    in-out property <bool> publish-open: false;
+    in-out property <string> publish-name: "";
+    // "checking" | "blocked" | "ready" | "publishing" | "done" | "failed"
+    in-out property <string> publish-state: "checking";
+    in-out property <[string]> publish-blockers: [];
+    in-out property <string> publish-style: "";
+    in-out property <string> publish-description: "";
+    in-out property <string> own-rig: "";        // name of the account's rig of the same name
+    in-out property <bool> as-version: true;     // publish as a new version of own-rig
+    in-out property <string> changelog: "";
+    in-out property <string> publish-message: "";
+    in-out property <string> publish-url: "";
+
+    // What the on-screen keyboard edits: "" (closed), "search", "description", "changelog"
+    in-out property <string> editing: "";
+    in-out property <string> draft: "";
+
+    callback opened();
+    callback show(int, string, string);          // tab, sort, style
+    callback search(string);
+    callback load-more();
+    callback open-rig(int);                      // index in rigs
+    callback install(string);                    // slug
+    callback toggle-favourite();                 // of the opened rig
+    callback link();
+    callback cancel-link();
+    callback unlink();
+    callback open-publish();
+    callback publish();
+}
+
+component RigCard inherits Rectangle {
+    in property <OnlineRig> rig;
+    in property <bool> quick-install: false;
+    callback open();
+    callback install();
+
+    height: 64px;
+    border-radius: Theme.radius-lg;
+    background: card-ta.pressed ? Theme.surface-hover : Theme.panel;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    card-ta := TouchArea {
+        clicked => {
+            root.open();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-md;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.rig.name;
+                color: Theme.text-primary;
+                font-size: Theme.font-body;
+                font-weight: Theme.weight-semibold;
+                overflow: elide;
+            }
+            Text {
+                text: "@" + root.rig.author + " · " + root.rig.style + " · " + root.rig.detail;
+                color: Theme.text-secondary;
+                font-size: Theme.font-small;
+                overflow: elide;
+            }
+        }
+        if root.rig.store > 0: VerticalLayout {
+            alignment: center;
+            Badge {
+                text: "STORE " + root.rig.store;
+                tone: "accent";
+            }
+        }
+        if root.rig.tone3000 > 0: VerticalLayout {
+            alignment: center;
+            Badge {
+                text: "TONE3000 " + root.rig.tone3000;
+                tone: "accent";
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 2px;
+            width: 92px;
+            Text {
+                text: root.rig.upvotes + (root.rig.upvotes == 1 ? " vote" : " votes");
+                color: Theme.text-secondary;
+                font-size: Theme.font-caption;
+                horizontal-alignment: right;
+            }
+            Text {
+                text: root.rig.downloads + (root.rig.downloads == 1 ? " download" : " downloads");
+                color: Theme.text-muted;
+                font-size: Theme.font-caption;
+                horizontal-alignment: right;
+            }
+        }
+        if root.quick-install: VerticalLayout {
+            alignment: center;
+            Button {
+                icon: "download";
+                text: "Install";
+                variant: "primary";
+                font-size: Theme.font-small;
+                clicked => {
+                    root.install();
+                }
+            }
+        }
+        if !root.quick-install: VerticalLayout {
+            alignment: center;
+            Icon {
+                name: "chevron-right";
+                color: Theme.text-muted;
+            }
+        }
+    }
+}
+
+component DepRow inherits Rectangle {
+    in property <OnlineDep> dep;
+
+    height: 48px;
+    border-radius: Theme.radius-md;
+    background: Theme.panel;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-sm;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.dep.label;
+                color: Theme.text-primary;
+                font-size: Theme.font-small;
+                font-weight: Theme.weight-semibold;
+                overflow: elide;
+            }
+            Text {
+                text: root.dep.detail;
+                color: Theme.text-secondary;
+                font-size: Theme.font-caption;
+                overflow: elide;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Badge {
+                text: root.dep.here ? "ON BOARD" :
+                    root.dep.kind == "store" ? "STORE" :
+                    root.dep.kind == "tone3000" ? "TONE3000" :
+                    root.dep.kind == "builtin" ? "BUILT-IN" : "?";
+                tone: root.dep.here ? "success" :
+                    root.dep.kind == "store" || root.dep.kind == "tone3000" ? "accent" : "warning";
+            }
+        }
+    }
+}
+
+// A text field opening the on-screen keyboard
+component Field inherits Rectangle {
+    in property <string> text;
+    in property <string> placeholder;
+    callback edit();
+
+    height: 40px;
+    border-radius: Theme.radius-md;
+    background: Theme.display;
+    border-width: 1px;
+    border-color: root.text != "" ? Theme.accent : Theme.border;
+    TouchArea {
+        clicked => {
+            root.edit();
+        }
+    }
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-sm;
+        Text {
+            horizontal-stretch: 1;
+            text: root.text != "" ? root.text : root.placeholder;
+            color: root.text != "" ? Theme.text-primary : Theme.text-muted;
+            font-size: Theme.font-small;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                name: "edit";
+                size: 14px;
+                color: Theme.text-muted;
+            }
+        }
+    }
+}
+
+// openrig.eu in the Rigs panel: browse and search rigs, open one, install
+// it (through the import of the panel), link the pedalboard to an account,
+// favourites, and publishing the current preset
+export component RigsOnlinePane inherits Rectangle {
+    private property <[string]> sort-ids: ["trending", "new", "top-week", "downloads"];
+    private property <[string]> sort-names: ["Trending", "New", "Top", "Downloads"];
+    private property <[string]> style-ids: ["", "clean", "crunch", "rock", "metal", "blues", "jazz", "funk", "country", "ambient", "acoustic", "bass", "other"];
+    private property <[string]> style-names: ["All", "Clean", "Crunch", "Rock", "Metal", "Blues", "Jazz", "Funk", "Country", "Ambient", "Acoustic", "Bass", "Other"];
+    private property <bool> linked: RigsOnline.link-status == "linked";
+
+    if !RigsOnline.available: EmptyState {
+        icon: "info";
+        title: "Not in this build";
+        message: "This OpenRig was built without openrig.eu (the \"rigs-online\" feature).";
+    }
+
+    if RigsOnline.available: VerticalLayout {
+        spacing: Theme.space-sm;
+
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+            height: 44px;
+            Field {
+                horizontal-stretch: 1;
+                y: 2px;
+                text: RigsOnline.query;
+                placeholder: "Search rigs on " + RigsOnline.site;
+                edit => {
+                    RigsOnline.draft = RigsOnline.query;
+                    RigsOnline.editing = "search";
+                }
+            }
+            if RigsOnline.query != "": Button {
+                horizontal-stretch: 0;
+                icon: "close";
+                variant: "ghost";
+                clicked => {
+                    RigsOnline.search("");
+                }
+            }
+            if root.linked: Button {
+                horizontal-stretch: 0;
+                icon: "share";
+                text: "Publish preset";
+                clicked => {
+                    RigsOnline.open-publish();
+                }
+            }
+            Button {
+                horizontal-stretch: 0;
+                max-width: 200px;
+                icon: root.linked ? "check" : "plug";
+                text: root.linked ? "@" + RigsOnline.login : "Link";
+                variant: root.linked ? "ghost" : "primary";
+                font-size: Theme.font-small;
+                clicked => {
+                    RigsOnline.link-error = "";
+                    RigsOnline.account-open = true;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: Theme.space-md;
+            if root.linked: Segmented {
+                width: 240px;
+                options: ["Browse", "My favourites"];
+                current-index: RigsOnline.tab;
+                activated(i) => {
+                    RigsOnline.show(i, RigsOnline.sort, RigsOnline.style);
+                }
+            }
+            if RigsOnline.tab == 0: Segmented {
+                horizontal-stretch: 1;
+                options: root.sort-names;
+                current-index: RigsOnline.sort == "new" ? 1 : RigsOnline.sort == "top-week" ? 2 : RigsOnline.sort == "downloads" ? 3 : 0;
+                activated(i) => {
+                    RigsOnline.show(0, root.sort-ids[i], RigsOnline.style);
+                }
+            }
+            if RigsOnline.tab != 0: Rectangle {
+                horizontal-stretch: 1;
+            }
+        }
+
+        // Styles, scrolled sideways
+        if RigsOnline.tab == 0: Flickable {
+            height: 44px;
+            content-width: style-row.preferred-width;
+            interactive: style-row.preferred-width > self.width;
+            style-row := HorizontalLayout {
+                spacing: 6px;
+                for name[i] in root.style-names: Chip {
+                    text: name;
+                    selected: root.style-ids[i] == RigsOnline.style;
+                    clicked => {
+                        RigsOnline.show(0, RigsOnline.sort, root.style-ids[i]);
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            min-height: 0px;
+
+            if RigsOnline.rigs.length == 0 && RigsOnline.loading: Text {
+                text: "Loading…";
+                color: Theme.text-secondary;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            if RigsOnline.error != "": EmptyState {
+                icon: "wifi";
+                title: RigsOnline.site + " is not reachable";
+                message: RigsOnline.error;
+            }
+
+            if RigsOnline.rigs.length == 0 && !RigsOnline.loading && RigsOnline.error == "": EmptyState {
+                icon: "info";
+                title: RigsOnline.tab == 1 ? "No favourites yet" : "No rig found";
+                message: RigsOnline.tab == 1 ? "Favourite rigs here or on " + RigsOnline.site + ": they show up here, one tap to install."
+                    : RigsOnline.query != "" || RigsOnline.style != "" ? "Try other words or another style." : "";
+            }
+
+            if RigsOnline.rigs.length > 0 && RigsOnline.error == "": Flickable {
+                width: 100%;
+                height: 100%;
+                content-height: max(self.height, rig-list.preferred-height);
+                interactive: rig-list.preferred-height > self.height;
+                rig-list := VerticalLayout {
+                    alignment: start;
+                    spacing: Theme.space-sm;
+                    for rig[i] in RigsOnline.rigs: RigCard {
+                        rig: rig;
+                        quick-install: RigsOnline.tab == 1;
+                        open => {
+                            RigsOnline.open-rig(i);
+                        }
+                        install => {
+                            RigsOnline.install(rig.slug);
+                        }
+                    }
+                    if RigsOnline.has-more || RigsOnline.count != "": HorizontalLayout {
+                        alignment: center;
+                        spacing: Theme.space-md;
+                        padding-top: Theme.space-xs;
+                        Text {
+                            text: RigsOnline.count;
+                            color: Theme.text-muted;
+                            font-size: Theme.font-small;
+                            vertical-alignment: center;
+                        }
+                        if RigsOnline.has-more: Button {
+                            width: 180px;
+                            text: RigsOnline.loading ? "Loading…" : "Load more";
+                            enabled: !RigsOnline.loading;
+                            clicked => {
+                                RigsOnline.load-more();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if RigsOnline.progress != "" && !RigsOnline.detail-open: Text {
+            text: RigsOnline.progress;
+            color: Theme.warning;
+            font-size: Theme.font-small;
+            overflow: elide;
+        }
+    }
+}
+
+// The screens of openrig.eu over the whole Rigs panel: one rig, the
+// account link, publishing, and the keyboard
+export component RigsOnlineOverlays inherits Rectangle {
+    private property <[string]> style-ids: ["", "clean", "crunch", "rock", "metal", "blues", "jazz", "funk", "country", "ambient", "acoustic", "bass", "other"];
+    private property <[string]> style-names: ["All", "Clean", "Crunch", "Rock", "Metal", "Blues", "Jazz", "Funk", "Country", "Ambient", "Acoustic", "Bass", "Other"];
+    private property <bool> linked: RigsOnline.link-status == "linked";
+
+    // ---------------- One rig ----------------
+    if RigsOnline.detail-open: Rectangle {
+        background: Theme.background;
+        TouchArea { }
+
+        VerticalLayout {
+            padding: Theme.space-lg;
+            spacing: Theme.space-md;
+
+            HorizontalLayout {
+                height: 48px;
+                spacing: Theme.space-md;
+                Button {
+                    horizontal-stretch: 0;
+                    icon: "back";
+                    variant: "ghost";
+                    clicked => {
+                        RigsOnline.detail-open = false;
+                        RigsOnline.progress = "";
+                    }
+                }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: RigsOnline.detail.name;
+                        color: Theme.text-primary;
+                        font-size: Theme.font-title;
+                        font-weight: Theme.weight-semibold;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: RigsOnline.progress != "" ? RigsOnline.progress :
+                            "@" + RigsOnline.detail.author + " · " + RigsOnline.detail.style + " · " + RigsOnline.detail.detail
+                            + " · " + RigsOnline.detail.upvotes + " votes · " + RigsOnline.detail.downloads + " downloads";
+                        color: RigsOnline.progress != "" ? Theme.warning : Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        overflow: elide;
+                    }
+                }
+                if root.linked: Button {
+                    horizontal-stretch: 0;
+                    icon: RigsOnline.detail.favourite ? "check" : "plus";
+                    text: RigsOnline.detail.favourite ? "Favourite" : "Add to favourites";
+                    active: RigsOnline.detail.favourite;
+                    font-size: Theme.font-small;
+                    clicked => {
+                        RigsOnline.toggle-favourite();
+                    }
+                }
+                Button {
+                    horizontal-stretch: 0;
+                    icon: "download";
+                    text: "Install";
+                    variant: "primary";
+                    enabled: !RigsOnline.detail-loading;
+                    clicked => {
+                        RigsOnline.install(RigsOnline.detail.slug);
+                    }
+                }
+            }
+
+            if RigsOnline.detail-loading && RigsOnline.detail-deps.length == 0: Text {
+                vertical-stretch: 1;
+                text: "Loading…";
+                color: Theme.text-secondary;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            if !RigsOnline.detail-loading || RigsOnline.detail-deps.length > 0: HorizontalLayout {
+                vertical-stretch: 1;
+                spacing: Theme.space-lg;
+
+                // Description, versions, link
+                Flickable {
+                    horizontal-stretch: 1;
+                    content-height: max(self.height, about.preferred-height);
+                    interactive: about.preferred-height > self.height;
+                    about := VerticalLayout {
+                        alignment: start;
+                        spacing: Theme.space-sm;
+                        Text {
+                            text: RigsOnline.detail-description != "" ? RigsOnline.detail-description : "No description.";
+                            color: RigsOnline.detail-description != "" ? Theme.text-primary : Theme.text-muted;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
+                        }
+                        if RigsOnline.detail-scenes.length > 0: SectionHeader {
+                            text: "SCENES";
+                        }
+                        for scene in RigsOnline.detail-scenes: Text {
+                            text: "• " + scene;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                            overflow: elide;
+                        }
+                        if RigsOnline.detail-versions != "": SectionHeader {
+                            text: "VERSIONS";
+                        }
+                        if RigsOnline.detail-versions != "": Text {
+                            text: RigsOnline.detail-versions;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: RigsOnline.detail-url;
+                            color: Theme.accent;
+                            font-size: Theme.font-caption;
+                            overflow: elide;
+                        }
+                    }
+                }
+
+                // What it needs
+                VerticalLayout {
+                    width: 46%;
+                    spacing: Theme.space-sm;
+                    SectionHeader {
+                        text: "NEEDS";
+                    }
+                    Flickable {
+                        vertical-stretch: 1;
+                        content-height: max(self.height, dep-list.preferred-height);
+                        interactive: dep-list.preferred-height > self.height;
+                        dep-list := VerticalLayout {
+                            alignment: start;
+                            spacing: Theme.space-xs;
+                            for dep in RigsOnline.detail-deps: DepRow {
+                                dep: dep;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---------------- Account link ----------------
+    if RigsOnline.account-open: Rectangle {
+        background: Theme.scrim;
+        TouchArea {
+            clicked => {
+                if RigsOnline.link-status != "waiting" {
+                    RigsOnline.account-open = false;
+                }
+            }
+        }
+
+        Card {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: min(parent.width - 2 * Theme.space-lg, 640px);
+            height: 280px;
+            background: Theme.surface-raised;
+            TouchArea { }
+
+            VerticalLayout {
+                padding: Theme.space-lg;
+                spacing: Theme.space-md;
+
+                HorizontalLayout {
+                    spacing: Theme.space-md;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.linked ? "Linked to " + RigsOnline.site : "Link this pedalboard";
+                        color: Theme.text-primary;
+                        font-size: Theme.font-title;
+                        font-weight: Theme.weight-semibold;
+                        vertical-alignment: center;
+                    }
+                    if RigsOnline.link-status != "waiting": Button {
+                        horizontal-stretch: 0;
+                        icon: "close";
+                        variant: "ghost";
+                        clicked => {
+                            RigsOnline.account-open = false;
+                        }
+                    }
+                }
+
+                if RigsOnline.link-status == "signed-out" || RigsOnline.link-status == "starting": VerticalLayout {
+                    vertical-stretch: 1;
+                    spacing: Theme.space-md;
+                    Text {
+                        text: "Link it to your " + RigsOnline.site + " account to see your favourites here and publish your presets. Browsing and installing rigs need no account.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        alignment: start;
+                        Button {
+                            icon: "plug";
+                            text: RigsOnline.link-status == "starting" ? "Asking for a code…" : "Link this pedalboard";
+                            variant: "primary";
+                            enabled: RigsOnline.link-status == "signed-out";
+                            clicked => {
+                                RigsOnline.link();
+                            }
+                        }
+                    }
+                }
+
+                if RigsOnline.link-status == "waiting": HorizontalLayout {
+                    vertical-stretch: 1;
+                    spacing: Theme.space-xl;
+                    Rectangle {
+                        width: 152px;
+                        height: 152px;
+                        border-radius: Theme.radius-md;
+                        background: white;
+                        Image {
+                            width: 140px;
+                            height: 140px;
+                            source: RigsOnline.link-qr;
+                            image-rendering: pixelated;
+                        }
+                    }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        spacing: Theme.space-xs;
+                        Text {
+                            text: "Scan the QR code with your phone, or go to";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                        }
+                        Text {
+                            text: RigsOnline.link-url;
+                            color: Theme.accent;
+                            font-size: Theme.font-body;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: "and enter the code";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                        }
+                        Text {
+                            text: RigsOnline.user-code;
+                            color: Theme.text-primary;
+                            font-size: Theme.font-display;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: 3px;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-md;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: "Waiting for approval…";
+                                color: Theme.text-muted;
+                                font-size: Theme.font-small;
+                                vertical-alignment: center;
+                            }
+                            Button {
+                                text: "Cancel";
+                                variant: "ghost";
+                                clicked => {
+                                    RigsOnline.cancel-link();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if root.linked: VerticalLayout {
+                    vertical-stretch: 1;
+                    spacing: Theme.space-md;
+                    Text {
+                        text: "Signed in as @" + RigsOnline.login + ". Unlinking revokes this pedalboard's access; your rigs and favourites stay on the site.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        alignment: start;
+                        Button {
+                            text: "Unlink";
+                            variant: "danger";
+                            clicked => {
+                                RigsOnline.unlink();
+                            }
+                        }
+                    }
+                }
+
+                if RigsOnline.link-error != "": Text {
+                    text: RigsOnline.link-error;
+                    color: Theme.danger;
+                    font-size: Theme.font-small;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+
+    // ---------------- Publish ----------------
+    if RigsOnline.publish-open: Rectangle {
+        background: Theme.background;
+        TouchArea { }
+
+        VerticalLayout {
+            padding: Theme.space-lg;
+            spacing: Theme.space-md;
+
+            HorizontalLayout {
+                height: 48px;
+                spacing: Theme.space-md;
+                Button {
+                    horizontal-stretch: 0;
+                    icon: "back";
+                    variant: "ghost";
+                    enabled: RigsOnline.publish-state != "publishing";
+                    clicked => {
+                        RigsOnline.publish-open = false;
+                    }
+                }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: "Publish \"" + RigsOnline.publish-name + "\"";
+                        color: Theme.text-primary;
+                        font-size: Theme.font-title;
+                        font-weight: Theme.weight-semibold;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: RigsOnline.publish-state == "checking" ? "Checking what it needs…" :
+                            RigsOnline.publish-state == "blocked" ? "Others could not load it: some items are only on this pedalboard" :
+                            RigsOnline.publish-state == "publishing" ? "Publishing…" :
+                            RigsOnline.publish-state == "done" ? "Published on " + RigsOnline.site :
+                            "As @" + RigsOnline.login + ", without your MIDI setup";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        overflow: elide;
+                    }
+                }
+                if RigsOnline.publish-state == "ready" || RigsOnline.publish-state == "failed": Button {
+                    horizontal-stretch: 0;
+                    icon: "share";
+                    text: RigsOnline.own-rig != "" && RigsOnline.as-version ? "Publish version" : "Publish";
+                    variant: "primary";
+                    clicked => {
+                        RigsOnline.publish();
+                    }
+                }
+                if RigsOnline.publish-state == "done": Button {
+                    horizontal-stretch: 0;
+                    icon: "check";
+                    text: "Done";
+                    variant: "primary";
+                    clicked => {
+                        RigsOnline.publish-open = false;
+                    }
+                }
+            }
+
+            if RigsOnline.publish-message != "": Rectangle {
+                height: 36px;
+                border-radius: Theme.radius-md;
+                background: (RigsOnline.publish-state == "done" ? Theme.success : Theme.warning).with-alpha(0.14);
+                HorizontalLayout {
+                    padding-left: Theme.space-md;
+                    padding-right: Theme.space-md;
+                    Text {
+                        text: RigsOnline.publish-message;
+                        color: RigsOnline.publish-state == "done" ? Theme.success : Theme.warning;
+                        font-size: Theme.font-small;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            if RigsOnline.publish-state == "blocked": Flickable {
+                vertical-stretch: 1;
+                content-height: max(self.height, blockers.preferred-height);
+                interactive: blockers.preferred-height > self.height;
+                blockers := VerticalLayout {
+                    alignment: start;
+                    spacing: Theme.space-xs;
+                    Text {
+                        text: "Remove these blocks from the preset, or use plugins of the store and models of TONE3000, then try again:";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                    for blocker in RigsOnline.publish-blockers: Text {
+                        text: "• " + blocker;
+                        color: Theme.warning;
+                        font-size: Theme.font-small;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            if RigsOnline.publish-state == "done": VerticalLayout {
+                vertical-stretch: 1;
+                alignment: center;
+                spacing: Theme.space-sm;
+                Text {
+                    text: "Share it with this address:";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-small;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: RigsOnline.publish-url;
+                    color: Theme.accent;
+                    font-size: Theme.font-title;
+                    horizontal-alignment: center;
+                    overflow: elide;
+                }
+            }
+
+            if RigsOnline.publish-state == "ready" || RigsOnline.publish-state == "failed" || RigsOnline.publish-state == "publishing": VerticalLayout {
+                vertical-stretch: 1;
+                spacing: Theme.space-sm;
+                // A new version keeps the style of the rig
+                if RigsOnline.own-rig == "" || !RigsOnline.as-version: VerticalLayout {
+                    spacing: Theme.space-sm;
+                    SectionHeader {
+                        text: "STYLE";
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        for i in 6: Chip {
+                            horizontal-stretch: 1;
+                            text: root.style-names[i + 1];
+                            selected: RigsOnline.publish-style == root.style-ids[i + 1];
+                            clicked => {
+                                RigsOnline.publish-style = root.style-ids[i + 1];
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        for i in 6: Chip {
+                            horizontal-stretch: 1;
+                            text: root.style-names[i + 7];
+                            selected: RigsOnline.publish-style == root.style-ids[i + 7];
+                            clicked => {
+                                RigsOnline.publish-style = root.style-ids[i + 7];
+                            }
+                        }
+                }
+                }
+                SectionHeader {
+                    text: "DESCRIPTION";
+                }
+                Field {
+                    text: RigsOnline.publish-description;
+                    placeholder: "A few words: the sound, the gear, the song";
+                    edit => {
+                        RigsOnline.draft = RigsOnline.publish-description;
+                        RigsOnline.editing = "description";
+                    }
+                }
+                if RigsOnline.own-rig != "": HorizontalLayout {
+                    spacing: Theme.space-md;
+                    height: 44px;
+                    Text {
+                        horizontal-stretch: 1;
+                        text: RigsOnline.as-version ? "New version of your rig \"" + RigsOnline.own-rig + "\""
+                            : "A new rig, next to your \"" + RigsOnline.own-rig + "\"";
+                        color: Theme.text-primary;
+                        font-size: Theme.font-small;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Toggle {
+                        y: (parent.height - self.height) / 2;
+                        checked: RigsOnline.as-version;
+                        toggled(on) => {
+                            RigsOnline.as-version = on;
+                        }
+                    }
+                }
+                if RigsOnline.own-rig != "" && RigsOnline.as-version: Field {
+                    text: RigsOnline.changelog;
+                    placeholder: "What changed (optional)";
+                    edit => {
+                        RigsOnline.draft = RigsOnline.changelog;
+                        RigsOnline.editing = "changelog";
+                    }
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+            }
+        }
+    }
+
+    // Search, description, changelog: the on-screen keyboard
+    if RigsOnline.editing != "": Rectangle {
+        background: Theme.scrim;
+        TouchArea { }
+        VerticalLayout {
+            alignment: end;
+            VirtualKeyboard {
+                current-text: RigsOnline.draft;
+                placeholder: RigsOnline.editing == "search" ? "Name, style, gear, author…" :
+                    RigsOnline.editing == "description" ? "Description" : "What changed";
+                submit-label: RigsOnline.editing == "search" ? "Search" : "Done";
+                text-changed(t) => {
+                    RigsOnline.draft = t;
+                }
+                submit => {
+                    if RigsOnline.editing == "search" {
+                        RigsOnline.search(RigsOnline.draft);
+                    } else if RigsOnline.editing == "description" {
+                        RigsOnline.publish-description = RigsOnline.draft;
+                    } else {
+                        RigsOnline.changelog = RigsOnline.draft;
+                    }
+                    RigsOnline.editing = "";
+                }
+                cancel => {
+                    RigsOnline.editing = "";
+                }
+            }
+        }
+    }
+}

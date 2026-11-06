@@ -52,6 +52,50 @@ USB drives are found where the desktop mounts them: `/media/<user>/*` and
 image does not mount drives by itself yet, so there, and on Windows, copy
 files to `<data>/rigs` instead.
 
+## On openrig.eu
+
+The Rigs panel has two tabs: **This pedalboard** (export and import, as
+above) and **openrig.eu**, the community site. Builds without the
+`rigs-online` feature have no second tab.
+
+- **Browse**: search (on-screen keyboard), sort (trending, new, top of
+  the week, downloads), style chips and pages of 24 rigs with **Load
+  more**. Each card shows the name, author, style, votes,
+  downloads, and a STORE or TONE3000 badge when the rig needs them.
+- **Rig detail**: description, scenes, versions and the rig's address on
+  the site, with what it needs on the right (each item marked when this
+  pedalboard already has it). **Install** downloads the `.openrig` file
+  and runs it through the same import as a file (plan, store, TONE3000,
+  new preset), with its progress and errors.
+- **Link**: the account button shows a code and a QR code for
+  `openrig.eu/link`. Approve it on the site, signed in, and the
+  pedalboard shows **Signed in as @login**. The code expires after a few
+  minutes; **Cancel** stops waiting. **Unlink** revokes the token on the
+  site and deletes it here.
+- When linked, **My favourites** lists your favourite rigs (tap one, then
+  **Install**), and **Add to favourites** on a rig detail adds it (tap
+  **Favourite** again to remove it).
+- **Publish preset** exports the current preset (MIDI CCs left out), asks
+  for a style and a short description, and publishes it. If you already
+  published a rig with that name, it offers to publish a new version of
+  it, with an optional changelog. The site's address of the rig is shown
+  when done. Items only this pedalboard has (`local` sources below)
+  cannot be had by others, so they block publishing and are listed.
+
+The account is kept in `<data>/openrig.json`, readable by its owner only
+(mode 0600 on Linux and macOS), and the token is never logged. A 401 from
+the site (token revoked from the site) unlinks the pedalboard.
+
+The site is `https://openrig.eu`, or `$OPENRIG_RIGS_URL` (for a local
+server, `http://` is accepted; any other address must be `https://`). An
+account linked to one site is not used with another.
+
+Every call runs on a worker thread, with a 10 s connection and a 30 s
+overall timeout: without network the tab says so and the pedalboard keeps
+playing. Browsing needs no account; favourites and publishing do. The
+site's API is described in the community site repository
+(`docs/API.md`).
+
 ## Where blocks come from
 
 When a rig is exported, each plugin and file is resolved to a source:
@@ -68,7 +112,8 @@ left out of the rig, and the export note says so.
 
 ## Safety
 
-Importing never runs anything from the file. The rig is size-checked
+Importing never runs anything from the file, whether it comes from a
+drive or from openrig.eu. The rig is size-checked
 (1 MiB at most) and validated by the crate before anything is installed.
 Paths must be plain relative paths (no `..`, no absolute or drive paths,
 no control characters). Downloads go where the app decides, not where the

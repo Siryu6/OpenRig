@@ -12,6 +12,8 @@ mod live_ui;
 mod midi_io;
 mod midi_ui;
 mod plugin_view;
+#[cfg(feature = "rigs-online")]
+mod rigs_online_ui;
 mod rigs_ui;
 mod routing_ui;
 mod scope_ui;
@@ -115,6 +117,26 @@ pub(crate) fn report<T>(app: &App, result: Result<T>) -> Option<T> {
             None
         }
     }
+}
+
+/// QR code of `text`, black on white with a quiet zone
+#[cfg(any(feature = "tone3000", feature = "rigs-online"))]
+pub(crate) fn qr_image(text: &str) -> slint::Image {
+    use qrcodegen::{QrCode, QrCodeEcc};
+    let Ok(code) = QrCode::encode_text(text, QrCodeEcc::Medium) else {
+        return slint::Image::default();
+    };
+    const BORDER: i32 = 2;
+    const SCALE: i32 = 4;
+    let side = (code.size() + 2 * BORDER) * SCALE;
+    let mut buffer = slint::SharedPixelBuffer::<slint::Rgb8Pixel>::new(side as u32, side as u32);
+    for (i, pixel) in buffer.make_mut_slice().iter_mut().enumerate() {
+        let x = (i as i32 % side) / SCALE - BORDER;
+        let y = (i as i32 / side) / SCALE - BORDER;
+        let value = if code.get_module(x, y) { 0 } else { 255 };
+        *pixel = slint::Rgb8Pixel::new(value, value, value);
+    }
+    slint::Image::from_rgb8(buffer)
 }
 
 /// Run `f` on the UI thread, if the app is still there
@@ -1744,6 +1766,8 @@ fn main() -> Result<()> {
     catalog_ui::setup(&app, &state);
     live_ui::setup(&app, &state);
     rigs_ui::setup(&app, &state);
+    #[cfg(feature = "rigs-online")]
+    rigs_online_ui::setup(&app, &state);
     midi_ui::setup(&app, &state);
     let _routing_meters = routing_ui::setup(&app, &state, engine.as_deref());
     let _block_sound = block_sound::start(&app, &state);

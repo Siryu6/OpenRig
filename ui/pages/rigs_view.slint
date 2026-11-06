@@ -1,6 +1,9 @@
 import { Theme } from "../theme.slint";
-import { Badge, Button, EmptyState, Icon, SectionHeader, Toggle } from "../components/controls.slint";
+import { Badge, Button, EmptyState, Icon, SectionHeader, Segmented, Toggle } from "../components/controls.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
+import { RigsOnline, RigsOnlineOverlays, RigsOnlinePane } from "rigs_online.slint";
+
+export { RigsOnline }
 
 // A .openrig file found in the rigs folder or on a USB drive
 export struct RigFileInfo {
@@ -35,6 +38,7 @@ export global Rigs {
     in-out property <[RigItem]> plan-items: [];
     in-out property <string> progress: "";
     in-out property <bool> installed: false;     // the rig was installed
+    in-out property <int> tab: 0;                // 0 this pedalboard, 1 openrig.eu
 
     callback opened();
     callback export(bool); // to the USB drive too
@@ -128,7 +132,8 @@ export component RigsPanel inherits Rectangle {
                     text: "RIGS";
                 }
                 Text {
-                    text: "Presets with the plugins and models they need, to share";
+                    text: Rigs.tab == 0 ? "Presets with the plugins and models they need, to share"
+                        : "Rigs shared by OpenRig players, installed with what they need";
                     color: Theme.text-secondary;
                     font-size: Theme.font-small;
                     overflow: elide;
@@ -140,185 +145,210 @@ export component RigsPanel inherits Rectangle {
                 variant: "ghost";
                 enabled: !Rigs.busy;
                 clicked => {
-                    Rigs.opened();
-                }
-            }
-        }
-
-        // Export the current chain
-        Rectangle {
-            height: 72px;
-            vertical-stretch: 0;
-            border-radius: Theme.radius-lg;
-            background: Theme.panel;
-            border-width: 1px;
-            border-color: Theme.border;
-            HorizontalLayout {
-                padding-left: Theme.space-md;
-                padding-right: Theme.space-md;
-                spacing: Theme.space-md;
-                VerticalLayout {
-                    horizontal-stretch: 1;
-                    alignment: center;
-                    spacing: 2px;
-                    Text {
-                        text: "Export \"" + Rigs.preset-name + "\"";
-                        color: Theme.text-primary;
-                        font-size: Theme.font-body;
-                        font-weight: Theme.weight-semibold;
-                        overflow: elide;
-                    }
-                    Text {
-                        text: Rigs.note != "" ? Rigs.note : "The chain as it is now, without your MIDI setup unless included.";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-caption;
-                        wrap: word-wrap;
-                        overflow: elide;
-                    }
-                }
-                // Who exported it, set once and kept
-                VerticalLayout {
-                    alignment: center;
-                    horizontal-stretch: 0;
-                    spacing: 0px;
-                    Text {
-                        text: "Author";
-                        color: Theme.text-muted;
-                        font-size: Theme.font-caption;
-                        horizontal-alignment: center;
-                    }
-                    Button {
-                        max-width: 160px;
-                        icon: "edit";
-                        text: Rigs.author != "" ? Rigs.author : "Your name";
-                        variant: "ghost";
-                        font-size: Theme.font-small;
-                        enabled: !Rigs.busy;
-                        clicked => {
-                            root.author-text = Rigs.author;
-                            root.editing-author = true;
-                        }
-                    }
-                }
-                VerticalLayout {
-                    alignment: center;
-                    horizontal-stretch: 0;
-                    spacing: 0px;
-                    Text {
-                        text: "MIDI CCs";
-                        color: Theme.text-muted;
-                        font-size: Theme.font-caption;
-                        horizontal-alignment: center;
-                    }
-                    Toggle {
-                        checked: Rigs.include-midi;
-                        toggled(on) => {
-                            Rigs.include-midi = on;
-                        }
-                    }
-                }
-                VerticalLayout {
-                    alignment: center;
-                    horizontal-stretch: 0;
-                    Button {
-                        icon: "save";
-                        text: "Export";
-                        variant: "primary";
-                        enabled: !Rigs.busy;
-                        clicked => {
-                            Rigs.export(false);
-                        }
-                    }
-                }
-                if Rigs.usb: VerticalLayout {
-                    alignment: center;
-                    horizontal-stretch: 0;
-                    Button {
-                        icon: "download";
-                        text: "To USB";
-                        enabled: !Rigs.busy;
-                        clicked => {
-                            Rigs.export(true);
-                        }
+                    if Rigs.tab == 0 {
+                        Rigs.opened();
+                    } else {
+                        RigsOnline.opened();
                     }
                 }
             }
         }
 
-        SectionHeader {
+        if RigsOnline.available: Segmented {
             vertical-stretch: 0;
-            text: "IMPORT";
+            options: ["This pedalboard", "openrig.eu"];
+            current-index: Rigs.tab;
+            activated(i) => {
+                Rigs.tab = i;
+                if i == 1 {
+                    RigsOnline.opened();
+                }
+            }
         }
 
-        Rectangle {
+        if Rigs.tab == 1: RigsOnlinePane {
             vertical-stretch: 1;
-            min-height: 0px;
-            if Rigs.files.length == 0: Rectangle {
-                width: 100%;
-                height: 100%;
-                EmptyState {
-                    icon: "folder";
-                    title: "No rigs yet";
-                    message: "Rigs you export show here, with the .openrig files of a USB drive.";
+        }
+
+        if Rigs.tab == 0: VerticalLayout {
+            vertical-stretch: 1;
+            spacing: Theme.space-md;
+
+            // Export the current chain
+            Rectangle {
+                height: 72px;
+                vertical-stretch: 0;
+                border-radius: Theme.radius-lg;
+                background: Theme.panel;
+                border-width: 1px;
+                border-color: Theme.border;
+                HorizontalLayout {
+                    padding-left: Theme.space-md;
+                    padding-right: Theme.space-md;
+                    spacing: Theme.space-md;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            text: "Export \"" + Rigs.preset-name + "\"";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-body;
+                            font-weight: Theme.weight-semibold;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: Rigs.note != "" ? Rigs.note : "The chain as it is now, without your MIDI setup unless included.";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-caption;
+                            wrap: word-wrap;
+                            overflow: elide;
+                        }
+                    }
+                    // Who exported it, set once and kept
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 0;
+                        spacing: 0px;
+                        Text {
+                            text: "Author";
+                            color: Theme.text-muted;
+                            font-size: Theme.font-caption;
+                            horizontal-alignment: center;
+                        }
+                        Button {
+                            max-width: 160px;
+                            icon: "edit";
+                            text: Rigs.author != "" ? Rigs.author : "Your name";
+                            variant: "ghost";
+                            font-size: Theme.font-small;
+                            enabled: !Rigs.busy;
+                            clicked => {
+                                root.author-text = Rigs.author;
+                                root.editing-author = true;
+                            }
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 0;
+                        spacing: 0px;
+                        Text {
+                            text: "MIDI CCs";
+                            color: Theme.text-muted;
+                            font-size: Theme.font-caption;
+                            horizontal-alignment: center;
+                        }
+                        Toggle {
+                            checked: Rigs.include-midi;
+                            toggled(on) => {
+                                Rigs.include-midi = on;
+                            }
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 0;
+                        Button {
+                            icon: "save";
+                            text: "Export";
+                            variant: "primary";
+                            enabled: !Rigs.busy;
+                            clicked => {
+                                Rigs.export(false);
+                            }
+                        }
+                    }
+                    if Rigs.usb: VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 0;
+                        Button {
+                            icon: "download";
+                            text: "To USB";
+                            enabled: !Rigs.busy;
+                            clicked => {
+                                Rigs.export(true);
+                            }
+                        }
+                    }
                 }
             }
 
-            if Rigs.files.length > 0: Flickable {
-                width: 100%;
-                height: 100%;
-                content-height: max(self.height, rig-list.preferred-height);
-                interactive: rig-list.preferred-height > self.height;
-                rig-list := VerticalLayout {
-                    alignment: start;
-                    spacing: Theme.space-sm;
-                    for file[i] in Rigs.files: row := Rectangle {
-                        height: 56px;
-                        border-radius: Theme.radius-lg;
-                        background: row-ta.pressed ? Theme.surface-hover : Theme.panel;
-                        border-width: 1px;
-                        border-color: Theme.border;
-                        opacity: file.readable ? 1.0 : 0.6;
-                        row-ta := TouchArea {
-                            enabled: file.readable && !Rigs.busy;
-                            clicked => {
-                                Rigs.open-file(i);
-                            }
-                        }
-                        HorizontalLayout {
-                            padding-left: Theme.space-md;
-                            padding-right: Theme.space-md;
-                            spacing: Theme.space-md;
-                            VerticalLayout {
-                                horizontal-stretch: 1;
-                                alignment: center;
-                                spacing: 2px;
-                                Text {
-                                    text: file.name;
-                                    color: Theme.text-primary;
-                                    font-size: Theme.font-body;
-                                    font-weight: Theme.weight-semibold;
-                                    overflow: elide;
-                                }
-                                Text {
-                                    text: file.detail;
-                                    color: file.readable ? Theme.text-secondary : Theme.danger;
-                                    font-size: Theme.font-small;
-                                    overflow: elide;
+            SectionHeader {
+                vertical-stretch: 0;
+                text: "IMPORT";
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+                min-height: 0px;
+                if Rigs.files.length == 0: Rectangle {
+                    width: 100%;
+                    height: 100%;
+                    EmptyState {
+                        icon: "folder";
+                        title: "No rigs yet";
+                        message: "Rigs you export show here, with the .openrig files of a USB drive.";
+                    }
+                }
+
+                if Rigs.files.length > 0: Flickable {
+                    width: 100%;
+                    height: 100%;
+                    content-height: max(self.height, rig-list.preferred-height);
+                    interactive: rig-list.preferred-height > self.height;
+                    rig-list := VerticalLayout {
+                        alignment: start;
+                        spacing: Theme.space-sm;
+                        for file[i] in Rigs.files: row := Rectangle {
+                            height: 56px;
+                            border-radius: Theme.radius-lg;
+                            background: row-ta.pressed ? Theme.surface-hover : Theme.panel;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            opacity: file.readable ? 1.0 : 0.6;
+                            row-ta := TouchArea {
+                                enabled: file.readable && !Rigs.busy;
+                                clicked => {
+                                    Rigs.open-file(i);
                                 }
                             }
-                            if file.usb: VerticalLayout {
-                                alignment: center;
-                                horizontal-stretch: 0;
-                                Badge {
-                                    text: "USB";
+                            HorizontalLayout {
+                                padding-left: Theme.space-md;
+                                padding-right: Theme.space-md;
+                                spacing: Theme.space-md;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text {
+                                        text: file.name;
+                                        color: Theme.text-primary;
+                                        font-size: Theme.font-body;
+                                        font-weight: Theme.weight-semibold;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: file.detail;
+                                        color: file.readable ? Theme.text-secondary : Theme.danger;
+                                        font-size: Theme.font-small;
+                                        overflow: elide;
+                                    }
                                 }
-                            }
-                            if file.readable: VerticalLayout {
-                                alignment: center;
-                                horizontal-stretch: 0;
-                                Icon {
-                                    name: "chevron-right";
-                                    color: Theme.text-secondary;
+                                if file.usb: VerticalLayout {
+                                    alignment: center;
+                                    horizontal-stretch: 0;
+                                    Badge {
+                                        text: "USB";
+                                    }
+                                }
+                                if file.readable: VerticalLayout {
+                                    alignment: center;
+                                    horizontal-stretch: 0;
+                                    Icon {
+                                        name: "chevron-right";
+                                        color: Theme.text-secondary;
+                                    }
                                 }
                             }
                         }
@@ -423,6 +453,9 @@ export component RigsPanel inherits Rectangle {
             }
         }
     }
+
+    // openrig.eu: one rig, account link, publishing
+    if !Rigs.plan-open && Rigs.tab == 1: RigsOnlineOverlays { }
 
     // Author name: title + keyboard
     if root.editing-author: Rectangle {

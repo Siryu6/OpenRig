@@ -9,11 +9,36 @@ use std::path::Path;
 
 /// Write `contents` to `path` through a temporary file and a rename
 pub fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
+    write_through_tmp(path, contents, false)
+}
+
+/// As `write_atomic`, for a file only its owner can read and write
+/// (credentials; the mode applies on Unix)
+pub fn write_private(path: &Path, contents: &[u8]) -> Result<()> {
+    write_through_tmp(path, contents, true)
+}
+
+fn write_through_tmp(path: &Path, contents: &[u8], private: bool) -> Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let tmp = Path::new(&tmp);
     let file = (|| {
-        let mut file = fs::File::create(tmp)?;
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        if private {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(tmp)?;
+        // The mode above only applies to a new file (a stale one may be left)
+        #[cfg(unix)]
+        if private {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        }
+        #[cfg(not(unix))]
+        let _ = private;
         std::io::Write::write_all(&mut file, contents)?;
         file.sync_all()
     })();
@@ -71,6 +96,22 @@ mod tests {
         assert!(!dir.join("sub").join("value.json.tmp").exists());
         fs::write(&path, "not json").unwrap();
         assert!(load_json::<Vec<u32>>(&path).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_files_are_for_the_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("pedalboard-private-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("secret.json");
+        fs::write(&path, "old").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        write_private(&path, b"new").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
         fs::remove_dir_all(dir).unwrap();
     }
 }
