@@ -13,6 +13,8 @@
 
 pub mod export;
 pub mod import;
+#[cfg(feature = "rigs-online")]
+pub mod online;
 
 pub use openrig_rig as format;
 
