@@ -25,7 +25,10 @@ git_tag_name = "v{{ version }}"
 git_release_name = "v{{ version }}"
 
 # The rig format crate is versioned by hand (its README says what a
-# version change means); it has no release of its own
+# version change means); it has no release of its own. Its own tag name:
+# with the default one (v{{ version }}, the crate is not published) the app's
+# vX.Y.Z tags were taken for its releases, and the crate is not in them
 [[package]]
 name = "openrig-rig"
 release = false
+git_tag_name = "openrig-rig-v{{ version }}"
