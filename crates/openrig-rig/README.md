@@ -35,9 +35,29 @@ Example: [`fixtures/plexi-crunch.openrig`](fixtures/plexi-crunch.openrig).
   "format": 1,
   "meta": { … },
   "preset": { … },
-  "dependencies": { "plugins": [ … ], "files": [ … ] }
+  "dependencies": { "plugins": [ … ], "files": [ … ] },
+  "display": { "blocks": { … } }
 }
 ```
+
+| Field | | |
+|---|---|---|
+| `format` | integer | Required |
+| `meta` | object | Required (its `name` is) |
+| `preset` | object | Required |
+| `dependencies` | object | Optional: absent reads as empty, which only suits a chain without blocks |
+| `display` | object | Optional, added after the first rigs: absent in older files |
+
+Conventions for the whole file:
+
+- **Characters** in the limits below are Unicode scalar values (Rust
+  `char`s), not bytes; byte limits say bytes.
+- **Instance ids** (`instance_id`, `blocks`, `stomps`) are unsigned
+  integers. Used as object keys (`chain.files`, `chain.colors`,
+  `display.blocks`…) they are the same numbers written as decimal
+  strings: `"3"`.
+- An **optional** field may be absent; a string field that is absent reads
+  as `""`, a list as `[]`. Writers may leave out empty optional fields.
 
 ### `format`
 
@@ -49,12 +69,12 @@ a file without it, with `0`, or with a number higher than the one it knows
 
 | Field | Type | |
 |---|---|---|
-| `name` | string | Required, 1–80 characters. Name of the rig, and of the preset created on import |
-| `description` | string | Up to 4000 characters |
-| `tags` | string[] | Up to 16 tags of 1–32 characters, lower case by convention |
-| `author` | string | Optional free text (the site shows its own account name instead) |
-| `app_version` | string | OpenRig version that exported it, `"0.11.0"` |
-| `created` | string | Export time, RFC 3339 in UTC (`"2026-11-06T18:30:00Z"`); empty when the clock was not set |
+| `name` | string | Required, 1–80 characters, not only spaces. Name of the rig, and of the preset created on import |
+| `description` | string | Optional, up to 4000 characters |
+| `tags` | string[] | Optional, up to 16 tags of 1–32 characters, not only spaces. OpenRig writes them trimmed and lower case |
+| `author` | string | Optional, up to 200 characters: the name the exporting user set on their pedalboard, free text and unverified. A site may show its own account name instead |
+| `app_version` | string | Optional, up to 200 characters: OpenRig version that exported it, `"0.11.0"` |
+| `created` | string | Optional, up to 200 characters: export time, RFC 3339 in UTC (`"2026-11-06T18:30:00Z"`); empty or absent when the clock was not set |
 
 ### `preset`
 
@@ -81,7 +101,7 @@ Fields the view reads (everything else is carried untouched):
 | `Split.ab_select_a`, `mix_ratio`, `enabled` | Split settings |
 | `chain.files` | `{"<instance_id>": "<path>"}`: the model or impulse response of a built-in block |
 | `chain.param_files` | `{"<instance_id>": {"<parameter URI>": "<path>"}}`: files of LV2 plugins |
-| `chain.colors` | `{"<instance_id>": "<colour name>"}` |
+| `chain.colors` | `{"<instance_id>": "<colour name>"}`: colours the user chose; a name outside the palette (see [`display`](#display)) is ignored by the app. The colour actually drawn is in `display` |
 | `chain.scenes` | Scene slots: `null` (never used) or an object with a `name` |
 | `chain.scene` | Slot the preset opens on |
 | `chain.bpm` | Tempo (120 when absent) |
@@ -105,21 +125,87 @@ All file paths are **relative to the models directory**, `/`-separated.
 ```
 
 - `plugins`: one entry per plugin URI the chain uses (listed once even when
-  several blocks use it). `name` is the display name.
+  several blocks use it).
 - `files`: one entry per path in `chain.files` and `chain.param_files`.
-  `blocks` lists the instance ids that load it.
+
+| Field | Type | |
+|---|---|---|
+| `plugins[].uri` | string | Required, up to 400 characters: the URI as in the chain |
+| `plugins[].name` | string | Optional, up to 200 characters: display name ("Amp", "ZamComp") |
+| `plugins[].source` | object | Required, see below |
+| `files[].path` | string | Required: the path as in the chain, safe (see [Paths](#paths)) |
+| `files[].blocks` | integer[] | Optional: instance ids of the blocks that load it |
+| `files[].source` | object | Required, see below |
 
 `source` is one of:
 
 | `type` | Fields | For | Meaning |
 |---|---|---|---|
-| `builtin` | `kind` | plugins | Block built into OpenRig; `kind` is the end of its URI (`nam`, `nam-amp-cab`, `nam-pedal`, `ir`, `ir-space`, `send`, `return`) |
-| `store` | `package`, `version`, `plugin_id`? | plugins | LV2 plugin of the [OpenRig catalog](https://github.com/Siryu6/openrig-catalog): package id and version installed on the exporting board, and the catalog entry id. On import, the current version of the package is installed (settings are kept by port symbol) |
-| `tone3000` | `tone_id`, `model_id`?, `tone_title`, `model_name`, `url`, `license`?, `creator`, `gear`, `format` | files | A model or IR from [TONE3000](https://www.tone3000.com). `tone_id` and `model_id` are TONE3000 API ids: `GET /api/v1/tones/{tone_id}`, `GET /api/v1/models/{model_id}`, whose `model_url` downloads the file with the user's token. `gear` is the TONE3000 gear type (`amp`, `amp-cab`, `pedal`, `outboard`, `cab`, `space`, `experimental`), `format` `nam` or `ir`. `model_id` is absent when the exporting board did not know it: the importer then looks for `model_name` among the models of the tone |
-| `local` | `what`, `name` | both | Only on the exporting board (a plugin copied by hand, a model of one's own). `what`: `plugin`, `model`, `impulse response`, `file`. Such a rig imports without it, and **cannot be published** |
+| `builtin` | `kind` | plugins | Block built into OpenRig; `kind` (required, non-empty) is the end of its URI (`nam`, `nam-amp-cab`, `nam-pedal`, `ir`, `ir-space`, `send`, `return`) |
+| `store` | `package`, `version`, `plugin_id`? | plugins | LV2 plugin of the [OpenRig catalog](https://github.com/Siryu6/openrig-catalog): package id and version installed on the exporting board (both required, non-empty), and the catalog entry id (optional). On import, the current version of the package is installed (settings are kept by port symbol) |
+| `tone3000` | `tone_id`, `model_name`, `model_id`?, `tone_title`?, `url`?, `license`?, `creator`?, `gear`?, `format`? | files | A model or IR from [TONE3000](https://www.tone3000.com). Required: `tone_id` (not 0) and `model_name` (non-empty); the texts are up to 400 characters. `tone_id` and `model_id` are TONE3000 API ids: `GET /api/v1/tones/{tone_id}`, `GET /api/v1/models/{model_id}`, whose `model_url` downloads the file with the user's token. `gear` is the TONE3000 gear type (`amp`, `amp-cab`, `pedal`, `outboard`, `cab`, `space`, `experimental`), `format` `nam` or `ir` (OpenRig imports no other). `model_id` is absent when the exporting board did not know it: the importer then looks for `model_name` among the models of the tone. `license` is TONE3000's text (`"CC BY 4.0"`), absent when unknown |
+| `local` | `what`, `name` | both | Only on the exporting board (a plugin copied by hand, a model of one's own). `what`: `plugin`, `model`, `impulse response`, `file`; `name` the plugin or file name, for people. Such a rig imports without it, and **cannot be published** |
 
 A `type` this crate does not know (a newer format) reads as
 `Source::Unknown`: treated as not available, not as an error.
+
+### `display`
+
+How the exporting app draws each block in its rack. OpenRig writes an
+entry for **every plugin block** of every rig it exports. **Renderers
+must use `kind` for the shape and `color` / `color_hex` for the colour as
+written**, and never infer them from the plugin name or URI: the rig
+records what its app drew.
+
+The field is optional only for rigs written before it: for a file without
+`display`, or a block without an entry, a renderer may fall back to
+guessing (from `source.kind` of a built-in block, the plugin name, the
+palette defaults below). That fallback is never used when the entry is
+there. The view reads such missing fields as `None`.
+
+```json
+"display": {
+  "blocks": {
+    "2": { "kind": "amp", "category": "simulator", "color": "red", "color_hex": "#9a3a33" },
+    "1": { "kind": "plugin", "category": "dynamics", "lv2_class": "CompressorPlugin",
+           "color": "pink", "color_hex": "#8c4a64" }
+  }
+}
+```
+
+`blocks` holds one entry per **plugin block** of the chain (not splits),
+keyed by instance id:
+
+| Field | Type | |
+|---|---|---|
+| `kind` | string | Required. Shape in the rack: `amp` (head with its control panel), `combo` (amp with a grille: amp + cab captures), `cab` (speaker cabinet), `pedal` (stompbox), `space` (room or reverb, rounded box), `send`, `return` (jack plates), `plugin` (plain card, every other plugin). Draw a kind you do not know as `plugin` |
+| `category` | string | Optional. Family of the plugin in OpenRig: `dynamics`, `distortion`, `filter`, `modulation`, `delay`, `reverb`, `simulator`, `utility`, `generator`, `routing`. Absent when the exporting board did not know it (plugin not installed there, or of no known family) |
+| `lv2_class` | string | Optional. LV2 class of the plugin by its local name (`CompressorPlugin`, `ReverbPlugin`…), absent for built-in blocks and plugins without one |
+| `color` | string | Required. Name of the colour the block is drawn in: the user's choice from `chain.colors` when it is one of the palette, else its family's. One of the palette below |
+| `color_hex` | string | Required. The same colour, `#rrggbb` |
+
+Texts are up to 200 characters. The palette (OpenRig's `BLOCK_COLORS`;
+frames and trims of the blocks, the face of the gear is dark):
+
+| `color` | `color_hex` | Default for |
+|---|---|---|
+| `red` | `#9a3a33` | `amp`, `combo`, category `simulator` |
+| `orange` | `#a35a2c` | `cab` |
+| `yellow` | `#9a8136` | `pedal`, category `distortion` |
+| `green` | `#4e7c4a` | category `delay` |
+| `teal` | `#30706e` | `space`, category `reverb` |
+| `blue` | `#3e5a87` | category `modulation` |
+| `purple` | `#644f86` | category `filter` |
+| `pink` | `#8c4a64` | category `dynamics` |
+| `silver` | `#696c72` | anything else (`utility`, `generator`, `routing`, unknown) |
+
+The default applies the first matching row from the top of this order:
+kind `amp`/`combo` → red, `cab` → orange, `pedal` or `distortion` → yellow,
+`space` or `reverb` → teal, `simulator` → red, `delay` → green,
+`modulation` → blue, `filter` → purple, `dynamics` → pink, else silver.
+This table and order are only the fallback for files without `display`:
+renderers use `color_hex` as written, since the palette may change in a
+later app.
 
 ## Validation
 
@@ -138,7 +224,7 @@ message }` (`at` is a JSON pointer into the rig). `Report::is_valid()` and
 | `unsupported_format` | invalid | `format` not known |
 | `missing_name` | invalid | Empty name |
 | `too_long` | invalid | A text over its limit, an empty tag |
-| `too_many` | invalid | Over 16 tags, 128 nodes (blocks + splits), splits nested over 8 deep, 512 dependencies |
+| `too_many` | invalid | Over 16 tags, 128 nodes (blocks + splits), splits nested over 8 deep, 512 dependencies, 128 `display` entries |
 | `invalid_preset` | invalid | `preset` not an object, or a node of an unknown kind |
 | `unsafe_path` | invalid | A path in the preset or the manifest fails `is_safe_relative_path` |
 | `missing_dependency` | invalid | A plugin URI or file path of the preset has no manifest entry |
@@ -149,6 +235,7 @@ message }` (`at` is a JSON pointer into the rig). `Report::is_valid()` and
 | `unused_dependency` | warning | A manifest entry the preset does not use |
 | `missing_model_id` | warning | A `tone3000` file without `model_id` |
 | `empty_chain` | warning | No block |
+| `bad_display` | warning | A `display` entry for no plugin block of the chain, without `kind`, or without a `color` name and a `#rrggbb` `color_hex` (the view ignores its colour) |
 
 The codes are serialized in `snake_case`; the enum is `#[non_exhaustive]`,
 new codes may come in a minor version.
@@ -171,6 +258,10 @@ Nothing in a rig is ever executed.
 - **Readers ignore unknown fields**, at every level, and read unknown
   sources as `Unknown`. New optional fields and new source types are added
   without changing `format`.
+- A server that stores or serves rigs should keep the **bytes it
+  received**: reading a rig into `Rig` and writing it again keeps
+  `preset` whole but drops fields of `meta`, `dependencies` and `display`
+  that this version of the crate does not know.
 - `format` changes only when an older reader would misread a rig (a field
   changing meaning or type, a required field). Readers refuse a newer
   `format` with a clear message ("needs a newer OpenRig").
@@ -190,8 +281,12 @@ let publishable = report.is_publishable();
 
 let chain = rig.chain();                     // ChainView
 for placed in chain.plugins() {              // PlacedBlock
-    println!("{} {} ({})", placed.location, placed.block.name,
-             placed.block.source.as_ref().map_or("?", |s| s.type_name()));
+    let block = placed.block;
+    println!("{} {} ({})", placed.location, block.name,
+             block.source.as_ref().map_or("?", |s| s.type_name()));
+    // How the app draws it, None in rigs without `display`
+    let shape = block.kind.as_ref().map_or("plugin", |k| k.as_str());
+    let hex = block.rack_color.as_ref().map_or("#696c72", |c| c.hex.as_str());
 }
 let scenes = &chain.scenes;                  // Vec<Option<String>>
 let bytes = rig.to_vec_pretty()?;
@@ -199,14 +294,17 @@ let bytes = rig.to_vec_pretty()?;
 
 | Item | |
 |---|---|
-| `Rig { format, meta, preset, dependencies }` | The file. `Rig::new`, `from_slice`, `from_json`, `to_vec_pretty`, `chain`, `file_refs`, `validate` |
+| `Rig { format, meta, preset, dependencies, display }` | The file. `Rig::new`, `from_slice`, `from_json`, `to_vec_pretty`, `chain`, `file_refs`, `validate` |
 | `Meta` | `name`, `description`, `tags`, `author`, `app_version`, `created` |
 | `Dependencies { plugins, files }` | `plugin(uri)`, `file(path)`, `sources()`, `shareable()` |
 | `PluginDependency { uri, name, source }`, `FileDependency { path, blocks, source }` | Manifest entries |
 | `Source` | `Builtin { kind }`, `Store { package, version, plugin_id }`, `Tone3000(Tone3000Model)`, `Local { what, name }`, `Unknown` |
+| `RackDisplay { blocks }`, `BlockDisplay { kind, category, lv2_class, color, color_hex }` | `display` as written (strings). `RackDisplay::block(id)` |
 | `ChainView` | `preset_name`, `stereo`, `blocks`, `scenes`, `current_scene`, `bpm`, `stomps`, `midi_mappings`; `plugins()`, `node_count()`, `depth()` |
 | `Block` | `Plugin(PluginBlock)`, `Split(SplitBlock)`, `Unknown` |
-| `PluginBlock` | `instance_id`, `uri`, `name`, `source`, `enabled`, `inputs`, `outputs`, `file`, `param_files`, `color` |
+| `PluginBlock` | `instance_id`, `uri`, `name`, `source`, `enabled`, `inputs`, `outputs`, `file`, `param_files`, `color` (the user's colour name from `chain.colors`, as written), and from `display`: `kind: Option<BlockKind>`, `category: Option<String>`, `lv2_class: Option<String>`, `rack_color: Option<BlockColor>` (the colour drawn; `None` when the entry has no name or no valid hex) |
+| `BlockKind` | `Amp`, `Combo`, `Cab`, `Pedal`, `Space`, `Send`, `Return`, `Plugin`, `Other(String)`; `parse`, `as_str`; serialized as its name (`"amp"`) |
+| `BlockColor` | `name`, `hex` (`#rrggbb`, lower case) |
 | `SplitBlock` | `instance_id`, `kind` (`SplitKind::Ab / Mix / Lr / Other`), `enabled`, `top`, `bottom`, `select_a`, `mix` |
 | `PlacedBlock` | `location` (`"3"`, `"2/A/1"`), `depth`, `block` |
 | `FileRef` | `instance_id`, `param`, `path` |

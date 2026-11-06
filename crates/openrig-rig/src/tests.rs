@@ -262,3 +262,96 @@ fn source_json_shape() {
         json!({"type": "local", "what": "plugin", "name": "My fuzz"})
     );
 }
+
+#[test]
+fn display_of_the_blocks() {
+    let view = fixture().chain();
+    let looks: Vec<(Option<&str>, Option<&str>, Option<String>)> = view
+        .plugins()
+        .iter()
+        .map(|p| {
+            (
+                p.block.kind.as_ref().map(BlockKind::as_str),
+                p.block.category.as_deref(),
+                p.block
+                    .rack_color
+                    .as_ref()
+                    .map(|c| format!("{} {}", c.name, c.hex)),
+            )
+        })
+        .collect();
+    assert_eq!(
+        looks,
+        [
+            (
+                Some("plugin"),
+                Some("dynamics"),
+                Some("pink #8c4a64".into())
+            ),
+            (Some("amp"), Some("simulator"), Some("red #9a3a33".into())),
+            (
+                Some("cab"),
+                Some("simulator"),
+                Some("orange #a35a2c".into())
+            ),
+            (
+                Some("cab"),
+                Some("simulator"),
+                Some("orange #a35a2c".into())
+            ),
+            (Some("space"), Some("reverb"), Some("teal #30706e".into())),
+        ]
+    );
+    assert_eq!(
+        view.plugins()[0].block.lv2_class.as_deref(),
+        Some("CompressorPlugin")
+    );
+    // Served as plain strings
+    let json = serde_json::to_value(view.plugins()[1].block).unwrap();
+    assert_eq!(json["kind"], "amp");
+    assert_eq!(json["rack_color"], json!({"name": "red", "hex": "#9a3a33"}));
+}
+
+#[test]
+fn rigs_without_display_still_read() {
+    let mut value: serde_json::Value = serde_json::from_str(FIXTURE).unwrap();
+    value.as_object_mut().unwrap().remove("display");
+    let rig = Rig::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(rig.display.is_empty());
+    let view = rig.chain();
+    let amp = view.plugins()[1].block;
+    assert_eq!((amp.kind.as_ref(), amp.rack_color.as_ref()), (None, None));
+    assert_eq!(amp.color.as_deref(), Some("red"));
+    assert!(rig.validate().is_valid());
+    // And are written without it
+    let bytes = rig.to_vec_pretty().unwrap();
+    assert!(!String::from_utf8(bytes).unwrap().contains("\"display\""));
+}
+
+#[test]
+fn checks_display_entries() {
+    let mut rig = fixture();
+    let blocks = &mut rig.display.blocks;
+    blocks.insert("99".into(), blocks["2"].clone());
+    blocks.get_mut("4").unwrap().color_hex = "red".into();
+    blocks.get_mut("6").unwrap().kind = "rack-unit".into();
+    let report = rig.validate();
+    assert!(report.is_valid());
+    let bad: Vec<&str> = report
+        .issues
+        .iter()
+        .filter(|i| i.code == Code::BadDisplay)
+        .map(|i| i.at.as_str())
+        .collect();
+    assert_eq!(bad, ["/display/blocks/4", "/display/blocks/99"]);
+    let view = rig.chain();
+    // A malformed colour reads as none, an unknown kind as Other
+    assert_eq!(view.plugins()[2].block.rack_color, None);
+    assert_eq!(
+        view.plugins()[4].block.kind,
+        Some(BlockKind::Other("rack-unit".into()))
+    );
+
+    rig.display.blocks.get_mut("1").unwrap().category = "x".repeat(201);
+    assert!(!rig.validate().is_valid());
+}

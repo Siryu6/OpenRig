@@ -67,5 +67,14 @@
         "source": { "type": "tone3000", "tone_id": 8810, "model_id": 99120, "tone_title": "Small Room", "model_name": "Room",
                     "url": "https://www.tone3000.com/tones/small-room-8810", "license": "CC0", "creator": "roomie", "gear": "space", "format": "ir" } }
     ]
+  },
+  "display": {
+    "blocks": {
+      "1": { "kind": "plugin", "category": "dynamics", "lv2_class": "CompressorPlugin", "color": "pink", "color_hex": "#8c4a64" },
+      "2": { "kind": "amp", "category": "simulator", "color": "red", "color_hex": "#9a3a33" },
+      "4": { "kind": "cab", "category": "simulator", "color": "orange", "color_hex": "#a35a2c" },
+      "5": { "kind": "cab", "category": "simulator", "color": "orange", "color_hex": "#a35a2c" },
+      "6": { "kind": "space", "category": "reverb", "color": "teal", "color_hex": "#30706e" }
+    }
   }
 }

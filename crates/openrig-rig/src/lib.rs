@@ -29,11 +29,13 @@
 //! ```
 
 mod deps;
+mod display;
 mod path;
 mod validate;
 mod view;
 
 pub use deps::{Dependencies, FileDependency, PluginDependency, Source, Tone3000Model};
+pub use display::{BlockColor, BlockDisplay, BlockKind, RackDisplay};
 pub use path::is_safe_relative_path;
 pub use validate::{Code, Issue, Level, Report};
 pub use view::{Block, ChainView, FileRef, PlacedBlock, PluginBlock, SplitBlock, SplitKind};
@@ -110,6 +112,10 @@ pub struct Rig {
     /// Where every plugin and file of the preset comes from
     #[serde(default)]
     pub dependencies: Dependencies,
+    /// How the app draws each block (shape, family, colour); optional,
+    /// empty in rigs written before it
+    #[serde(default, skip_serializing_if = "RackDisplay::is_empty")]
+    pub display: RackDisplay,
 }
 
 /// Description of a rig
@@ -122,7 +128,8 @@ pub struct Meta {
     pub description: String,
     /// Lower-case keywords ("metal", "blues", "ambient"…)
     pub tags: Vec<String>,
-    /// Who made it, free text (the site shows its own account name)
+    /// Who made it: the name the exporting user set, free text, not
+    /// verified (a site may show its own account name instead)
     #[serde(skip_serializing_if = "String::is_empty")]
     pub author: String,
     /// Version of the OpenRig that exported it ("0.11.0")
@@ -150,6 +157,7 @@ impl Rig {
             meta,
             preset,
             dependencies,
+            display: RackDisplay::default(),
         }
     }
 
@@ -183,9 +191,9 @@ impl Rig {
     }
 
     /// Typed, read-only view of the chain of the preset, with the names of
-    /// the blocks taken from the manifest
+    /// the blocks taken from the manifest and their look from `display`
     pub fn chain(&self) -> ChainView {
-        ChainView::read(&self.preset, &self.dependencies)
+        ChainView::read(&self.preset, &self.dependencies, &self.display)
     }
 
     /// Every file the preset loads (block models and plugin files), as

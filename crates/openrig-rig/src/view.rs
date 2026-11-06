@@ -8,6 +8,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 use crate::deps::{Dependencies, Source};
+use crate::display::{is_hex_color, BlockColor, BlockKind, RackDisplay};
 
 /// Splits nested deeper than this are not read (shown as `Unknown`)
 const READ_DEPTH: usize = 32;
@@ -68,8 +69,20 @@ pub struct PluginBlock {
     pub file: Option<String>,
     /// Files of an LV2 plugin: parameter URI to path
     pub param_files: BTreeMap<String, String>,
-    /// Colour name of the block in the rack
+    /// Colour name the user chose for the block (`chain.colors`), as
+    /// written; `rack_color` is the colour actually drawn
     pub color: Option<String>,
+    /// Shape of the block in the rack, from `display` (`None` in rigs
+    /// without it)
+    pub kind: Option<BlockKind>,
+    /// Family of the plugin in OpenRig (`delay`, `simulator`…), from
+    /// `display`
+    pub category: Option<String>,
+    /// LV2 class of the plugin (`DelayPlugin`…), from `display`
+    pub lv2_class: Option<String>,
+    /// Colour the app draws the block in (the user's, else its family's),
+    /// from `display`; `None` without it or with a malformed one
+    pub rack_color: Option<BlockColor>,
 }
 
 /// How a split combines its branches
@@ -131,7 +144,7 @@ pub struct FileRef {
 }
 
 impl ChainView {
-    pub(crate) fn read(preset: &Value, deps: &Dependencies) -> Self {
+    pub(crate) fn read(preset: &Value, deps: &Dependencies, display: &RackDisplay) -> Self {
         let chain = preset.get("chain").filter(|c| c.is_object());
         let mut view = ChainView {
             preset_name: text(preset.get("name")),
@@ -168,6 +181,7 @@ impl ChainView {
         let colors = by_id(chain.get("colors"));
         let context = Context {
             deps,
+            display,
             files: &files,
             param_files: &param_files,
             colors: &colors,
@@ -263,6 +277,7 @@ fn walk<'a>(blocks: &'a [Block], prefix: &str, depth: usize, out: &mut Vec<Place
 
 struct Context<'a> {
     deps: &'a Dependencies,
+    display: &'a RackDisplay,
     files: &'a BTreeMap<u64, &'a Value>,
     param_files: &'a BTreeMap<u64, &'a Value>,
     colors: &'a BTreeMap<u64, &'a Value>,
@@ -286,8 +301,21 @@ fn node(value: &Value, context: &Context, depth: usize) -> Block {
                     .collect()
             })
             .unwrap_or_default();
+        let look = context.display.block(instance_id);
+        let some = |text: &str| (!text.is_empty()).then(|| text.to_string());
         return Block::Plugin(PluginBlock {
             instance_id,
+            kind: look
+                .filter(|l| !l.kind.is_empty())
+                .map(|l| BlockKind::parse(&l.kind)),
+            category: look.and_then(|l| some(&l.category)),
+            lv2_class: look.and_then(|l| some(&l.lv2_class)),
+            rack_color: look
+                .filter(|l| !l.color.is_empty() && is_hex_color(&l.color_hex))
+                .map(|l| BlockColor {
+                    name: l.color.clone(),
+                    hex: l.color_hex.to_ascii_lowercase(),
+                }),
             name: name_of(&uri, context.deps, ""),
             source: context.deps.plugin(&uri).map(|d| d.source.clone()),
             enabled: p.get("enabled").and_then(Value::as_bool).unwrap_or(true),

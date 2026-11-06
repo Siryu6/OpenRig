@@ -5,6 +5,7 @@ use serde::Serialize;
 use std::collections::{BTreeSet, HashSet};
 
 use crate::deps::Source;
+use crate::display::is_hex_color;
 use crate::path::is_safe_relative_path;
 use crate::{limits, Rig, FORMAT_VERSION};
 
@@ -56,6 +57,9 @@ pub enum Code {
     MissingModelId,
     /// No block at all
     EmptyChain,
+    /// A `display` entry that is not used: not a plugin block of the
+    /// chain, no kind, or a colour that is not `#rrggbb`
+    BadDisplay,
 }
 
 /// One finding
@@ -131,6 +135,7 @@ pub(crate) fn validate(rig: &Rig) -> Report {
     }
     chain(rig, &mut report);
     dependencies(rig, &mut report);
+    display(rig, &mut report);
     report
 }
 
@@ -427,5 +432,54 @@ fn capitalized(text: &str) -> String {
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect(),
         None => String::new(),
+    }
+}
+
+fn display(rig: &Rig, report: &mut Report) {
+    let blocks = &rig.display.blocks;
+    if blocks.len() > limits::BLOCKS {
+        report.push(
+            Level::Invalid,
+            Code::TooMany,
+            "/display/blocks",
+            format!("More than {} blocks in display", limits::BLOCKS),
+        );
+        return;
+    }
+    let view = rig.chain();
+    let ids: HashSet<u64> = view.plugins().iter().map(|p| p.block.instance_id).collect();
+    for (key, block) in blocks {
+        let at = format!(
+            "/display/blocks/{}",
+            key.replace('~', "~0").replace('/', "~1")
+        );
+        if [&block.kind, &block.category, &block.lv2_class, &block.color]
+            .iter()
+            .any(|t| too_long(t, limits::SHORT_TEXT))
+        {
+            report.push(
+                Level::Invalid,
+                Code::TooLong,
+                &at,
+                "Display text too long".into(),
+            );
+            continue;
+        }
+        let problem = if !key.parse::<u64>().is_ok_and(|id| ids.contains(&id)) {
+            Some(format!(
+                "Display entry {key:?} is not a plugin block of the chain"
+            ))
+        } else if block.kind.is_empty() {
+            Some(format!("Display entry {key} has no kind"))
+        } else if block.color.is_empty() || !is_hex_color(&block.color_hex) {
+            Some(format!(
+                "Display entry {key} has no colour name or no #rrggbb colour"
+            ))
+        } else {
+            None
+        };
+        if let Some(message) = problem {
+            report.push(Level::Warning, Code::BadDisplay, at, message);
+        }
     }
 }
