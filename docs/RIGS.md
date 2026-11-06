@@ -19,9 +19,15 @@ Presets page → share button (next to Save) opens the Rigs panel.
   to a USB drive when one is mounted (**To USB**). MIDI CCs learned by the
   blocks fit one controller setup, so they are left out unless the
   **MIDI CCs** toggle is on. The note under the title lists what only this
-  pedalboard has (see below).
+  pedalboard has (see below). **Author** sets, once, the name written in
+  every rig you export; it is kept with the session (empty: anonymous).
+  The rig also records how the rack draws each block (shape, family,
+  colour name and hex), and the community site draws it with exactly
+  those values.
 - **Import** lists the `.openrig` files of `<data>/rigs` and of the top
-  folder of mounted USB drives. Tap one to see what it needs:
+  folder of mounted USB drives, each with its file name and export date
+  under the rig name (two rigs may share a name). Tap one to see what it
+  needs:
   - **On board**: already here.
   - **Store**: a plugin the store installs.
   - **TONE3000**: a model downloaded with your TONE3000 account.
@@ -30,7 +36,12 @@ Presets page → share button (next to Save) opens the Rigs panel.
   **Install rig** installs and downloads what it can and keeps going when
   one item fails. It then saves the chain as a new preset, with the paths
   of this pedalboard, and loads it. Each item then shows whether it was
-  installed or failed, and why.
+  installed or failed, and why. Blocks left without their model say so in
+  the same message as the import summary.
+
+  A TONE3000 model the import could not get (no account, download failed)
+  stays referenced by the preset: exporting it again writes its TONE3000
+  source, not `local`, until the model is downloaded or replaced.
 
 `<data>` is `$PEDALBOARD_DATA_DIR`, else the platform data directory
 (`~/.local/share/pedalboard` on Linux, `/data/pedalboard` on the OS
