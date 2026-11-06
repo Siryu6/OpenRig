@@ -1188,10 +1188,10 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
     });
 
     // === Looper ===
-    let looper = state.looper.clone();
-    let with_looper = move |f: fn(&mut pedalboard::audio::Looper)| {
-        let looper = looper.clone();
-        move || pedalboard::audio::Looper::control(&looper, f)
+    // (controls run at the current tempo: a recording takes it for its bars)
+    let with_looper = |f: fn(&mut pedalboard::audio::Looper)| {
+        let state = state.clone();
+        move || state.looper_control(f)
     };
     app.on_looper_record(with_looper(|l| l.record()));
     app.on_looper_play(with_looper(|l| l.play()));
@@ -1203,6 +1203,20 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
     app.on_looper_level_changed(move |level| {
         pedalboard::audio::Looper::control(&looper, |l| l.set_level(level))
     });
+    on!(
+        app,
+        state,
+        on_looper_settings_changed,
+        |app, state, beats, count_in, quantize, click_level| {
+            state.set_looper_settings(pedalboard::audio::LooperSettings {
+                beats_per_bar: beats.clamp(0, u8::MAX as i32) as u8,
+                count_in,
+                quantize,
+                click_level,
+            });
+            show_looper_settings(&app, state);
+        }
+    );
 
     // === Tuner ===
     let tuner = state.tuner.clone();
@@ -1307,6 +1321,15 @@ pub(crate) fn setlist_slot(app: &App, state: &AppState, slot: usize) {
     }
 }
 
+/// Show the count-in and quantization settings of the looper
+fn show_looper_settings(app: &App, state: &AppState) {
+    let settings = state.looper_settings();
+    app.set_looper_beats_per_bar(settings.beats_per_bar as i32);
+    app.set_looper_count_in(settings.count_in);
+    app.set_looper_quantize(settings.quantize);
+    app.set_looper_click_level(settings.click_level);
+}
+
 /// Periodic UI updates: looper, tuner, audio errors, status timeout
 fn start_poll_timer(
     app: &App,
@@ -1344,17 +1367,22 @@ fn start_poll_timer(
             // Looper
             // (values copied out first: the audio thread skips the looper
             // for a cycle when the lock is taken)
-            let (looper_state, length, position, layers) = {
+            let (looper_state, length, position, layers, beat, beats, bars, ending) = {
                 let looper = state.looper.locked();
                 (
                     looper.state(),
                     looper.loop_length_seconds(),
                     looper.position_seconds(),
                     looper.layer_count(),
+                    looper.beat(),
+                    looper.beats_per_bar(),
+                    looper.loop_bars(),
+                    looper.ending(),
                 )
             };
             app.set_looper_state(match looper_state {
                 EngineLooperState::Stopped => LooperState::Stopped,
+                EngineLooperState::CountIn => LooperState::CountIn,
                 EngineLooperState::Recording => LooperState::Recording,
                 EngineLooperState::Playing => LooperState::Playing,
                 EngineLooperState::Overdubbing => LooperState::Overdubbing,
@@ -1362,6 +1390,12 @@ fn start_poll_timer(
             app.set_looper_length(length);
             app.set_looper_position(position);
             app.set_looper_layers(layers as i32);
+            let (bar, beat) = beat.unwrap_or((0, 0));
+            app.set_looper_bar(bar as i32);
+            app.set_looper_beat(beat as i32);
+            app.set_looper_beats(beats as i32);
+            app.set_looper_bars(bars as i32);
+            app.set_looper_ending(ending);
 
             // Tuner: only analyse audio while the tuner page is shown
             // (locked only on a change: the audio thread skips the tuner, and
@@ -1686,6 +1720,7 @@ fn main() -> Result<()> {
         app.set_tuner_reference_pitch(tuner.reference_pitch());
     }
     app.set_looper_level(state.looper.locked().level());
+    show_looper_settings(&app, &state);
 
     app.global::<Theme>().set_light(state.light_theme());
     {

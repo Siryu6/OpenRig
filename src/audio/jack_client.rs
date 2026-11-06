@@ -67,7 +67,10 @@ impl JackClientBuilder {
 
         // Tuner and looper depend on the server's sample rate
         *tuner.locked() = Tuner::new(sample_rate);
-        *looper.locked() = Looper::new(sample_rate);
+        {
+            let mut looper = looper.locked();
+            *looper = looper.with_sample_rate(sample_rate);
+        }
 
         // As many inputs and outputs as the interface has (at least the
         // guitar input and a stereo pair)

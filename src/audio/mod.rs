@@ -10,7 +10,7 @@ pub mod tuner;
 
 pub use chain_switcher::{ChainControl, ChainSwitcher};
 pub use engine::AudioEngine;
-pub use looper::Looper;
+pub use looper::{Looper, LooperSettings};
 pub use split_chain::{ChainNode, SplitType};
 pub use tuner::{Tuner, TunerResult};
 

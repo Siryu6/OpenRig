@@ -244,7 +244,7 @@ fn on_message(app: &App, state: &AppState, message: MidiMessage) {
         MidiAction::Footswitch(slot) => live_ui::action(app, state, slot),
         MidiAction::Looper(action) => {
             use pedalboard::midi::LooperAction;
-            pedalboard::audio::Looper::control(&state.looper, |looper| match action {
+            state.looper_control(|looper| match action {
                 LooperAction::Record => looper.record(),
                 LooperAction::Overdub => looper.overdub(),
                 LooperAction::Play => looper.play(),

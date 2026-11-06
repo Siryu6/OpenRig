@@ -150,6 +150,16 @@ What OpenRig does, in more technical detail than the
   and restored at startup, so switching the pedalboard off is safe.
 - **Tuner** down to 38 Hz (7- and 8-string drop tunings, bass; analysis only while the tuner page is open, optional mute) and
   **looper** (record, overdub layers, undo, 30 s max) after the effects.
+  On the tempo of the preset (tap tempo, MIDI clock) and a bar of 2 to 12
+  beats (6/8, 9/8 and 12/8 click in eighth notes), the looper can count one
+  bar in (a click on each beat, higher on the first; recording starts on the
+  next downbeat; Record, Play or Stop during the count-in cancels it) and
+  quantize the first recording: stopping it carries on to the end of the
+  bar, so the loop is a whole number of bars, or ends on the bar line just
+  crossed when the stop comes within an eighth of a beat (100 ms at most)
+  after it. Overdubs keep the length. The click has its own level, is heard
+  on the main mix and never recorded. These settings are kept with the
+  session.
 - **Resource monitor**: the top bar shows the DSP load (time spent in the
   audio callback vs. the buffer period) and the SoC temperature, coloured
   green / orange / red. Tapping it opens the details: DSP average and peak,
@@ -178,7 +188,8 @@ What OpenRig does, in more technical detail than the
   holding goes back to the value before. Presets: turn to pick, press to
   load. Live: the switches (a press acts like the footswitch), then the
   tempo (press, then turn), tap and the mode. Looper: Record, Overdub,
-  Play, Stop, Undo, Clear and the level. Tuner: mute and the reference
+  Play, Stop, Undo, Clear, the level, the tempo, the bar, count-in,
+  quantize and the click level. Tuner: mute and the reference
   pitch. Holding on a main page opens a page switcher (Rack, Presets,
   Live, Tuner, Looper, Settings). Settings → Hardware sets what is wired: from
   no footswitch to 8, the GPIO of each (with a LED that lights while it is
