@@ -11,8 +11,14 @@ use std::io::{Cursor, Read};
 
 use anyhow::{anyhow, bail, Context, Result};
 
-/// Where TONE3000 pictures are served from
-const HOSTS: [&str; 2] = ["https://api.tone3000.com/", "https://www.tone3000.com/"];
+/// Where TONE3000 pictures are served from: the API lists them on its
+/// assets host (originals only), formerly on its storage (first: it has
+/// renditions)
+const HOSTS: [&str; 3] = [
+    "https://api.tone3000.com/",
+    "https://www.tone3000.com/",
+    "https://assets.tone3000.com/",
+];
 /// Public file of the storage, and its resized rendition
 const STORAGE_FILE: &str = "/storage/v1/object/public/";
 const STORAGE_RENDER: &str = "/storage/v1/render/image/public/";
@@ -238,6 +244,11 @@ mod tests {
             "https://example.com/storage/v1/object/public/a.jpg"
         ));
         assert!(!is_tone3000("https://api.tone3000.com.evil.net/a.jpg"));
+        // Where the API lists pictures now: originals, no rendition
+        let assets = "https://assets.tone3000.com/bi3yrsmwe5.jpg";
+        assert!(is_tone3000(assets));
+        assert!(thumbnail_url(assets, 96).is_none());
+        assert!(!is_tone3000("https://assets.tone3000.com.evil.net/a.jpg"));
     }
 
     #[test]
@@ -270,6 +281,8 @@ mod tests {
     fn fetches_live_pictures() {
         let url = "https://api.tone3000.com/storage/v1/object/public/images/dr16x6nddma.jpg";
         let picture = fetch(url, 96).unwrap();
+        assert_eq!((picture.side, picture.rgba.len()), (96, 96 * 96 * 4));
+        let picture = fetch("https://assets.tone3000.com/bi3yrsmwe5.jpg", 96).unwrap();
         assert_eq!((picture.side, picture.rgba.len()), (96, 96 * 96 * 4));
     }
 

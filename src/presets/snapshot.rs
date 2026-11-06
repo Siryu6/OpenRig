@@ -31,6 +31,13 @@ pub struct Preset {
     /// only have the flat `plugins` list.
     #[serde(default)]
     pub chain: Option<PresetChain>,
+
+    /// Imported from a rig without some of its TONE3000 models: their
+    /// source, by the path the chain still loads them from, so that
+    /// exporting the preset again refers to them instead of calling them
+    /// local
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub rig_models: BTreeMap<String, crate::rigs::format::Tone3000Model>,
 }
 
 /// Chain structure saved in a preset
@@ -165,6 +172,7 @@ impl Preset {
             stereo_mode: false,
             tags: Vec::new(),
             chain: None,
+            rig_models: BTreeMap::new(),
         }
     }
 

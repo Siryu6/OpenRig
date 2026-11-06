@@ -16,3 +16,16 @@ pr_labels = ["release"]
 # Only these commits open a release PR: ci:, docs:, chore:, test:… alone
 # wait for the next one
 release_commits = "^(feat|fix|perf)(\\(.*\\))?!?:"
+
+# The app: tags and releases stay vX.Y.Z now that the repository is a
+# workspace
+[[package]]
+name = "pedalboard"
+git_tag_name = "v{{ version }}"
+git_release_name = "v{{ version }}"
+
+# The rig format crate is versioned by hand (its README says what a
+# version change means); it has no release of its own
+[[package]]
+name = "openrig-rig"
+release = false

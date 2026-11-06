@@ -135,6 +135,11 @@ What OpenRig does, in more technical detail than the
   recalls bypass, parameters and split settings instantly, without
   rebuilding the chain; a setlist maps footswitch slots to presets, all
   preloaded in memory.
+- **Rigs**: share a preset as a `.openrig` file with the plugins and models
+  it needs (built-in, store, TONE3000 or local). Importing one installs
+  what the store and your TONE3000 account can provide, then adds it as a
+  new preset. Files live in `<data>/rigs` and on mounted USB drives. See
+  [RIGS.md](RIGS.md).
 - **Live page**: 8 switch tiles in Stomp (block on/off, assignable),
   Scenes or Setlist mode, tempo display with TAP. The last footswitch taps
   the tempo and, held, opens the tuner. The tempo drives the BPM ports of
@@ -190,7 +195,11 @@ What OpenRig does, in more technical detail than the
   no footswitch to 8, the GPIO of each (with a LED that lights while it is
   pressed, to check the wiring), the encoder or none, its push button or
   none, its steps per detent. Kept in `hardware.json` in the data
-  directory; changes apply at once.
+  directory; changes apply at once. The inputs are taken through the
+  kernel (GPIO character device): one on a GPIO a driver holds, such as an
+  audio HAT's I2S lines (18–21, or 18–27 on 8-channel HATs), is left out
+  and Settings → Hardware says so, so the default pins never cut a HAT's
+  outputs.
 - **External encoders** (feature `gpio`): encoder boards on the I2C bus
   (GPIO 2 and 3), one per knob of the rack's strip: Adafruit I2C rotary
   encoders (seesaw, addresses 0x36–0x3D), the Adafruit Quad (0x49–0x50) or

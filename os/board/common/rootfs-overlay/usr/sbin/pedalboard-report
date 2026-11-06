@@ -1,8 +1,8 @@
 #!/bin/sh
 #
 # What to paste in a bug report: versions, settings, the display, the audio
-# interface, its driver and how JACK opened it, and the log of JACK and the
-# app.
+# interface, its driver and how JACK opened it, the GPIO pins, and the log
+# of JACK and the app.
 # Read-only. Run as root over SSH, e.g.
 #
 #   pedalboard-report > /tmp/report.txt
@@ -123,6 +123,20 @@ done
 
 section "Kernel messages (audio)"
 dmesg | grep -i -E 'snd|asoc|i2s|codec|dac|adc|hifiberry|audio|dma|xrun|underrun|usb.*(audio|midi)' | tail -80
+
+# Footswitch / encoder pins, and the GPIOs drivers hold: a footswitch on
+# an audio HAT's I2S pin cuts outputs. The pin owners are in debugfs, when
+# it is mounted.
+section "GPIO"
+echo "hardware.json:"
+cat /data/pedalboard/hardware.json 2>/dev/null || echo "(none: the defaults)"
+echo
+for f in /sys/kernel/debug/pinctrl/*/pinmux-pins; do
+	[ -r "$f" ] || continue
+	echo "$f (claimed pins):"
+	grep -v -e 'UNCLAIMED' -e '^Pinmux' "$f" | head -60
+done
+dmesg | grep -i -E 'pinctrl|gpio' | tail -40
 
 section "JACK and app log"
 grep -E ' (jackd|pedalboard|pedalboard-update|S00storage)(\[[0-9]+\])?: ' /var/log/messages 2>/dev/null | tail -200

@@ -18,8 +18,8 @@ use tracing::warn;
 use super::auth::{download_agent, get_json, AuthError};
 use crate::plugins::scanner::{TONE_INFO_FILE, TONE_PICTURE_FILE};
 
-/// Folder of the models dir holding the TONE3000 downloads
-pub const FOLDER: &str = "Tone3000";
+pub use crate::tone_info::{file_name, gear_label, FOLDER, GEARS};
+use crate::tone_info::{model_file, tone_folder, ModelInfo, ToneInfo};
 /// Items asked per page (the API maximum); also the models shown and ticked
 /// at once in a tone, as TONE3000 asks
 pub const PAGE_SIZE: u32 = 25;
@@ -58,33 +58,6 @@ impl List {
     fn paginated(self) -> bool {
         matches!(self, List::Favorites | List::Created | List::Downloaded)
     }
-}
-
-/// Gear types, in display order: (API value, label, folder)
-pub const GEARS: [(&str, &str, &str); 7] = [
-    ("amp", "Amp", "Amps"),
-    ("amp-cab", "Amp + cab", "Amps + cabs"),
-    ("pedal", "Pedal", "Pedals"),
-    ("outboard", "Outboard", "Outboard"),
-    ("cab", "Cab", "Cabs"),
-    ("space", "Space", "Spaces"),
-    ("experimental", "Experimental", "Experimental"),
-];
-
-pub fn gear_label(gear: &str) -> &str {
-    GEARS
-        .iter()
-        .find(|(id, ..)| *id == gear)
-        .map(|(_, label, _)| *label)
-        .unwrap_or(gear)
-}
-
-fn gear_folder(gear: &str) -> &str {
-    GEARS
-        .iter()
-        .find(|(id, ..)| *id == gear)
-        .map(|(.., folder)| *folder)
-        .unwrap_or("Other")
 }
 
 /// File extension of a model format, `None` when no block can load it yet
@@ -174,9 +147,7 @@ impl Tone {
 
     /// Where this tone's files go, relative to the models dir
     pub fn folder(&self) -> PathBuf {
-        Path::new(FOLDER)
-            .join(gear_folder(&self.gear))
-            .join(format!("{} [{}]", file_name(&self.title), self.id))
+        tone_folder(&self.gear, &self.title, self.id)
     }
 }
 
@@ -191,6 +162,9 @@ pub struct Model {
     pub size: Option<String>,
     #[serde(default)]
     pub architecture_version: Option<String>,
+    /// Tone the model belongs to
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tone_id: Option<u64>,
 }
 
 impl Model {
@@ -198,12 +172,10 @@ impl Model {
     /// a tone with the same name (A1 and A2 captures, sizes)
     pub fn relative_path(&self, tone: &Tone) -> Option<PathBuf> {
         let extension = file_extension(&tone.format)?;
-        Some(tone.folder().join(format!(
-            "{} [{}].{}",
-            file_name(&self.name),
-            self.id,
-            extension
-        )))
+        Some(
+            tone.folder()
+                .join(model_file(&self.name, self.id, extension)),
+        )
     }
 
     /// "A2", "A1 · lite", "IR"…
@@ -222,25 +194,6 @@ impl Model {
             parts.push(size.to_string());
         }
         parts.join(" · ")
-    }
-}
-
-/// Keep a name usable as a file name on every OS
-pub fn file_name(name: &str) -> String {
-    let cleaned: String = name
-        .chars()
-        .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
-            c if c.is_control() => ' ',
-            c => c,
-        })
-        .collect();
-    let cleaned = cleaned.trim().trim_matches('.').trim();
-    let cleaned: String = cleaned.chars().take(80).collect();
-    if cleaned.is_empty() {
-        "untitled".into()
-    } else {
-        cleaned
     }
 }
 
@@ -363,20 +316,67 @@ pub fn models(token: &str, tone: &Tone) -> Result<Vec<Model>, AuthError> {
     Ok(models)
 }
 
-/// What is kept next to the files of a downloaded tone
-#[derive(Serialize, Deserialize)]
-struct ToneInfo {
-    id: u64,
-    title: String,
-    creator: String,
-    license: Option<String>,
-    url: String,
-    gear: String,
-    format: String,
-    /// Picture shown in the block that loads it
-    #[serde(skip_serializing_if = "Option::is_none")]
-    image: Option<String>,
-    source: String,
+/// An API answer for one item, bare or wrapped in `data`
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum One<T> {
+    Wrapped { data: T },
+    Plain(T),
+}
+
+impl<T> One<T> {
+    fn into_inner(self) -> T {
+        match self {
+            One::Wrapped { data } | One::Plain(data) => data,
+        }
+    }
+}
+
+/// One tone, by id (`GET /tones/{id}`)
+pub fn tone(token: &str, id: u64) -> Result<Tone, AuthError> {
+    get_json::<One<Tone>>(token, &format!("/tones/{id}")).map(One::into_inner)
+}
+
+/// One model, by id (`GET /models/{id}`)
+pub fn model(token: &str, id: u64) -> Result<Model, AuthError> {
+    get_json::<One<Model>>(token, &format!("/models/{id}")).map(One::into_inner)
+}
+
+/// Download one model of a tone named by a shared rig: by its id, else by
+/// its name among the models of the tone. Returns its path relative to
+/// `models_dir`, where the library would have put it. Waits for its turn
+/// in `limiter` before the download.
+pub fn download_for_rig(
+    token: &str,
+    models_dir: &Path,
+    tone_id: u64,
+    model_id: Option<u64>,
+    model_name: &str,
+) -> Result<PathBuf> {
+    let tone = tone(token, tone_id)?;
+    if !tone.supported() {
+        bail!(
+            "The {} format is not supported by this OpenRig",
+            tone.format
+        );
+    }
+    let model = match model_id {
+        Some(id) => model(token, id)?,
+        None => models(token, &tone)?
+            .into_iter()
+            .find(|m| m.name == model_name)
+            .ok_or_else(|| anyhow!("{model_name} is no longer in {}", tone.title))?,
+    };
+    if model.tone_id.is_some_and(|id| id != tone.id) {
+        bail!("Model {} is not part of {}", model.name, tone.title);
+    }
+    if let Some(relative) = model.relative_path(&tone) {
+        if models_dir.join(&relative).is_file() {
+            return Ok(relative);
+        }
+    }
+    super::limiter::acquire(None);
+    download(token, models_dir, &tone, &model)
 }
 
 /// Largest model or IR file accepted (NAM models are a few MB at most)
@@ -437,22 +437,26 @@ pub fn download(token: &str, models_dir: &Path, tone: &Tone, model: &Model) -> R
         return Err(e.context(format!("Download of {} failed", model.name)));
     }
 
-    // Written once a model is there: it marks the tone as downloaded
-    let info = ToneInfo {
-        id: tone.id,
-        title: tone.title.clone(),
-        creator: tone.creator().to_string(),
-        license: tone.license.clone(),
-        url: tone.page_url(),
-        gear: tone.gear.clone(),
-        format: tone.format.clone(),
-        image: tone.image().map(str::to_string),
-        source: "Downloaded from TONE3000 (https://www.tone3000.com)".into(),
-    };
-    crate::persist::write_atomic(
-        &dir.join(TONE_INFO_FILE),
-        serde_json::to_string_pretty(&info)?.as_bytes(),
-    )?;
+    // Written once a model is there: it marks the tone as downloaded. The
+    // models already noted in it are kept.
+    let mut info = ToneInfo::read(dir).unwrap_or_default();
+    info.id = tone.id;
+    info.title = tone.title.clone();
+    info.creator = tone.creator().to_string();
+    info.license = tone.license.clone();
+    info.url = tone.page_url();
+    info.gear = tone.gear.clone();
+    info.format = tone.format.clone();
+    info.image = tone.image().map(str::to_string);
+    info.source = "Downloaded from TONE3000 (https://www.tone3000.com)".into();
+    if let Some(file) = path.file_name().and_then(|f| f.to_str()) {
+        info.add_model(ModelInfo {
+            id: model.id,
+            name: model.name.clone(),
+            file: file.to_string(),
+        });
+    }
+    info.write(dir)?;
     save_picture(models_dir, tone);
     Ok(relative)
 }
@@ -514,6 +518,7 @@ mod tests {
             model_url: String::new(),
             size: Some("lite".into()),
             architecture_version: Some("2".into()),
+            tone_id: None,
         };
         let path = model.relative_path(&tone("ir")).unwrap();
         assert_eq!(
@@ -523,6 +528,16 @@ mod tests {
         assert_eq!(model.description(&tone("nam")), "A2 · lite");
         assert!(model.relative_path(&tone("proteus")).is_none());
         assert_eq!(file_name(" ..  "), "untitled");
+    }
+
+    #[test]
+    fn parses_single_items_bare_or_wrapped() {
+        let bare: One<Model> =
+            serde_json::from_str(r#"{"id": 7, "name": "Crunch", "tone_id": 3}"#).unwrap();
+        let wrapped: One<Model> =
+            serde_json::from_str(r#"{"data": {"id": 7, "name": "Crunch"}}"#).unwrap();
+        assert_eq!(bare.into_inner().tone_id, Some(3));
+        assert_eq!(wrapped.into_inner().id, 7);
     }
 
     #[test]
