@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1](https://github.com/Siryu6/OpenRig/compare/v0.12.0...v0.12.1) - 2026-11-07
+
+### Fixed
+
+- *(os)* join WPA3 Wi-Fi networks and log why a join fails ([#94](https://github.com/Siryu6/OpenRig/pull/94))
+
 ## [0.12.0](https://github.com/Siryu6/OpenRig/compare/v0.11.0...v0.12.0) - 2026-11-07
 
 ### Added
