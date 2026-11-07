@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/Siryu6/OpenRig/compare/v0.11.0...v0.12.0) - 2026-11-07
+
+### Added
+
+- *(rigs)* find my rigs with /me/rigs and read favourited from the rig detail ([#91](https://github.com/Siryu6/OpenRig/pull/91))
+- *(rigs)* browse, install, favourite and publish rigs on openrig.eu ([#89](https://github.com/Siryu6/OpenRig/pull/89))
+
 ## [0.11.0](https://github.com/Siryu6/OpenRig/compare/v0.10.1...v0.11.0) - 2026-11-06
 
 ### Added
