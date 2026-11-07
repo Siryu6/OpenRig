@@ -455,6 +455,19 @@ fn open_rig(app: &App, state: &Arc<AppState>, index: i32) {
 
 fn show_detail(app: &App, detail: &Detail, here: &[bool]) {
     let online = app.global::<RigsOnline>();
+    // The site says whether the account favourited it (older sites do not:
+    // the marks of `/me/favourites` stay)
+    if let Some(on) = detail.favourited {
+        let slug = detail.summary.slug.clone();
+        with_page(|p| {
+            if on {
+                p.favourites.insert(slug);
+            } else {
+                p.favourites.remove(&slug);
+            }
+        });
+        refresh_cards(app);
+    }
     let deps: Vec<OnlineDep> = detail
         .view
         .dependencies
@@ -782,7 +795,7 @@ fn publish(app: &App) {
         Ok(file) if file.len() <= online::MAX_PUBLISH_BYTES => file,
         Ok(_) => {
             online.set_publish_state("failed".into());
-            online.set_publish_message("This rig is too large for openrig.eu".into());
+            online.set_publish_message(online::TOO_LARGE.into());
             return;
         }
         Err(e) => {

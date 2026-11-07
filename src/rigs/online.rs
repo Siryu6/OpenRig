@@ -29,8 +29,15 @@ use super::format::{Level, Rig, MEDIA_TYPE};
 pub const DEFAULT_URL: &str = "https://openrig.eu";
 /// Another site (a test server, a self-hosted one)
 pub const URL_ENV: &str = "OPENRIG_RIGS_URL";
-/// Largest rig file the site takes (its default `MAX_RIG_BYTES`)
+/// Largest rig file the site takes for a publish or a new version (its
+/// default `MAX_RIG_BYTES`, 512 KiB). The app itself reads rig files up to
+/// the format's [`MAX_RIG_BYTES`](super::format::MAX_RIG_BYTES) (1 MiB),
+/// downloads included: the stricter limit only applies on the way up.
 pub const MAX_PUBLISH_BYTES: usize = 512 * 1024;
+const _: () = assert!(MAX_PUBLISH_BYTES <= super::format::MAX_RIG_BYTES);
+
+/// What the app says of a rig over [`MAX_PUBLISH_BYTES`]
+pub const TOO_LARGE: &str = "This rig is too large for openrig.eu (512 KiB at most)";
 
 /// Styles of the site, in its order
 pub const STYLES: &[&str] = &[
@@ -122,7 +129,7 @@ fn api_error(status: u16, body: &str) -> ApiError {
         429 => ApiError::RateLimited(or("openrig.eu limits requests for now: try again later")),
         413 => ApiError::Refused {
             code: "too_large".into(),
-            message: "The rig is too large for openrig.eu".into(),
+            message: TOO_LARGE.into(),
         },
         400 | 422 => ApiError::Refused {
             message: or(&format!("openrig.eu refused the request ({code})")),
@@ -171,6 +178,9 @@ pub struct Summary {
     pub updated_at: i64,
     pub url: String,
     pub download_url: String,
+    /// Hidden by a moderator: only `GET /me/rigs` says so (its owner still
+    /// sees it and can publish new versions)
+    pub hidden: bool,
 }
 
 /// A page of rigs
@@ -266,6 +276,10 @@ pub struct Detail {
     pub view: RigView,
     #[serde(default)]
     pub versions: Vec<Version>,
+    /// Whether the account favourited it: only when asked with a token, and
+    /// from a site that says so (else `None`: see `/me/favourites`)
+    #[serde(default)]
+    pub favourited: Option<bool>,
 }
 
 /// The signed-in account
@@ -500,10 +514,14 @@ impl Client {
         Self::json(request.call())
     }
 
-    /// One rig, with its scenes, dependencies and versions
+    /// One rig, with its scenes, dependencies and versions (and, with a
+    /// token, whether the account favourited it)
     pub fn rig(&self, slug: &str) -> Result<Detail, ApiError> {
         let slug = check_slug(slug)?;
-        Self::json(self.agent.get(self.url(&format!("/rigs/{slug}"))).call())
+        Self::json(
+            self.authorized(self.agent.get(self.url(&format!("/rigs/{slug}"))))
+                .call(),
+        )
     }
 
     /// The `.openrig` file of the current version (or of `version`), read
@@ -567,6 +585,17 @@ impl Client {
         )
     }
 
+    /// The account's own rigs, hidden ones included, newest first
+    pub fn my_rigs(&self, page: u32) -> Result<Page, ApiError> {
+        self.token()?;
+        Self::json(
+            self.authorized(self.agent.get(self.url("/me/rigs")))
+                .query("page", page.max(1).to_string())
+                .query("per_page", "100")
+                .call(),
+        )
+    }
+
     /// Favourite a rig, or not any more
     pub fn set_favourite(&self, slug: &str, on: bool) -> Result<Favourite, ApiError> {
         self.token()?;
@@ -617,12 +646,31 @@ impl Client {
     }
 
     /// The account's rig named `name` (case and spaces aside), for a new
-    /// version of it. The API lists no "my rigs": a search by name, kept to
-    /// the account's own.
+    /// version of it: from `GET /me/rigs`, or, from a site without it (404),
+    /// a search by name kept to the account's own
     pub fn own_rig(&self, login: &str, name: &str) -> Result<Option<Summary>, ApiError> {
         let name = name.trim();
         if name.is_empty() || login.is_empty() {
             return Ok(None);
+        }
+        if self.token.is_some() {
+            // 10 pages of 100: more than the publish caps allow in months
+            for page in 1..=10 {
+                match self.my_rigs(page) {
+                    Ok(mine) => {
+                        let more = mine.has_more() && !mine.items.is_empty();
+                        if let Some(own) = mine.items.into_iter().find(|r| same_name(&r.name, name))
+                        {
+                            return Ok(Some(own));
+                        }
+                        if !more {
+                            return Ok(None);
+                        }
+                    }
+                    Err(ApiError::NotFound(_)) if page == 1 => break,
+                    Err(e) => return Err(e),
+                }
+            }
         }
         let page = self.list(&Query {
             q: name.to_string(),
