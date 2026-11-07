@@ -2,7 +2,7 @@
 #
 # What to paste in a bug report: versions, settings, the display, the audio
 # interface, its driver and how JACK opened it, the GPIO pins, and the log
-# of JACK and the app.
+# of JACK and the app, and the Wi-Fi state and log.
 # Read-only. Run as root over SSH, e.g.
 #
 #   pedalboard-report > /tmp/report.txt
@@ -137,6 +137,19 @@ for f in /sys/kernel/debug/pinctrl/*/pinmux-pins; do
 	grep -v -e 'UNCLAIMED' -e '^Pinmux' "$f" | head -60
 done
 dmesg | grep -i -E 'pinctrl|gpio' | tail -40
+
+section "Wi-Fi"
+# No secrets here: nmcli lists networks and devices, never their passwords
+if command -v nmcli >/dev/null 2>&1; then
+	nmcli general status 2>&1
+	nmcli device 2>&1
+	echo
+	nmcli -f IN-USE,SSID,SECURITY,SIGNAL,CHAN device wifi list --rescan no 2>&1 | head -30
+fi
+iw reg get 2>&1 | head -8
+dmesg | grep -i -E 'brcmf|cfg80211|ieee80211' | tail -20
+echo "wpa_supplicant SAE (WPA3): $(grep -c 'SAE' /usr/sbin/wpa_supplicant 2>/dev/null) references"
+grep -E ' (NetworkManager|wpa_supplicant)(\[[0-9]+\])?: ' /var/log/messages 2>/dev/null | tail -80
 
 section "JACK and app log"
 grep -E ' (jackd|pedalboard|pedalboard-update|S00storage)(\[[0-9]+\])?: ' /var/log/messages 2>/dev/null | tail -200
