@@ -35,7 +35,10 @@ Runtime dependencies (kept identical in deb/rpm/AUR/install notes):
 
 - a JACK server: `jackd2` (or PipeWire's JACK: `pipewire-jack`)
 - `liblilv` (LV2 hosting), `libasound2` (MIDI/ALSA), `libfontconfig1`,
-  `libxkbcommon0`
+  `libxkbcommon0` + `libxkbcommon-x11-0`, X11 (`libx11`, `libxcb`,
+  `libxcursor`, `libxi`, `libxrender`), `libwayland-client` and GL
+  (`libgl1` / `libglvnd`, EGL) for the UI — verified against the
+  release binary's linked and runtime-loaded libraries.
 
 ## One-liner install / uninstall
 

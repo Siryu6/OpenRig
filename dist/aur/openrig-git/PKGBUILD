@@ -6,7 +6,9 @@ pkgdesc='Open source guitar pedalboard: neural amps, IRs, LV2 plugins, scenes, l
 arch=('x86_64' 'aarch64')
 url='https://openrig.eu'
 license=('GPL-3.0-or-later')
-depends=('jack' 'lilv' 'lv2' 'alsa-lib' 'fontconfig' 'libxkbcommon' 'hicolor-icon-theme')
+depends=('jack' 'lilv' 'lv2' 'alsa-lib' 'fontconfig' 'libxkbcommon' 'libxkbcommon-x11'
+         'libx11' 'libxcb' 'libxcursor' 'libxi' 'libxrender' 'libglvnd' 'wayland'
+         'hicolor-icon-theme')
 makedepends=('git' 'rust' 'cmake' 'pkgconf')
 provides=('openrig')
 conflicts=('openrig' 'openrig-bin')

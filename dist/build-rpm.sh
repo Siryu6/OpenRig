@@ -67,11 +67,22 @@ Summary: Open source guitar pedalboard
 License: GPL-3.0-or-later
 URL: https://openrig.eu
 BuildArch: $RPMARCH
-Requires: (jack-audio-connection-kit or pipewire-jack-audio-connection-kit)
-Requires: lilv
-Requires: alsa-lib
-Requires: fontconfig
-Requires: libxkbcommon
+# Soname capabilities so the same rpm resolves on Fedora, RHEL and
+# openSUSE (JACK from jackd or PipeWire, GL/X11/Wayland for the UI).
+Requires: libjack.so.0()(64bit)
+Requires: liblilv-0.so.0()(64bit)
+Requires: libasound.so.2()(64bit)
+Requires: libfontconfig.so.1()(64bit)
+Requires: libxkbcommon.so.0()(64bit)
+Requires: libxkbcommon-x11.so.0()(64bit)
+Requires: libX11.so.6()(64bit)
+Requires: libxcb.so.1()(64bit)
+Requires: libXcursor.so.1()(64bit)
+Requires: libXi.so.6()(64bit)
+Requires: libXrender.so.1()(64bit)
+Requires: libwayland-client.so.0()(64bit)
+Requires: libGL.so.1()(64bit)
+Requires: libEGL.so.1()(64bit)
 
 %description
 Turns a small computer into a multi-effects pedalboard: neural amp

@@ -54,7 +54,7 @@ Architecture: $DEBARCH
 Maintainer: Siryu6 <Siryu6@users.noreply.github.com>
 Section: sound
 Priority: optional
-Depends: jackd2 | pipewire-jack, liblilv-0-0 | liblilv-0-3t64, libasound2 | libasound2t64, libfontconfig1, libxkbcommon0
+Depends: jackd2 | pipewire-jack, liblilv-0-0 | liblilv-0-3t64, libasound2 | libasound2t64, libfontconfig1, libxkbcommon0, libxkbcommon-x11-0, libx11-6 | libx11-6t64, libxcb1, libxcursor1, libxi6, libxrender1, libwayland-client0 | libwayland-client0t64, libgl1
 Homepage: https://openrig.eu
 Description: Open source guitar pedalboard
  Turns a small computer into a multi-effects pedalboard: neural amp
