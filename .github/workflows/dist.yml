@@ -1,0 +1,110 @@
+# Linux desktop packages attached to a release (.deb, .rpm, AppImage).
+# Runs on every vX.Y.Z tag (pushed by release-plz when the release PR is
+# merged, or by hand) and by hand. Uploads next to the .tar.gz files that
+# build-release.yml publishes; install.sh and the AUR -bin package point
+# at these file names, so keep them in sync with dist/*.sh.
+name: Linux packages
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (vX.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  release:
+    name: GitHub release
+    runs-on: ubuntu-24.04
+    steps:
+      # build-release.yml creates it; a tag pushed by hand has none yet
+      - run: |
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "$TAG"
+
+  deb:
+    name: deb (${{ matrix.arch }})
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          submodules: recursive
+      - uses: ./.github/actions/linux-deps
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - run: sh dist/build-deb.sh --arch ${{ matrix.arch }} --out assets
+      - run: gh release upload "$TAG" assets/openrig_*.deb assets/openrig_*.deb.sha256 --clobber
+
+  rpm:
+    name: rpm (${{ matrix.arch }})
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          submodules: recursive
+      - uses: ./.github/actions/linux-deps
+      - run: sudo apt-get install -y --no-install-recommends rpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - run: sh dist/build-rpm.sh --arch ${{ matrix.arch }} --out assets
+      - run: gh release upload "$TAG" assets/openrig-*.rpm assets/openrig-*.rpm.sha256 --clobber
+
+  appimage:
+    name: AppImage (${{ matrix.arch }})
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+          submodules: recursive
+      - uses: ./.github/actions/linux-deps
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - run: |
+          curl -fsSL -o appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.arch }}.AppImage"
+          chmod +x appimagetool
+      - run: APPIMAGETOOL="$PWD/appimagetool" sh dist/build-appimage.sh --arch ${{ matrix.arch }} --out assets
+      - run: gh release upload "$TAG" assets/OpenRig-*.AppImage assets/OpenRig-*.AppImage.sha256 --clobber

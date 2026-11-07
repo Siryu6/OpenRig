@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>eu.openrig.OpenRig</id>
+  <name>OpenRig</name>
+  <summary>Open source guitar pedalboard</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <description>
+    <p>
+      OpenRig turns a small computer into a multi-effects pedalboard:
+      neural amp captures, impulse responses, LV2 plugins, a plugin store,
+      a TONE3000 library, live scenes, tuner, looper and MIDI.
+    </p>
+  </description>
+  <launchable type="desktop-id">openrig.desktop</launchable>
+  <url type="homepage">https://openrig.eu</url>
+  <url type="bugtracker">https://github.com/Siryu6/OpenRig/issues</url>
+  <url type="vcs-browser">https://github.com/Siryu6/OpenRig</url>
+</component>

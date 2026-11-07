@@ -1,0 +1,45 @@
+# Maintainer: 9M2PJU <9m2pju@gmail.com>
+pkgname=openrig-git
+pkgver=0.12.0.r0.g0000000
+pkgrel=1
+pkgdesc='Open source guitar pedalboard: neural amps, IRs, LV2 plugins, scenes, looper and MIDI (latest main)'
+arch=('x86_64' 'aarch64')
+url='https://openrig.eu'
+license=('GPL-3.0-or-later')
+depends=('jack' 'lilv' 'lv2' 'alsa-lib' 'fontconfig' 'libxkbcommon' 'hicolor-icon-theme')
+makedepends=('git' 'rust' 'cmake' 'pkgconf')
+provides=('openrig')
+conflicts=('openrig' 'openrig-bin')
+source=('openrig.git::git+https://github.com/Siryu6/OpenRig.git'
+        'openrig.desktop'
+        'openrig.svg'
+        'eu.openrig.OpenRig.metainfo.xml')
+sha256sums=('SKIP'
+            'd4cd1a590bcb3f0c3bf044ac9bcbf4cc865c260d8f11784079ff058738407447'
+            'a53419218f5f865d698ae2b8dbc21926ca63eceed7e4b886bd425d11d7223e86'
+            '94e1ebd082cef163132c23d6b52d9efe68081dc13459f679c467e7dce9cb4cc4')
+
+pkgver() {
+  cd openrig.git
+  git describe --long --tags | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+}
+
+prepare() {
+  cd openrig.git
+  git submodule update --init --recursive
+}
+
+build() {
+  cd openrig.git
+  cargo build --release --locked
+}
+
+package() {
+  cd openrig.git
+  install -Dm755 target/release/pedalboard "$pkgdir/usr/bin/pedalboard"
+  install -Dm644 ../openrig.desktop "$pkgdir/usr/share/applications/openrig.desktop"
+  install -Dm644 ../openrig.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/openrig.svg"
+  install -Dm644 ../eu.openrig.OpenRig.metainfo.xml "$pkgdir/usr/share/metainfo/eu.openrig.OpenRig.metainfo.xml"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

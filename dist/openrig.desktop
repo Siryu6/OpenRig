@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=OpenRig
+GenericName=Guitar pedalboard
+Comment=Open source guitar pedalboard: neural amps, IRs, LV2 plugins, scenes, looper and MIDI
+Exec=pedalboard
+Icon=openrig
+Terminal=false
+Categories=AudioVideo;Audio;Music;
+Keywords=guitar;effects;amplifier;NAM;LV2;JACK;
+StartupWMClass=pedalboard
