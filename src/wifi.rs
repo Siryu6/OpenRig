@@ -163,6 +163,27 @@ impl Wifi {
         match result {
             Ok(_) => Ok(()),
             Err(e) => {
+                // What the network asks for: a WPA3-only network refused
+                // by a supplicant without SAE also reads "Secrets were required"
+                let list = nmcli(&[
+                    "-t",
+                    "-f",
+                    "SSID,SECURITY",
+                    "device",
+                    "wifi",
+                    "list",
+                    "ifname",
+                    &self.device,
+                    "--rescan",
+                    "no",
+                ])
+                .unwrap_or_default();
+                warn!(
+                    ssid = %ssid,
+                    security = %security_of(&list, ssid).join(" / "),
+                    error = %e,
+                    "Joining Wi-Fi network failed"
+                );
                 // A first attempt refused for its password leaves a profile
                 // with the wrong one behind: remove it, the next try starts
                 // clean (other failures, e.g. a timeout, keep it)
@@ -197,7 +218,39 @@ fn nmcli(args: &[&str]) -> Result<String> {
         .env("LC_ALL", "C")
         .output()
         .map_err(|e| WifiError::Failed(format!("nmcli: {e}")))?;
+    if !output.status.success() {
+        // nmcli's own words go to the log, for bug reports; never the
+        // password, which follows "password" in the arguments
+        warn!(
+            command = %shown_args(args),
+            stderr = %String::from_utf8_lossy(&output.stderr).trim(),
+            "nmcli failed"
+        );
+    }
     check(output)
+}
+
+/// The arguments of an nmcli call up to the password, for the log
+fn shown_args(args: &[&str]) -> String {
+    args.iter()
+        .copied()
+        .take_while(|a| *a != "password")
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Security of the access points named `ssid` in `nmcli -t -f
+/// SSID,SECURITY device wifi list` ("WPA2", "WPA2 WPA3", "WPA3"…)
+fn security_of(list: &str, ssid: &str) -> Vec<String> {
+    let mut security: Vec<String> = list
+        .lines()
+        .map(split_terse)
+        .filter(|f| f.len() == 2 && f[0] == ssid)
+        .map(|f| f[1].clone())
+        .collect();
+    security.sort();
+    security.dedup();
+    security
 }
 
 fn check(output: Output) -> Result<String> {
@@ -412,5 +465,27 @@ mod tests {
             error("Error: No network with SSID 'Nope' found.\n"),
             WifiError::Failed("No network with SSID 'Nope' found.".to_string())
         );
+    }
+
+    #[test]
+    fn the_log_never_shows_the_password() {
+        let args = [
+            "-w", "45", "device", "wifi", "connect", "Home", "password", "s3cret", "ifname",
+            "wlan0",
+        ];
+        assert_eq!(shown_args(&args), "-w 45 device wifi connect Home");
+        assert_eq!(shown_args(&["radio", "wifi"]), "radio wifi");
+    }
+
+    #[test]
+    fn security_of_a_network() {
+        let list = "Home:WPA3\n\
+                    Home:WPA3\n\
+                    Home\\:5G:WPA2 WPA3\n\
+                    Cafe:\n";
+        assert_eq!(security_of(list, "Home"), ["WPA3"]);
+        assert_eq!(security_of(list, "Home:5G"), ["WPA2 WPA3"]);
+        assert_eq!(security_of(list, "Cafe"), [""]);
+        assert!(security_of(list, "Nope").is_empty());
     }
 }

@@ -213,7 +213,9 @@ and their modes, drivers, touch devices; on a Pi the bootloader and the
 display overlays applied), sound cards and how JACK opened them, the HAT
 and `extra.txt` (Pi), the kernel's display and audio messages, the
 footswitch and encoder pins (`hardware.json`) and the kernel's GPIO
-messages, and the log of jackd and the app. Attach its output to an issue.
+messages, the Wi-Fi state (networks in range and their security, the
+regulatory domain) with the NetworkManager and wpa_supplicant log, and the
+log of jackd and the app. Attach its output to an issue.
 
 `/var/log` is in RAM: the logs start again at each boot.
 
@@ -235,6 +237,12 @@ to the user: `chown -R pedalboard:pedalboard /data/pedalboard`.
   gives USB devices 1.6 A only with the official 27 W (5 V 5 A) supply,
   600 mA otherwise: a screen and an audio interface both powered by the Pi
   need it.
+- **Wi-Fi refuses the password.** The app logs nmcli's own message and the
+  security of the network (`grep -E "nmcli|Wi-Fi" /var/log/messages`), and
+  `pedalboard-report` adds what NetworkManager and wpa_supplicant said.
+  WPA2, WPA2/WPA3 and WPA3-only networks are supported since 0.12.1; set
+  `wifi_country` in `pedalboard.txt` if your network uses channels 12–13
+  or 5 GHz DFS channels.
 - **No sound.** `cat /proc/asound/cards` lists the interfaces the kernel
   sees; set `audio_device` in `pedalboard.txt` to one of the names in
   brackets. `tail -f /var/log/messages` shows why jackd does not start.

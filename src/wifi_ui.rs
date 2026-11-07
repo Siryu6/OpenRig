@@ -106,9 +106,9 @@ fn worker(rx: Receiver<Command>, app: Weak<App>) {
                     publish_addresses_later(&app);
                 }
                 result.map_err(|e| match e {
-                    WifiError::WrongPassword => {
-                        WifiError::Failed(format!("Wrong password for {ssid}."))
-                    }
+                    WifiError::WrongPassword => WifiError::Failed(format!(
+                        "{ssid} refused the connection: check the password."
+                    )),
                     e => e,
                 })
             }
