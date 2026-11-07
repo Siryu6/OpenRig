@@ -57,32 +57,23 @@ Fedora/RHEL/Rocky/Alma the `.rpm` via `dnf`, openSUSE the `.rpm` via
 when present), everything else gets the AppImage in `~/.local/bin` with a
 desktop entry. Start JACK first, then run `pedalboard`.
 
-## AUR (maintainer notes for 9M2PJU)
+## AUR
 
-The AUR packages live in their own AUR repos (`openrig-bin`,
-`openrig-git`), not here. This directory keeps reviewed copies of the
-`PKGBUILD` and `.SRCINFO` so updates go through the normal pull-request
-flow. To publish:
+`openrig-bin` and `openrig-git` already exist on the AUR, maintained by
+`robertfoster` and `awahab` respectively — not by this repo. This
+directory keeps reviewed copies of their packaging so improvements go
+through the normal pull-request flow here first:
 
-```sh
-# first time: create the AUR repos (needs an AUR account + ssh key)
-git clone ssh://aur@aur.archlinux.org/openrig-bin.git
-git clone ssh://aur@aur.archlinux.org/openrig-git.git
-
-# on every upstream release X.Y.Z (example: openrig-bin)
-cd openrig-bin
-cp ../../OpenRig/dist/aur/openrig-bin/PKGBUILD .
-cp ../../OpenRig/dist/openrig.desktop ../../OpenRig/dist/openrig.svg \
-   ../../OpenRig/dist/eu.openrig.OpenRig.metainfo.xml .
-# bump pkgver, replace the tarball sha256 with the new release's
-# (.../releases/download/vX.Y.Z/openrig-X.Y.Z-linux-<arch>.tar.gz.sha256),
-makepkg --printsrcinfo > .SRCINFO
-makepkg -s   # test-build it
-git add PKGBUILD .SRCINFO openrig.desktop openrig.svg eu.openrig.OpenRig.metainfo.xml
-git commit -m "openrig-bin X.Y.Z" && git push
-```
-
-`openrig-git` needs no per-release bump: its `pkgver()` follows upstream
-`main` automatically (update its `pkgver` placeholder only when the
-`PKGBUILD` itself changes). After pushing either package, check its
-[AUR page](https://aur.archlinux.org/packages/openrig-bin) builds.
+- `install.sh` points Arch users at the existing `openrig-bin`
+  (`yay -S openrig-bin`, or `openrig-git` for latest `main`).
+- To propose a change (dependency fix, new release checksums, the
+  desktop files in this directory), open a comment on the package's
+  [AUR page](https://aur.archlinux.org/packages/openrig-bin) or mail
+  the maintainer, with a link to the reviewed file here.
+- `openrig-bin`'s tarball checksums change every release: fetch the new
+  `.sha256` files from
+  `.../releases/download/vX.Y.Z/openrig-X.Y.Z-linux-<arch>.tar.gz.sha256`,
+  put them in `sha256sums_x86_64` / `sha256sums_aarch64`, bump `pkgver`,
+  and regenerate `.SRCINFO` with `makepkg --printsrcinfo`.
+- `openrig-git` needs no per-release bump: its `pkgver()` follows
+  upstream `main` automatically.

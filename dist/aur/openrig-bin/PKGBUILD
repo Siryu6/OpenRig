@@ -1,4 +1,7 @@
-# Maintainer: 9M2PJU <9m2pju@gmail.com>
+# Proposed AUR packaging for openrig-bin, kept reviewed in upstream dist/.
+# The AUR package itself is maintained by robertfoster
+# (https://aur.archlinux.org/packages/openrig-bin); send him improvements
+# from this file (see dist/README.md).
 pkgname=openrig-bin
 pkgver=0.12.0
 pkgrel=1
