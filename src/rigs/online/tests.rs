@@ -227,6 +227,8 @@ fn reads_a_rig_detail() {
     });
     let detail = server.client().rig("plexi-crunch").unwrap();
     assert_eq!(detail.summary.name, "Plexi Crunch");
+    // Asked without a token: the site does not say
+    assert_eq!(detail.favourited, None);
     assert_eq!(detail.view.scenes.len(), 2);
     let labels: Vec<String> = detail.view.dependencies.iter().map(|d| d.label()).collect();
     assert_eq!(labels, ["Amp", "ZamComp", "Plexi · Crunch"]);
@@ -514,6 +516,97 @@ fn finds_own_rig_by_name() {
     assert_eq!(own.slug, "lead-solo-2");
     assert!(client.own_rig("nobody", "Lead Solo").unwrap().is_none());
     assert!(client.own_rig("marta", "  ").unwrap().is_none());
+}
+
+#[test]
+fn finds_own_rig_in_my_rigs() {
+    let server = Server::start(|r| {
+        assert_eq!(r.header("authorization"), Some("Bearer orc_T"));
+        match r.target.as_str() {
+            "/api/v1/me/rigs?page=1&per_page=100" => {
+                let mut hidden = summary("lead-solo-2", "lead  solo", "marta");
+                hidden["hidden"] = serde_json::json!(true);
+                json(
+                    200,
+                    serde_json::json!({"items": [
+                        summary("lead-solo-live", "Lead Solo live", "marta"),
+                        hidden,
+                    ], "total": 101, "page": 1, "per_page": 100}),
+                )
+            }
+            "/api/v1/me/rigs?page=2&per_page=100" => json(
+                200,
+                serde_json::json!({"items": [summary("old", "Old one", "marta")],
+                    "total": 101, "page": 2, "per_page": 100}),
+            ),
+            other => panic!("unexpected {other}"),
+        }
+    });
+    let client = server.client().with_token("orc_T");
+    // Hidden rigs count: their owner can still publish versions of them
+    let own = client.own_rig("marta", " Lead Solo ").unwrap().unwrap();
+    assert_eq!(own.slug, "lead-solo-2");
+    assert!(own.hidden);
+    // Further pages are read, and no search is made
+    let old = client.own_rig("marta", "old one").unwrap().unwrap();
+    assert_eq!(old.slug, "old");
+    assert!(client.own_rig("marta", "Missing").unwrap().is_none());
+    assert!(server
+        .requests()
+        .iter()
+        .all(|r| r.target.starts_with("/api/v1/me/rigs")));
+}
+
+#[test]
+fn finds_own_rig_by_search_on_a_site_without_my_rigs() {
+    let server = Server::start(|r| {
+        if r.target.starts_with("/api/v1/me/rigs") {
+            return error(404, "not_found", "No such endpoint.");
+        }
+        assert!(r
+            .target
+            .starts_with("/api/v1/rigs?q=Lead%20Solo&sort=new&per_page=100"));
+        json(
+            200,
+            serde_json::json!({"items": [
+                summary("lead-solo", "Lead Solo", "someone-else"),
+                summary("lead-solo-2", "Lead Solo", "marta"),
+            ], "total": 2, "page": 1, "per_page": 100}),
+        )
+    });
+    let client = server.client().with_token("orc_T");
+    let own = client.own_rig("marta", "Lead Solo").unwrap().unwrap();
+    assert_eq!(own.slug, "lead-solo-2");
+}
+
+#[test]
+fn rig_detail_says_whether_the_account_favourited_it() {
+    let server = Server::start(|r| {
+        assert_eq!(r.header("authorization"), Some("Bearer orc_T"));
+        let mut detail = summary("a", "A", "x");
+        match r.target.as_str() {
+            "/api/v1/rigs/a" => detail["favourited"] = serde_json::json!(true),
+            // An older site: no field
+            "/api/v1/rigs/b" => {}
+            other => panic!("unexpected {other}"),
+        }
+        json(200, detail)
+    });
+    let client = server.client().with_token("orc_T");
+    assert_eq!(client.rig("a").unwrap().favourited, Some(true));
+    assert_eq!(client.rig("b").unwrap().favourited, None);
+}
+
+#[test]
+fn too_large_rigs_get_the_publish_limit_message() {
+    assert_eq!(MAX_PUBLISH_BYTES, 512 * 1024);
+    match api_error(413, "") {
+        ApiError::Refused { code, message } => {
+            assert_eq!(code, "too_large");
+            assert_eq!(message, TOO_LARGE);
+        }
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]
