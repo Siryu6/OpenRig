@@ -74,12 +74,18 @@ above) and **openrig.eu**, the community site. Builds without the
   site and deletes it here.
 - When linked, **My favourites** lists your favourite rigs (tap one, then
   **Install**), and **Add to favourites** on a rig detail adds it (tap
-  **Favourite** again to remove it).
+  **Favourite** again to remove it). The detail asks the site whether
+  the rig is a favourite (`favourited`); with a site that does not say,
+  the marks come from the favourites list.
 - **Publish preset** exports the current preset (MIDI CCs left out), asks
   for a style and a short description, and publishes it. If you already
-  published a rig with that name, it offers to publish a new version of
-  it, with an optional changelog. The site's address of the rig is shown
-  when done. Items only this pedalboard has (`local` sources below)
+  published a rig with that name (case and spaces aside, found in your
+  own rigs on the site, `GET /me/rigs`, hidden ones included; or by a
+  search kept to your rigs with a site that lacks it), it offers to
+  publish a new version of it, with an optional changelog. The site's
+  address of the rig is shown when done. The site takes rig files of
+  512 KiB at most (`MAX_PUBLISH_BYTES`); a larger one is refused before
+  upload. Items only this pedalboard has (`local` sources below)
   cannot be had by others, so they block publishing and are listed.
 
 The account is kept in `<data>/openrig.json`, readable by its owner only
@@ -114,7 +120,8 @@ left out of the rig, and the export note says so.
 
 Importing never runs anything from the file, whether it comes from a
 drive or from openrig.eu. The rig is size-checked
-(1 MiB at most) and validated by the crate before anything is installed.
+(1 MiB at most, the format's `MAX_RIG_BYTES`, whether read from a drive or
+downloaded; publishing is stricter, 512 KiB, see above) and validated by the crate before anything is installed.
 Paths must be plain relative paths (no `..`, no absolute or drive paths,
 no control characters). Downloads go where the app decides, not where the
 rig says. Plugins come only from the signed store catalog, and models only
