@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- OpenRig application icon. Pedal mark derived from
+     os/board/common/splash/splash.svg (same drawing as ui/components/logo.slint). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="200 0 160 190">
+  <rect x="200" y="0" width="160" height="190" rx="36" fill="#1c1a17"/>
+  <g fill="none" stroke="#f0a43c" stroke-width="7" stroke-linecap="round">
+    <path d="M 262 22 H 238 A 16 16 0 0 0 222 38 V 150 A 16 16 0 0 0 238 166
+             H 322 A 16 16 0 0 0 338 150 V 38 A 16 16 0 0 0 322 22 H 298"/>
+    <circle cx="246" cy="62" r="11"/>
+    <path d="M 246 62 L 239 55"/>
+    <circle cx="280" cy="62" r="11"/>
+    <path d="M 280 62 V 52"/>
+    <circle cx="314" cy="62" r="11"/>
+    <path d="M 314 62 L 321 55"/>
+  </g>
+  <circle cx="280" cy="128" r="20" fill="none" stroke="#f0a43c" stroke-width="7"/>
+  <circle cx="280" cy="128" r="8" fill="#f0a43c"/>
+</svg>

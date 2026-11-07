@@ -71,9 +71,31 @@ Then the [tour of the screen](https://docs.openrig.eu/using/tour/) shows where e
 When something goes wrong, see [Troubleshooting](https://docs.openrig.eu/help/troubleshooting/)
 and the [FAQ](https://docs.openrig.eu/help/faq/).
 
-To try the app on a Linux desktop without the image, the release also holds
-`openrig-<version>-linux-x86_64.tar.gz` (and `aarch64`): it needs JACK and
-lilv (`apt install jackd2 liblilv-0-0`); start JACK, then `./pedalboard`.
+To try the app on a Linux desktop without the image, install the latest
+release with one line:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Siryu6/OpenRig/main/dist/install.sh | sh
+```
+
+It picks the right package for your distro (`.deb`, `.rpm`, the AUR, or
+the AppImage) and verifies its checksum; see
+[`dist/`](dist/) for details. To remove it again:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Siryu6/OpenRig/main/dist/install.sh | sh -s -- --uninstall
+```
+
+Or install by hand from the
+[latest release](https://github.com/Siryu6/OpenRig/releases/latest):
+`openrig_<version>_<arch>.deb` (Debian, Ubuntu, Mint, Pop!_OS,
+Raspberry Pi OS), `openrig-<version>-1.<arch>.rpm` (Fedora, RHEL,
+openSUSE), `openrig-bin` / `openrig-git` on the
+[AUR](https://aur.archlinux.org/packages/openrig-bin) (Arch), or
+`OpenRig-<version>-<arch>.AppImage` anywhere else. The plain
+`openrig-<version>-linux-x86_64.tar.gz` (and `aarch64`) is still there:
+it needs JACK and lilv (`apt install jackd2 liblilv-0-0`); start JACK,
+then `./pedalboard`.
 
 ## User guide
 
@@ -188,8 +210,14 @@ Guitar-oriented LV2 packages: `guitarix-lv2`, `x42-plugins`, `calf-plugins`,
 Each [release](https://github.com/Siryu6/OpenRig/releases) ships:
 
 - `openrig-<version>-linux-x86_64.tar.gz` and `…-linux-aarch64.tar.gz`:
-  the app, built with the default features. It needs JACK and lilv from the
-  system (`apt install jackd2 liblilv-0-0`).
+  the app, built with the default features. It needs JACK and lilv from
+  the system (`apt install jackd2 liblilv-0-0`).
+- `openrig_<version>_<debarch>.deb`, `openrig-<version>-1.<rpmarch>.rpm`
+  and `OpenRig-<version>-<arch>.AppImage`: the same app as installable
+  desktop packages (built by `.github/workflows/dist.yml` from
+  [`dist/`](dist/)); Arch Linux gets `openrig-bin` / `openrig-git` from
+  the [AUR](https://aur.archlinux.org/packages/openrig-bin), and
+  `dist/install.sh` installs the right one with a one-liner.
 - `openrig-os-<version>-rpi5.img.xz` and `…-x86_64.img.xz`: the OS images,
   to write to a card or a disk (Raspberry Pi Imager, `dd`, balenaEtcher).
 - `openrig-os-<version>-<board>.raucb` and `…-<board>-app.raucb`: the
