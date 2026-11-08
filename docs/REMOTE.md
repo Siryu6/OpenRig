@@ -120,6 +120,8 @@ password.
 
 Limits:
 
+- The hotspot's NetworkManager profile holds its key (the password) in
+  clear, readable by root only, as for any saved Wi-Fi network.
 - Plain HTTP. On the pedal's hotspot the WPA2 key encrypts the traffic; on
   someone else's Wi-Fi (a venue, a hotel), other devices on that network
   can see what the pedal and your phone exchange, the password included
@@ -163,17 +165,18 @@ Editor's renderer), both on by default and in the OS image.
 
 ## Measures
 
-x86_64 image in QEMU (4 cores, KVM), release build, one client, CPU of the
-app process (100 % = one core):
+x86_64 image in QEMU (4 cores, KVM, JACK 1024 × 3), release build, CPU of
+the app process (100 % = one core):
 
 | | CPU |
 |---|---|
-| Remote control off | see the PR |
-| On, no client | |
-| Live view open | |
-| Live view, tuner on | |
-| Editor open, nothing moving | |
-| Editor, tapping and dragging | |
+| Remote control off, UI on a 1280 × 800 display | 6.3 % |
+| On, UI on the same display, no client | 6.2 % |
+| On, no display, no client | 1.2 % |
+| Live view open | 1.4 % |
+| Live view, tuner on | 1.4 % |
+| Editor open, nothing moving | 2.3 % |
+| Editor, tapping and dragging | 2.9 % |
 
 The Editor sends 10 to 15 KiB per changed area; a still screen sends only
 what moves (the meters, the DSP load).
