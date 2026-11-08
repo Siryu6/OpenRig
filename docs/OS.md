@@ -181,7 +181,22 @@ restarts two services:
   its power button starts it again.
 
 NetworkManager (Wi-Fi, Ethernet), chrony (time) and dropbear (SSH) run as
-well, with what they need (udev, syslog, D-Bus); nothing else.
+well, with what they need (udev, syslog, D-Bus); nothing else by default.
+
+Network MIDI (off by default, Settings → MIDI, see [MIDI.md](MIDI.md#network-midi))
+adds two, started by `/usr/libexec/pedalboard/network-midi` from inittab
+(respawned) only while it is on:
+
+- **avahi-daemon**, mDNS on the wired and Wi-Fi interfaces (UDP 5353), to
+  announce the session (`_apple-midi._udp`). No host info, no workstation
+  service, no wide-area, no reflector, no avahi-autoipd.
+- **rtpmidid** 26.01 (`os/package/rtpmidid`), as user `pedalboard`: RTP-MIDI
+  on UDP 5004–5005, each session an ALSA sequencer port the app listens to
+  once the device is allowed. Configuration in `/etc/rtpmidid/default.ini`
+  (no ALSA port exported to the network), control socket
+  `/run/rtpmidid/control.sock`. The switch and the session name are kept in
+  `/data/network-midi/` and written by the settings helper
+  (`<id> network-midi on|off [name]`), which checks the name again.
 
 A boot logo shows from early in the boot until the UI appears:
 `/usr/libexec/pedalboard/splash` (the `pedalboard-splash` binary), started
