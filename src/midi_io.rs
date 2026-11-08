@@ -15,6 +15,7 @@ use midir::{Ignore, MidiInput, MidiInputConnection};
 use tracing::{info, warn};
 
 use pedalboard::midi::{parse, ClockTracker, MidiMessage};
+use pedalboard::network_midi::{self, Gate};
 
 /// How often devices are looked for. Short: a port that goes and comes back
 /// between two scans keeps its id (ALSA "client:port") and would be taken
@@ -52,8 +53,12 @@ struct Clock {
     last_sent: Option<Instant>,
 }
 
-/// Device name shown to the user: ALSA names ports "Client:Port 20:0"
+/// Device name shown to the user: ALSA names ports "Client:Port 20:0"; a
+/// network session (rtpmidid) by the name the computer gave it
 fn device_name(port_name: &str) -> String {
+    if let Some(session) = network_midi::session_port_name(port_name) {
+        return format!("{session} (network)");
+    }
     port_name
         .split(':')
         .next()
@@ -67,8 +72,26 @@ fn skipped(port_name: &str) -> bool {
     port_name.starts_with("Midi Through") || port_name.starts_with(CLIENT)
 }
 
-/// Listen to every MIDI input; `send` and `forward` run on the MIDI threads
+/// Whether the port is listened to. On the pedalboard OS (`gate`), the
+/// ports of rtpmidid are network sessions listened to only once allowed;
+/// elsewhere network MIDI is the system's, only rtpmidid's own ports
+/// (announcements, export) are left out.
+fn listened(gate: Option<&Gate>, id: &str, port_name: &str) -> bool {
+    if skipped(port_name) {
+        return false;
+    }
+    match gate {
+        Some(gate) => gate.admits(id, port_name),
+        None => {
+            !network_midi::session_port_name(port_name).is_some_and(network_midi::internal_port)
+        }
+    }
+}
+
+/// Listen to every MIDI input (the network sessions `gate` admits);
+/// `send` and `forward` run on the MIDI threads
 pub fn start(
+    gate: Option<Arc<Gate>>,
     send: impl Fn(MidiEvent) + Clone + Send + 'static,
     forward: impl Fn(&[u8]) + Clone + Send + 'static,
 ) -> Result<MidiIo> {
@@ -89,10 +112,11 @@ pub fn start(
                     .ports()
                     .iter()
                     .filter_map(|p| Some((p.id(), scanner.port_name(p).ok()?)))
-                    .filter(|(_, name)| !skipped(name))
+                    .filter(|(id, name)| listened(gate.as_deref(), id, name))
                     .collect();
+                // Gone, or no longer allowed (a network session blocked)
                 connections.retain(|id, (name, _)| {
-                    let present = ports.iter().any(|(p, _)| p == id);
+                    let present = ports.iter().any(|(p, n)| p == id && n == name);
                     if !present {
                         info!(device = %name, "MIDI device gone");
                     }
@@ -186,5 +210,22 @@ mod tests {
         );
         assert_eq!(device_name("nanoKONTROL2"), "nanoKONTROL2");
         assert!(skipped("Midi Through:Midi Through Port-0 14:0"));
+        assert_eq!(device_name("rtpmidid:Reaper 128:1"), "Reaper (network)");
+    }
+
+    #[test]
+    fn network_sessions_go_through_the_gate() {
+        let usb = ("20:0", "nanoKONTROL2:nanoKONTROL2 MIDI 1 20:0");
+        let session = ("128:1", "rtpmidid:Reaper 128:1");
+        let announcements = ("128:0", "rtpmidid:Announcements 128:0");
+        // Off the pedalboard OS: the system's; only its own ports are left out
+        assert!(listened(None, usb.0, usb.1));
+        assert!(listened(None, session.0, session.1));
+        assert!(!listened(None, announcements.0, announcements.1));
+        // On it: sessions once allowed only
+        let gate = Gate::default();
+        assert!(listened(Some(&gate), usb.0, usb.1));
+        assert!(!listened(Some(&gate), session.0, session.1));
+        assert!(!listened(Some(&gate), announcements.0, announcements.1));
     }
 }

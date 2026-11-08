@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
 import {
     PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus,
-    T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile, RoutingOutput, RoutingBlock, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot, SystemSetting
+    T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile, RoutingOutput, RoutingBlock, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot, SystemSetting, NetMidiDevice
 } from "types.slint";
 // Pages
 import { PluginRack } from "pages/rack.slint";
@@ -27,6 +27,7 @@ import { ContextMenuOverlay } from "components/context_menu.slint";
 import { Button, Icon } from "components/controls.slint";
 import { ResourcePanel } from "components/resource_panel.slint";
 import { PowerDialog } from "components/power_dialog.slint";
+import { NetMidiPrompt } from "components/netmidi_prompt.slint";
 import { PlotEvents } from "components/plot.slint";
 
 // Re-export the data types used by the Rust side
@@ -383,6 +384,27 @@ export component App inherits Window {
     callback midi-channel-changed(int);
     callback midi-clock-changed(bool);
     callback light-theme-changed(bool);
+    // Network MIDI (Settings → MIDI; on the pedalboard OS)
+    in property <bool> netmidi-available: false;
+    in property <bool> netmidi-enabled: false;
+    in property <bool> netmidi-busy: false;
+    in property <string> netmidi-name: "";
+    in property <string> netmidi-hostname: "";
+    in property <string> netmidi-summary: "";
+    in property <[NetMidiDevice]> netmidi-sessions: [];
+    in property <[NetMidiDevice]> netmidi-devices: [];
+    in property <bool> netmidi-allow-all: false;
+    in property <string> netmidi-message: "";
+    // A new device asks to play the pedal (address "": none)
+    in property <string> netmidi-prompt-name: "";
+    in property <string> netmidi-prompt-address: "";
+    callback netmidi-set-enabled(bool);
+    callback netmidi-rename(string);
+    callback netmidi-set-allow-all(bool);
+    callback netmidi-allow(string, string);
+    callback netmidi-block(string, string);
+    callback netmidi-forget(string, string);
+    callback netmidi-later();
     in-out property <int> dsp-cores: 0;
     in property <int> dsp-max-cores: 1;
     callback dsp-cores-changed(int);
@@ -1319,6 +1341,34 @@ export component App inherits Window {
                 light-theme-changed(on) => {
                     root.light-theme-changed(on);
                 }
+                netmidi-available: root.netmidi-available;
+                netmidi-enabled: root.netmidi-enabled;
+                netmidi-busy: root.netmidi-busy;
+                netmidi-name: root.netmidi-name;
+                netmidi-hostname: root.netmidi-hostname;
+                netmidi-summary: root.netmidi-summary;
+                netmidi-sessions: root.netmidi-sessions;
+                netmidi-devices: root.netmidi-devices;
+                netmidi-allow-all: root.netmidi-allow-all;
+                netmidi-message: root.netmidi-message;
+                netmidi-set-enabled(on) => {
+                    root.netmidi-set-enabled(on);
+                }
+                netmidi-rename(name) => {
+                    root.netmidi-rename(name);
+                }
+                netmidi-set-allow-all(on) => {
+                    root.netmidi-set-allow-all(on);
+                }
+                netmidi-allow(name, address) => {
+                    root.netmidi-allow(name, address);
+                }
+                netmidi-block(name, address) => {
+                    root.netmidi-block(name, address);
+                }
+                netmidi-forget(name, address) => {
+                    root.netmidi-forget(name, address);
+                }
                 dsp-cores: root.dsp-cores;
                 dsp-max-cores: root.dsp-max-cores;
                 dsp-cores-changed(cores) => {
@@ -1546,6 +1596,20 @@ export component App inherits Window {
         }
     }
 
+    NetMidiPrompt {
+        name: root.netmidi-prompt-name;
+        address: root.netmidi-prompt-address;
+        allow => {
+            root.netmidi-allow(root.netmidi-prompt-name, root.netmidi-prompt-address);
+        }
+        block => {
+            root.netmidi-block(root.netmidi-prompt-name, root.netmidi-prompt-address);
+        }
+        later => {
+            root.netmidi-later();
+        }
+    }
+
     PowerDialog {
         show <=> root.power-dialog;
         action <=> root.power-action;
@@ -1706,6 +1770,8 @@ export component App inherits Window {
                     root.show-resources = false;
                 } else if (root.show-context-menu) {
                     root.show-context-menu = false;
+                } else if (root.netmidi-prompt-address != "") {
+                    root.netmidi-later();
                 } else if (root.power-dialog) {
                     root.power-dialog = false;
                 } else if (root.current-view == 1 && root.arranging) {

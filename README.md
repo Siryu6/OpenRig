@@ -306,6 +306,8 @@ GPL-3.0-or-later (see [LICENSE](LICENSE)). The UI toolkit,
 royalty-free license does not cover embedded devices). Bundled third-party
 code keeps its own license: NeuralAudio (MIT, with NAM Core and RTNeural),
 the patched lilv bindings (MIT) and the patched Slint linuxkms backend
-(GPL-3.0) in `third_party/`. The TONE3000 logos in `ui/assets/tone3000/`
+(GPL-3.0) in `third_party/`. The OS image adds, among Buildroot's packages,
+rtpmidid (daemon GPL-3.0-or-later, library LGPL-2.1-or-later) and avahi
+(LGPL-2.1-or-later) for network MIDI. The TONE3000 logos in `ui/assets/tone3000/`
 are trademarks of TONE3000, not covered by the GPL, and only used for the
 TONE3000 integration.

@@ -1,0 +1,5 @@
+# Locally computed
+sha256  2b2b5a1f7bf9c62721fa71eabcfd20fe2827cb71f85db994ea42dc5b313a8423  rtpmidid-26.01.tar.gz
+sha256  ac32efbccd053da601507214edf70dc440d29365b55173aa593c01a57d5ae901  LICENSE.md
+sha256  3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986  LICENSE-daemon.txt
+sha256  dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551  LICENSE-lib.txt

@@ -1,0 +1,86 @@
+import { Theme } from "../theme.slint";
+import { Button, Card, Icon } from "controls.slint";
+
+// A computer opened a network MIDI session: its MIDI is ignored until the
+// player allows it. Tapping outside leaves it waiting (Settings → MIDI).
+export component NetMidiPrompt inherits Rectangle {
+    in property <string> name;
+    in property <string> address;
+
+    callback allow();
+    callback block();
+    callback later();
+
+    visible: root.address != "";
+    background: Theme.scrim;
+
+    TouchArea {
+        clicked => {
+            root.later();
+        }
+    }
+
+    Card {
+        width: 460px;
+        height: self.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+
+        // Swallows taps on the card
+        TouchArea { }
+
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-md;
+
+            HorizontalLayout {
+                spacing: Theme.space-md;
+                VerticalLayout {
+                    alignment: center;
+                    Icon {
+                        name: "midi";
+                        color: Theme.accent;
+                    }
+                }
+                Text {
+                    text: "Network MIDI";
+                    color: Theme.text-primary;
+                    font-size: Theme.font-title;
+                    font-weight: Theme.weight-semibold;
+                    vertical-alignment: center;
+                }
+            }
+            Text {
+                text: "Allow " + root.name + " (" + root.address + ") to control OpenRig?";
+                color: Theme.text-primary;
+                font-size: Theme.font-body;
+                wrap: word-wrap;
+            }
+            Text {
+                text: "Its MIDI is ignored until you answer. The choice is remembered; change it in Settings → MIDI.";
+                color: Theme.text-secondary;
+                font-size: Theme.font-small;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                spacing: Theme.space-sm;
+                Button {
+                    horizontal-stretch: 1;
+                    text: "Block";
+                    variant: "danger";
+                    clicked => {
+                        root.block();
+                    }
+                }
+                Button {
+                    horizontal-stretch: 1;
+                    text: "Allow";
+                    variant: "primary";
+                    clicked => {
+                        root.allow();
+                    }
+                }
+            }
+        }
+    }
+}

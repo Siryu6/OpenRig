@@ -95,6 +95,72 @@ ignored.
 **Omni** (the default) listens to all channels; otherwise only the chosen
 one. The clock has no channel and is always heard.
 
+## Network MIDI
+
+On the pedalboard OS, a computer on the same network can play the pedal
+without a cable, over RTP-MIDI (AppleMIDI), the protocol of macOS's Network
+MIDI. Settings → MIDI → **Network MIDI** switches it on (it is off by
+default) and names the session: the host name (`pedalboard`) unless set,
+up to 32 letters, digits, spaces, dots, dashes or underscores.
+
+Once on, the pedal is announced over mDNS/Bonjour (`_apple-midi._udp`) and
+listens on UDP 5004 (control) and 5005 (MIDI). On the computer:
+
+- **macOS**: Audio MIDI Setup → Window → Show MIDI Studio → Network (the
+  globe). The pedal shows in Directory; select it, Connect. The session
+  ("Session 1") is then a MIDI port in Logic, Ableton, MainStage…
+- **Windows**: [rtpMIDI](https://www.tobias-erichsen.de/software/rtpmidi.html)
+  by Tobias Erichsen: add a session, pick the pedal in Directory, Connect.
+  The session is a MIDI port for the DAW (Reaper, Cubase…).
+- **Linux**: [rtpmidid](https://github.com/davidmoreno/rtpmidid). The pedal
+  appears as an ALSA sequencer port of rtpmidid; connecting to it (Reaper's
+  MIDI output, `aconnect`, Qsynth…) opens the session. Without mDNS:
+  `rtpmidid-cli connect pedalboard <address> 5004`.
+
+The messages go through the same path as a cable: the [fixed map](#fixed-map),
+the controls learned in the block editor, the channel, the clock and the
+LV2 plugins apply unchanged. Each session shows in the device list as
+"<name> (network)".
+
+The card shows what is announced, the computers connected (name and
+address) and the devices allowed or blocked. The pedal sends nothing to the
+network: no MIDI output, and none of its own devices is exported.
+
+### Security
+
+RTP-MIDI has no authentication: anyone who can reach UDP 5004 can open a
+session, and a session can change presets, scenes, parameters, the tuner…
+So:
+
+- **Off by default.** Off, rtpmidid and avahi-daemon do not run: nothing
+  listens.
+- **New devices are asked about.** The first time a computer opens a
+  session, the screen asks "Allow <name> (<address>) to control OpenRig?".
+  Until the answer, its MIDI is ignored (the app does not listen to its
+  port). Allow and Block are remembered by session name and address in
+  `network-midi.json` (data directory), listed in the card with Remove.
+  Block (or a blocked device coming back) drops the session in rtpmidid.
+  Tapping outside the question leaves it waiting in the card. "Allow anyone
+  on the network" skips the question; blocked devices stay blocked.
+- **Local network only.** A session from an address that is not private
+  (10/8, 172.16/12, 192.168/16, fc00::/7) or link-local (169.254/16,
+  fe80::/10) is dropped without asking, whatever the mode. The image has no
+  firewall: rtpmidid answers the protocol on any interface, and the app
+  enforces this by not listening.
+- mDNS (avahi) is limited to the wired and Wi-Fi interfaces and announces
+  neither the machine type nor a workstation service.
+- `pedalboard-report` lists the state, the sessions and the devices allowed
+  or blocked (names and addresses; there are no secrets).
+
+Limits, for the threat model: name and address are what the computer
+claims; on the same network a device can take the name and address of an
+allowed one (spoofing UDP from the local network is easy). The question
+guards against a stranger on a shared network (a venue's Wi-Fi) taking over
+the pedal by mistake or on purpose, not against an attacker in control of
+the local network: on such a network, keep network MIDI off, or use a
+network of your own. A blocked computer sees its session drop only when it
+times out (rtpmidid has no way to say goodbye to a removed session).
+
 ## Platforms
 
 MIDI uses midir (feature `midi`, default): ALSA sequencer on Linux
@@ -104,7 +170,8 @@ as usual.
 
 ## Not supported yet
 
-- MIDI output (sending PC to other gear, MIDI thru).
+- MIDI output (sending PC to other gear, MIDI thru), over the network
+  too.
 - MIDI routing per block (all MIDI plugins get the same messages).
 - CC62, CC65–67 of the Helix map (looper half speed / reverse, snapshot
   modes), Start / Stop transport.
