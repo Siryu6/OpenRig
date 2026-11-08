@@ -105,7 +105,19 @@ The first partition (FAT, readable from any computer) holds
 | `sample_rate` | `48000` | Hz |
 | `period`, `periods` | `128`, `2` | JACK buffer: 128 × 2 at 48 kHz adds about 5 ms each way |
 | `display_rotation` | `0` | 0, 90, 180 or 270 (clockwise; touch turns too) |
+| `display` | `auto` | Where the UI is: `auto` (the touchscreen; the remote control when there is none and a password is set), `screen` or `remote` |
 | `wifi_country` | empty | Two letters (`FR`, `US`…): the Wi-Fi channels allowed there |
+| `remote_password` | empty (off) | Remote control password, 8 to 63 characters, also the hotspot's key; `off` turns it off |
+| `remote_hotspot` | `auto` | The remote control's Wi-Fi hotspot: `auto` (after 45 s without a network), `on` or `off` |
+| `wifi_ssid`, `wifi_password` | empty | A Wi-Fi network to join without a screen |
+
+`remote_password`, `wifi_ssid` and `wifi_password` are read once, at the
+next start, as root (`S00storage` runs `pedalboard remote-setup`): the
+password is kept as an Argon2id hash in `/data/pedalboard/remote.json`, the
+network and the hotspot as NetworkManager profiles in `/data/network`, and
+the lines become `(saved)` so the card holds no secret. Quotes around a
+value are removed; these values may contain any character. See
+[REMOTE.md](REMOTE.md).
 
 Values are read at boot; restart after editing. Keys are lowercase and
 values plain (letters, digits, `_ . : , -`): anything else is ignored and the
@@ -182,6 +194,16 @@ restarts two services:
 
 NetworkManager (Wi-Fi, Ethernet), chrony (time) and dropbear (SSH) run as
 well, with what they need (udev, syslog, D-Bus); nothing else.
+
+The UI may serve the remote control ([REMOTE.md](REMOTE.md)): its launcher
+gives it `CAP_NET_BIND_SERVICE` for port 80, and nothing else. Without a
+touchscreen (`display=auto`, a remote control password, and no display or
+no touch input) the UI is drawn in memory for the remote control and the
+display keeps the boot logo. `/usr/libexec/pedalboard/hotspot`, run by init
+as root, starts the remote control's hotspot as `remote_hotspot` says and
+writes its state to `/run/pedalboard/remote/hotspot`. NetworkManager runs
+dnsmasq for the hotspot's addresses (no dnsmasq service of its own), with no
+firewall backend (no NAT: the hotspot reaches only the pedal).
 
 A boot logo shows from early in the boot until the UI appears:
 `/usr/libexec/pedalboard/splash` (the `pedalboard-splash` binary), started
@@ -417,6 +439,7 @@ kernel and give the user real-time limits (`@audio - rtprio 95`,
   from a USB stick, then restart): for now with `pedalboard-update` over
   SSH. Writing a whole image to the card replaces the partition table, so
   `/data` is recreated empty: back up `/data/pedalboard` first.
-- AMD graphics on x86_64 (needs the amdgpu firmware and driver), Wi-Fi
-  hotspot for first set-up, `.local` names
-  (mDNS).
+- AMD graphics on x86_64 (needs the amdgpu firmware and driver), `.local`
+  names (mDNS).
+- The remote control's hotspot is not tested on hardware yet (QEMU has no
+  Wi-Fi).

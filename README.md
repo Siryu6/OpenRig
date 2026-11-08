@@ -50,6 +50,9 @@ real time with JACK, and updates itself without risking the board.
   bass DI, a separate monitor mix.
 - **[MIDI](https://docs.openrig.eu/using/midi/)**: Helix-style map for presets, scenes and
   stomps, clock and CC learn.
+- **[Remote control](https://docs.openrig.eu/setup/remote/)**: use your phone or tablet as the
+  pedal's screen, from a web browser: the full editor, or a stage-friendly Live view. No
+  touchscreen needed; the pedal can bring its own Wi-Fi hotspot.
 - **[Updates](https://docs.openrig.eu/setup/updates/)**: a read-only system with signed A/B
   updates that roll back when the new system does not start.
 
@@ -165,6 +168,8 @@ with audio disabled.
 | `RUST_LOG` | `info` | Log level |
 | `PEDALBOARD_EXIT_ON_AUDIO_CHANGE` | unset | Quit when the JACK server stops or starts (the OS launcher starts the UI again) |
 | `PEDALBOARD_POWER_REQUEST` | unset | File where Power off / Restart is requested (set by the OS launcher; shows the menu entry) |
+| `PEDALBOARD_DISPLAY` | `auto` | `screen`, or `remote`: the UI for the remote control's Editor, drawn in memory (see [docs/REMOTE.md](docs/REMOTE.md)) |
+| `PEDALBOARD_REMOTE_PORT` | `80`, then `8080` | Port of the remote control's web server |
 | `PEDALBOARD_ALIVE_FILE` | unset | File written again every second while the UI runs (set by the OS launcher, to tell an app update that hangs) |
 
 Switches and encoder are wired between the GPIO and ground (internal
@@ -293,6 +298,8 @@ Three threads share the chain:
   settings, SSH, storage, boot logo, A/B updates
 - [docs/SCENES.md](docs/SCENES.md): scenes, setlists, footswitch modes, tempo and tails
 - [docs/MIDI.md](docs/MIDI.md): the MIDI map, learn and ranges, clock, MIDI to plugins
+- [docs/REMOTE.md](docs/REMOTE.md): the remote control: set-up without a screen, the Editor and
+  Live modes, the hotspot, security
 - [docs/ROUTING.md](docs/ROUTING.md): inputs, outputs, sends and returns, `routing.json`
 - [docs/STORE.md](docs/STORE.md): the plugin store: charter, signed index, install and removal
 - [docs/NEURAL_MODELS.md](docs/NEURAL_MODELS.md): the Amp / Amp + Cab / Pedal / Cabinet /
