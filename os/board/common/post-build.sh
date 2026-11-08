@@ -11,6 +11,10 @@ OS_DIR=$(cd "$(dirname "$0")/../.." && pwd)
 mkdir -p "$TARGET/boot" "$TARGET/data" "$TARGET/root/.ssh" \
 	"$TARGET/etc/NetworkManager/system-connections"
 
+# dnsmasq is for the remote control's hotspot, started by NetworkManager
+# (DHCP and DNS on 10.42.0.1), not as a system service
+rm -f "$TARGET/etc/init.d/S80dnsmasq"
+
 # Updates are accepted when signed with this build's key (update-keys.sh)
 # shellcheck source=update-keys.sh
 . "$OS_DIR/board/common/update-keys.sh"

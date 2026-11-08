@@ -1,0 +1,126 @@
+#!/bin/sh
+#
+# Wi-Fi hotspot of the remote control: the pedal's own network, for a phone
+# or tablet when there is no other one (on stage, without a screen to join
+# a Wi-Fi). Run by init as root and started again when it exits.
+#
+# remote_hotspot (pedalboard.txt):
+#   auto  started when the pedal has no Ethernet or Wi-Fi connection for
+#         WAIT seconds
+#   on    always started
+#   off   never started
+#
+# The network is OpenRig-XXXX (the end of the Wi-Fi card's address), WPA2
+# with the remote control password as its key; the pedal is 10.42.0.1. Its
+# NetworkManager profile is written with the password (remote-setup at boot,
+# or Settings → Remote control), and removed with it.
+#
+# What it is doing is in $STATUS, one line shown by the app.
+
+ID=OpenRig-hotspot
+PROFILE=/etc/NetworkManager/system-connections/$ID.nmconnection
+DIR=/run/pedalboard/remote
+STATUS=$DIR/hotspot
+WAIT=45
+
+# shellcheck source=../../../etc/pedalboard/defaults
+. /run/pedalboard/config 2>/dev/null || . /etc/pedalboard/defaults
+case "$remote_hotspot" in
+auto | on | off) ;;
+*) remote_hotspot=auto ;;
+esac
+
+install -d -m 755 "$DIR"
+echo $$ >"$DIR/hotspot.pid"
+
+status() {
+	[ "$(cat "$STATUS" 2>/dev/null)" = "$*" ] && return
+	echo "$*" >"$STATUS.tmp" && mv -f "$STATUS.tmp" "$STATUS"
+	logger -t pedalboard-hotspot "$*"
+}
+
+# Nothing to do until the settings change (settings stops this script)
+idle() {
+	while :; do sleep 3600; done
+}
+
+active() {
+	nmcli -t -f NAME connection show --active 2>/dev/null | grep -qx "$ID"
+}
+
+if [ "$remote_hotspot" = off ]; then
+	active && nmcli connection down id "$ID" >/dev/null 2>&1
+	status "Off"
+	idle
+fi
+# The profile comes with a password set from Settings
+while [ ! -e "$PROFILE" ]; do
+	status "Off: no remote control password"
+	sleep 10
+done
+
+# The first Wi-Fi card; a USB one may come later
+dev=$(nmcli -t -f DEVICE,TYPE device 2>/dev/null | awk -F: '$2 == "wifi" { print $1; exit }')
+if [ -z "$dev" ]; then
+	status "Unavailable: no Wi-Fi card"
+	sleep 30
+	exit 0
+fi
+# The card must be able to be an access point
+phy=$(cat "/sys/class/net/$dev/phy80211/name" 2>/dev/null)
+if [ -n "$phy" ] && command -v iw >/dev/null 2>&1 &&
+	! iw phy "$phy" info 2>/dev/null |
+	sed -n '/Supported interface modes/,/^[[:space:]]*[A-Z].*:$/p' | grep -q '\* AP$'; then
+	status "Unavailable: this Wi-Fi card cannot be an access point"
+	idle
+fi
+
+suffix=$(tr -d ':\n' <"/sys/class/net/$dev/address" | tr a-f A-F | sed 's/.*\(....\)$/\1/')
+ssid="OpenRig-$suffix"
+if [ "$(nmcli -g 802-11-wireless.ssid connection show id "$ID" 2>/dev/null)" != "$ssid" ] ||
+	[ "$(nmcli -g connection.interface-name connection show id "$ID" 2>/dev/null)" != "$dev" ]; then
+	nmcli connection modify id "$ID" 802-11-wireless.ssid "$ssid" \
+		connection.interface-name "$dev" >/dev/null 2>&1
+fi
+
+# Connected to a network over Ethernet or Wi-Fi (not the hotspot)
+connected() {
+	nmcli -t -f TYPE,STATE,CONNECTION device 2>/dev/null |
+		awk -F: -v id="$ID" '($1 == "ethernet" || $1 == "wifi") && $2 == "connected" && $3 != id { found = 1 } END { exit !found }'
+}
+
+start() {
+	if active || nmcli connection up id "$ID" >/dev/null 2>&1; then
+		status "On: $ssid (http://10.42.0.1)"
+	else
+		status "Unavailable: the hotspot did not start (see pedalboard-report)"
+		sleep 60
+		exit 0
+	fi
+}
+
+if [ "$remote_hotspot" = on ]; then
+	start
+	# Started again if it stopped
+	while sleep 10; do
+		[ -e "$PROFILE" ] || exit 0
+		active || start
+	done
+fi
+
+# auto: started after WAIT seconds without a connection, then kept
+since=0
+while [ -e "$PROFILE" ]; do
+	if active; then
+		status "On: $ssid (http://10.42.0.1)"
+	elif connected; then
+		since=0
+		status "Standby: the pedal is on a network"
+	elif [ $since -ge $WAIT ]; then
+		start
+	else
+		status "Waiting: started after $WAIT s without a network"
+	fi
+	sleep 5
+	since=$((since + 5))
+done

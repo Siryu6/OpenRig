@@ -14,8 +14,36 @@ periods=2
 # Screen rotation in degrees: 0, 90, 180 or 270
 display_rotation=0
 
+# Where the pedal's screen is:
+#   auto    the touchscreen; with no touchscreen (none, or a monitor without
+#           touch) and a remote control password set, your phone or tablet
+#   screen  always the touchscreen
+#   remote  always your phone or tablet (the remote control)
+display=auto
+
 # Wi-Fi country, two letters (FR, DE, US...): opens the channels allowed there
 wifi_country=
+
+# Remote control: use your phone or tablet as the pedal's screen, from a
+# web browser: http://10.42.0.1 on the pedal's hotspot (below), else the
+# pedal's address on your network (see your router). Off while the
+# password is empty. 8 to 63 characters; it is also the key of the pedal's
+# Wi-Fi hotspot. Read at the next start, then replaced by "(saved)": write
+# a new one to change it, or "off" to turn the remote control off.
+# Without a touchscreen, set it: the pedal has no other screen.
+remote_password=
+
+# The pedal's own Wi-Fi network for the remote control, OpenRig-XXXX (the
+# key is the password above; the pedal is http://10.42.0.1):
+#   auto  when the pedal has no network 45 s after starting
+#   on    always (the pedal does not join a Wi-Fi then)
+#   off   never
+remote_hotspot=auto
+
+# A Wi-Fi network to join, without a screen to choose it. Read at the next
+# start and replaced by "(saved)", like the password.
+wifi_ssid=
+wifi_password=
 
 # SSH: put your public keys in a file named authorized_keys next to this one
 # to log in as root (keys only, no password).
