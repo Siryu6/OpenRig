@@ -207,6 +207,21 @@ impl Helper {
         send_request(&self.dir, "settings helper", &pairs.join(" "))
     }
 
+    /// Switch network MIDI on or off and name its session (empty: the host
+    /// name); returns the request id the status refers to. The helper
+    /// checks the name again (`network-midi` in the OS).
+    pub fn network_midi(&self, on: bool, name: &str) -> Result<String> {
+        if !crate::network_midi::valid_session_name(name) {
+            anyhow::bail!("Invalid session name");
+        }
+        let state = if on { "on" } else { "off" };
+        send_request(
+            &self.dir,
+            "settings helper",
+            format!("network-midi {state} {name}").trim_end(),
+        )
+    }
+
     /// Status of request `id`; `None` until the helper is done with it
     pub fn status(&self, id: &str) -> Option<Status> {
         let text = fs::read_to_string(self.dir.join("status")).ok()?;
