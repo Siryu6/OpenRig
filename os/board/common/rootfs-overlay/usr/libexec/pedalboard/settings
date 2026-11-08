@@ -12,6 +12,12 @@
 # $DIR/status: "<id> done <audio|display|reboot|none>" (what the change
 # needs: done, the app to restart, the system to restart) or
 # "<id> error <message>".
+#
+# Network MIDI (Settings → MIDI) is switched with another line, the session
+# name being the rest of it (it may hold spaces), checked and applied by
+# network-midi:
+#
+#   <id> network-midi <on|off> [<name>]
 
 DIR=/run/pedalboard/settings
 FILE=/boot/pedalboard.txt
@@ -84,6 +90,20 @@ while :; do
 	# Waits for the app to write a request
 	read -r id pairs <"$DIR/request" || continue
 	case "$id" in "" | *[!0-9A-Za-z_-]*) continue ;; esac
+	case "$pairs" in
+	network-midi\ *)
+		rest=${pairs#network-midi }
+		state=${rest%% *}
+		name=${rest#"$state"}
+		name=${name# }
+		if message=$(/usr/libexec/pedalboard/network-midi set "$state" "$name"); then
+			status "$id" "done" none
+		else
+			status "$id" error "${message:-Network MIDI could not be switched}"
+		fi
+		continue
+		;;
+	esac
 	changes=
 	for pair in $pairs; do
 		key=${pair%%=*}
