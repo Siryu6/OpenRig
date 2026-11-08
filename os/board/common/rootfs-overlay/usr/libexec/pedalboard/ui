@@ -52,11 +52,13 @@ keeper=$!
 # util-linux, not the BusyBox applets of the same name (fewer options).
 # The exit status goes through a file: a pipe gives logger's. The app may
 # open port 80 for the remote control (net_bind_service, nothing else).
+# The environment is set before setpriv (what its --reset-env gives, plus
+# the app's): BusyBox is setuid, so an env run after setpriv would drop the
+# capability.
 {
-	/usr/bin/prlimit --rtprio=95 --memlock=unlimited \
-		/usr/bin/setpriv --reuid=pedalboard --regid=pedalboard --init-groups --reset-env \
-		--inh-caps=+net_bind_service --ambient-caps=+net_bind_service \
-		env PEDALBOARD_DATA_DIR=/data/pedalboard \
+	env -i ${TERM:+TERM="$TERM"} HOME=/data/pedalboard USER=pedalboard LOGNAME=pedalboard \
+		SHELL=/bin/sh PATH=/usr/local/bin:/bin:/usr/bin \
+		PEDALBOARD_DATA_DIR=/data/pedalboard \
 		LV2_PATH=/data/pedalboard/lv2:/usr/lib/lv2 \
 		PEDALBOARD_EXIT_ON_AUDIO_CHANGE=1 \
 		PEDALBOARD_POWER_REQUEST="$power/request" \
@@ -67,6 +69,9 @@ keeper=$!
 		SLINT_KMS_ROTATION="$display_rotation" \
 		PEDALBOARD_DISPLAY="$display" \
 		PEDALBOARD_REMOTE_STATUS=/run/pedalboard/app/remote \
+		/usr/bin/prlimit --rtprio=95 --memlock=unlimited \
+		/usr/bin/setpriv --reuid=pedalboard --regid=pedalboard --init-groups \
+		--inh-caps=+net_bind_service --ambient-caps=+net_bind_service \
 		"$app" 2>&1
 	echo $? >/run/pedalboard/ui-status
 } | logger -t pedalboard
