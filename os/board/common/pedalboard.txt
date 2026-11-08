@@ -17,5 +17,8 @@ display_rotation=0
 # Wi-Fi country, two letters (FR, DE, US...): opens the channels allowed there
 wifi_country=
 
+# Layout of a USB keyboard, as in X11 / xkb: us, fr, de, gb, ch...
+keyboard_layout=us
+
 # SSH: put your public keys in a file named authorized_keys next to this one
 # to log in as root (keys only, no password).

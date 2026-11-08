@@ -11,6 +11,7 @@ config BR2_PACKAGE_PEDALBOARD
 	select BR2_PACKAGE_LILV
 	select BR2_PACKAGE_LIBINPUT
 	select BR2_PACKAGE_LIBXKBCOMMON
+	select BR2_PACKAGE_XKEYBOARD_CONFIG # keymaps libxkbcommon loads
 	select BR2_PACKAGE_LIBDRM
 	select BR2_PACKAGE_FONTCONFIG # loaded at run time by the UI
 	select BR2_PACKAGE_DEJAVU

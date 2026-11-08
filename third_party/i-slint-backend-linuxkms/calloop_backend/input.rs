@@ -126,7 +126,8 @@ pub struct LibInputHandler<'a> {
     /// more than 5 simultaneous contacts.
     last_touch_positions: [(i32, Option<LogicalPosition>); 5],
     window: &'a RefCell<Option<Rc<FullscreenWindowAdapter>>>,
-    keystate: Option<xkb::State>,
+    /// Created at the first key: `Some(None)` when there is no keymap (keys ignored)
+    keystate: Option<Option<xkb::State>>,
     libinput_event_hook: &'a Option<Box<dyn Fn(&::input::Event) -> bool>>,
 }
 
@@ -331,13 +332,11 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
                     let key_code = xkb::Keycode::new(key_event.key() + 8);
                     let state = key_event.key_state();
 
-                    let xkb_key_state = self.keystate.get_or_insert_with(|| {
-                        let xkb_context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-                        let keymap =
-                            xkb::Keymap::new_from_names(&xkb_context, "", "", "", "", None, 0)
-                                .expect("Error compiling keymap");
-                        xkb::State::new(&keymap)
-                    });
+                    let Some(xkb_key_state) =
+                        self.keystate.get_or_insert_with(new_xkb_state).as_mut()
+                    else {
+                        continue;
+                    };
 
                     let sym = xkb_key_state.key_get_one_sym(key_code);
 
@@ -424,6 +423,25 @@ impl<'a> calloop::EventSource for LibInputHandler<'a> {
         self.token = None;
         poll.unregister(&self.libinput)
     }
+}
+
+/// Keyboard state for the default keymap (`XKB_DEFAULT_LAYOUT`… or us), or
+/// None when it cannot be compiled, e.g. without the xkb data
+/// (/usr/share/X11/xkb): keys are then ignored instead of crashing.
+fn new_xkb_state() -> Option<xkb::State> {
+    let xkb_context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+    // xkb_context_new() returns NULL when the default include path is
+    // missing; the xkbcommon crate does not check, and a NULL context
+    // segfaults in libxkbcommon
+    let keymap = if xkb_context.get_raw_ptr().is_null() {
+        None
+    } else {
+        xkb::Keymap::new_from_names(&xkb_context, "", "", "", "", None, 0)
+    };
+    if keymap.is_none() {
+        eprintln!("No keyboard keymap (is xkeyboard-config installed?): keyboard input is ignored");
+    }
+    keymap.map(|keymap| xkb::State::new(&keymap))
 }
 
 fn map_key_sym(sym: xkb::Keysym) -> Option<SharedString> {

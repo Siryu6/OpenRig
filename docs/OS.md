@@ -106,6 +106,7 @@ The first partition (FAT, readable from any computer) holds
 | `period`, `periods` | `128`, `2` | JACK buffer: 128 × 2 at 48 kHz adds about 5 ms each way |
 | `display_rotation` | `0` | 0, 90, 180 or 270 (clockwise; touch turns too) |
 | `wifi_country` | empty | Two letters (`FR`, `US`…): the Wi-Fi channels allowed there |
+| `keyboard_layout` | `us` | Layout of a USB keyboard, xkb names: `us`, `fr`, `de`, `gb`, `ch`… |
 
 Values are read at boot; restart after editing. Keys are lowercase and
 values plain (letters, digits, `_ . : , -`): anything else is ignored and the
