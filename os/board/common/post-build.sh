@@ -15,6 +15,10 @@ mkdir -p "$TARGET/boot" "$TARGET/data" "$TARGET/root/.ssh" \
 # (DHCP and DNS on 10.42.0.1), not as a system service
 rm -f "$TARGET/etc/init.d/S80dnsmasq"
 
+# avahi-daemon only runs with Network MIDI, started by
+# /usr/libexec/pedalboard/network-midi
+rm -f "$TARGET/etc/init.d/S50avahi-daemon"
+
 # Updates are accepted when signed with this build's key (update-keys.sh)
 # shellcheck source=update-keys.sh
 . "$OS_DIR/board/common/update-keys.sh"

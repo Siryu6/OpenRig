@@ -57,7 +57,12 @@ thread_local! {
     static MIDI: RefCell<Midi> = RefCell::default();
 }
 
-pub fn setup(app: &App, state: &Arc<AppState>) {
+/// `network`: the gate of network MIDI sessions, on the pedalboard OS
+pub fn setup(
+    app: &App,
+    state: &Arc<AppState>,
+    network: Option<Arc<pedalboard::network_midi::Gate>>,
+) {
     let settings = state.midi_settings();
     app.set_midi_channel(i32::from(settings.channel));
     app.set_midi_clock(settings.clock);
@@ -148,7 +153,7 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
         };
         let st = state.clone();
         let forward = move |bytes: &[u8]| st.forward_midi(bytes);
-        match crate::midi_io::start(send, forward) {
+        match crate::midi_io::start(network, send, forward) {
             Ok(io) => {
                 app.set_midi_available(true);
                 MIDI.with(|m| m.borrow_mut().io = Some(io));

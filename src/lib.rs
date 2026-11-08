@@ -5,6 +5,7 @@ pub mod hardware;
 pub mod i2c_encoders;
 pub mod midi;
 pub mod monitor;
+pub mod network_midi;
 pub mod persist;
 pub mod plugins;
 pub mod presets;

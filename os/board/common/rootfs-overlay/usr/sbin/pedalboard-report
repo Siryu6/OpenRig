@@ -2,7 +2,8 @@
 #
 # What to paste in a bug report: versions, settings, the display, the audio
 # interface, its driver and how JACK opened it, the GPIO pins, and the log
-# of JACK and the app, and the Wi-Fi state and log.
+# of JACK and the app, the Wi-Fi state and log, and Network MIDI (state,
+# sessions, the devices allowed or blocked: names and addresses only).
 # Read-only. Run as root over SSH, e.g.
 #
 #   pedalboard-report > /tmp/report.txt
@@ -151,6 +152,16 @@ dmesg | grep -i -E 'brcmf|cfg80211|ieee80211' | tail -20
 echo "wpa_supplicant SAE (WPA3): $(grep -c 'SAE' /usr/sbin/wpa_supplicant 2>/dev/null) references"
 grep -E ' (NetworkManager|wpa_supplicant)(\[[0-9]+\])?: ' /var/log/messages 2>/dev/null | tail -80
 
+section "Network MIDI"
+echo "enabled: $(cat /data/network-midi/enabled 2>/dev/null || echo off)"
+echo "session name: $(cat /data/network-midi/name 2>/dev/null || echo "$(hostname) (host name)")"
+# Written by the app: the sessions rtpmidid has, and what the app does with them
+cat /run/pedalboard/app/network-midi 2>/dev/null || echo "(no status from the app)"
+echo "devices allowed or blocked (network-midi.json):"
+cat /data/pedalboard/network-midi.json 2>/dev/null || echo "(none)"
+echo
+grep -E ' (network-midi|rtpmidid|avahi-daemon)(\[[0-9]+\])?: ' /var/log/messages 2>/dev/null | tail -60
+
 # No secrets here either: the password is only kept as a hash
 section "Remote control"
 echo "app: $(cat /run/pedalboard/app/remote 2>/dev/null || echo "(no status: app not running?)")"
@@ -167,4 +178,4 @@ grep -E ' (jackd|pedalboard|pedalboard-update|S00storage)(\[[0-9]+\])?: ' /var/l
 section "Processes"
 # BusyBox pgrep has no -a
 # shellcheck disable=SC2009
-ps | grep -E 'jackd|pedalboard' | grep -v grep
+ps | grep -E 'jackd|pedalboard|rtpmidid|avahi' | grep -v grep

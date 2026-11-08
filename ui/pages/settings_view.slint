@@ -1,8 +1,8 @@
 import { Theme } from "../theme.slint";
-import { Button, Card, Icon, SectionHeader, Stepper, Toggle } from "../components/controls.slint";
+import { Button, Card, Icon, SectionHeader, Segmented, Stepper, Toggle } from "../components/controls.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 import { LogoMark, LogoText } from "../components/logo.slint";
-import { SystemSetting, WifiNetwork } from "../types.slint";
+import { NetMidiDevice, SystemSetting, WifiNetwork } from "../types.slint";
 import { Tone3000Logo } from "../components/tone3000_brand.slint";
 import { Features } from "../features.slint";
 import { RemoteCard, RemoteControl } from "../remote.slint";
@@ -91,6 +91,24 @@ export component SettingsView inherits Rectangle {
     callback midi-clock-changed(bool);
     callback light-theme-changed(bool);
 
+    // Network MIDI (RTP-MIDI, on the pedalboard OS only)
+    in property <bool> netmidi-available: false;
+    in property <bool> netmidi-enabled: false;
+    in property <bool> netmidi-busy: false;          // switching
+    in property <string> netmidi-name: "";           // session name set ("" = host name)
+    in property <string> netmidi-hostname: "";
+    in property <string> netmidi-summary: "";        // what rtpmidid announces
+    in property <[NetMidiDevice]> netmidi-sessions: [];
+    in property <[NetMidiDevice]> netmidi-devices: []; // allowed or blocked
+    in property <bool> netmidi-allow-all: false;
+    in property <string> netmidi-message: "";
+    callback netmidi-set-enabled(bool);
+    callback netmidi-rename(string);
+    callback netmidi-set-allow-all(bool);
+    callback netmidi-allow(string, string);          // name, address
+    callback netmidi-block(string, string);
+    callback netmidi-forget(string, string);
+
     // Audio processing
     in property <int> dsp-cores: 0;                  // 0 = Auto
     in property <int> dsp-max-cores: 1;              // cores the effect chain can use
@@ -145,6 +163,8 @@ export component SettingsView inherits Rectangle {
     private property <string> key-draft: "";
     private property <bool> confirm-disconnect: false;
     private property <string> wifi-open-ssid: "";    // row showing its actions
+    private property <bool> netmidi-renaming: false;
+    private property <string> netmidi-draft: "";
     private property <string> wifi-password-ssid: "";
     private property <string> wifi-password: "";
 
@@ -770,6 +790,206 @@ export component SettingsView inherits Rectangle {
                     if root.midi-available: Text {
                         text: "Helix-style map: PC selects presets (CC0 bank of 128), CC69 scenes, CC64 tap, CC68 tuner, CC49–56 footswitches. Other CCs are learned in the block editor.";
                         color: Theme.text-muted;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            // ------------------------------------------- Network MIDI
+            Card {
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-md;
+
+                    HorizontalLayout {
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            alignment: center;
+                            Icon {
+                                name: "midi";
+                                color: Theme.accent;
+                            }
+                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: "Network MIDI";
+                                color: Theme.text-primary;
+                                font-size: Theme.font-title;
+                                font-weight: Theme.weight-semibold;
+                            }
+                            Text {
+                                text: !root.netmidi-available ? "Network MIDI is handled by the system on this computer."
+                                    : root.netmidi-busy ? "Switching…"
+                                    : !root.netmidi-enabled ? "Off: nothing listens on the network. On, computers on the local network (RTP-MIDI) can play the pedal."
+                                    : root.netmidi-summary;
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-small;
+                                wrap: word-wrap;
+                            }
+                        }
+                        if root.netmidi-available: VerticalLayout {
+                            alignment: center;
+                            Toggle {
+                                checked: root.netmidi-enabled;
+                                toggled(on) => {
+                                    root.netmidi-set-enabled(on);
+                                }
+                            }
+                        }
+                    }
+
+                    if root.netmidi-available: HorizontalLayout {
+                        spacing: Theme.space-md;
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            Text {
+                                text: "SESSION NAME";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-caption;
+                                font-weight: Theme.weight-bold;
+                                letter-spacing: 0.8px;
+                            }
+                        }
+                        Button {
+                            width: 240px;
+                            text: root.netmidi-name != "" ? root.netmidi-name : root.netmidi-hostname;
+                            enabled: !root.netmidi-busy;
+                            clicked => {
+                                root.netmidi-draft = root.netmidi-name != "" ? root.netmidi-name : root.netmidi-hostname;
+                                root.netmidi-renaming = true;
+                            }
+                        }
+                    }
+
+                    if root.netmidi-available: VerticalLayout {
+                        spacing: Theme.space-sm;
+                        Text {
+                            text: "NEW DEVICES";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-caption;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: 0.8px;
+                        }
+                        Segmented {
+                            options: ["Ask for new devices", "Allow anyone on the network"];
+                            current-index: root.netmidi-allow-all ? 1 : 0;
+                            activated(i) => {
+                                root.netmidi-set-allow-all(i == 1);
+                            }
+                        }
+                    }
+
+                    if root.netmidi-available && root.netmidi-enabled: VerticalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: root.netmidi-sessions.length == 0 ? "No computer connected." : "CONNECTED";
+                            color: root.netmidi-sessions.length == 0 ? Theme.text-muted : Theme.text-secondary;
+                            font-size: root.netmidi-sessions.length == 0 ? Theme.font-small : Theme.font-caption;
+                            font-weight: root.netmidi-sessions.length == 0 ? Theme.weight-medium : Theme.weight-bold;
+                        }
+                        for session in root.netmidi-sessions: Rectangle {
+                            height: Theme.touch-target + 8px;
+                            border-radius: Theme.radius-md;
+                            background: session.state == "allowed" ? Theme.accent-soft : Theme.surface-raised;
+                            border-width: 1px;
+                            border-color: session.state == "allowed" ? Theme.accent : Theme.border;
+                            HorizontalLayout {
+                                padding-left: Theme.space-md;
+                                padding-right: Theme.space-sm;
+                                spacing: Theme.space-md;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    Text {
+                                        text: session.name;
+                                        color: Theme.text-primary;
+                                        font-size: Theme.font-body;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: session.address + " · " + (session.state == "allowed" ? "listened to"
+                                            : session.state == "waiting" ? "waiting for your answer"
+                                            : session.state == "outside" ? "ignored: not on the local network" : "blocked");
+                                        color: Theme.text-muted;
+                                        font-size: Theme.font-small;
+                                        overflow: elide;
+                                    }
+                                }
+                                if session.state == "waiting": VerticalLayout {
+                                    alignment: center;
+                                    Button {
+                                        text: "Allow";
+                                        variant: "primary";
+                                        clicked => {
+                                            root.netmidi-allow(session.name, session.address);
+                                        }
+                                    }
+                                }
+                                if session.state == "waiting" || session.state == "allowed": VerticalLayout {
+                                    alignment: center;
+                                    Button {
+                                        text: "Block";
+                                        variant: "danger";
+                                        clicked => {
+                                            root.netmidi-block(session.name, session.address);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.netmidi-available && root.netmidi-devices.length > 0: VerticalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: "ALLOWED AND BLOCKED DEVICES";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-caption;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: 0.8px;
+                        }
+                        for device in root.netmidi-devices: HorizontalLayout {
+                            spacing: Theme.space-md;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                Text {
+                                    text: device.name;
+                                    color: Theme.text-primary;
+                                    font-size: Theme.font-small;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: device.address + " · " + (device.state == "allowed" ? "allowed" : "blocked");
+                                    color: device.state == "allowed" ? Theme.text-muted : Theme.danger;
+                                    font-size: Theme.font-caption;
+                                }
+                            }
+                            Button {
+                                text: "Remove";
+                                variant: "ghost";
+                                clicked => {
+                                    root.netmidi-forget(device.name, device.address);
+                                }
+                            }
+                        }
+                    }
+
+                    if root.netmidi-available: Text {
+                        text: "macOS: Audio MIDI Setup → MIDI Network Setup. Windows: rtpMIDI. Linux: rtpmidid. The MIDI map and learned controls apply as for a cable. Only the local network is listened to.";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+
+                    if root.netmidi-message != "": Text {
+                        text: root.netmidi-message;
+                        color: Theme.danger;
                         font-size: Theme.font-small;
                         wrap: word-wrap;
                     }
@@ -1435,6 +1655,50 @@ export component SettingsView inherits Rectangle {
                 }
                 cancel => {
                     root.editing-key = false;
+                }
+            }
+        }
+    }
+
+    // Network MIDI session name
+    if root.netmidi-renaming: Rectangle {
+        background: Theme.scrim;
+        TouchArea { }
+
+        VerticalLayout {
+            Rectangle {
+                vertical-stretch: 1;
+                background: Theme.panel;
+                VerticalLayout {
+                    alignment: center;
+                    padding-left: Theme.space-lg;
+                    spacing: 2px;
+                    Text {
+                        text: "Network MIDI session name";
+                        color: Theme.text-primary;
+                        font-size: Theme.font-headline;
+                        font-weight: Theme.weight-bold;
+                    }
+                    Text {
+                        text: "Up to 32 letters, digits, spaces, dots, dashes or underscores. Empty: " + root.netmidi-hostname + ".";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                    }
+                }
+            }
+            VirtualKeyboard {
+                current-text: root.netmidi-draft;
+                placeholder: root.netmidi-hostname;
+                submit-label: "Save";
+                text-changed(t) => {
+                    root.netmidi-draft = t;
+                }
+                submit => {
+                    root.netmidi-renaming = false;
+                    root.netmidi-rename(root.netmidi-draft);
+                }
+                cancel => {
+                    root.netmidi-renaming = false;
                 }
             }
         }

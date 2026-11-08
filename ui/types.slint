@@ -200,6 +200,16 @@ export struct WifiNetwork {
     saved: bool,         // joining needs no password
 }
 
+// A network MIDI device (Settings → Network MIDI): a session a computer
+// opened, or a device remembered
+export struct NetMidiDevice {
+    name: string,        // the remote session's name
+    address: string,     // its IP address
+    // "allowed" | "waiting" (asked about) | "blocked" | "outside" (not
+    // from the local network)
+    state: string,
+}
+
 // Level meters (rack): 0..1 over -48..0 dBFS
 export struct Levels {
     input: float,

@@ -1,0 +1,39 @@
+From a40b72fee683f190dbc3a70af7285e8cb91afad6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Guillaume=20GRAB=C3=89?=
+ <guillaume.grabe@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 22:01:40 +0100
+Subject: [PATCH 1/2] CMakeLists.txt: take the version from the command line
+
+A source archive built inside another git checkout (a Buildroot output
+directory) would take that checkout's version from git describe. Keep
+git describe when no RTPMIDID_VERSION is given.
+
+Upstream: not sent yet
+---
+ CMakeLists.txt | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index ec125d6..39d261c 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -121,10 +121,12 @@ endif(NOT LIBS_ONLY)
+ include_directories(${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/include)
+ enable_testing()
+ 
+-execute_process(
+-  COMMAND bash -c "git describe --match \"v[0-9]*\" --tags --abbrev=5 HEAD | sed 's/^v//g' | sed 's/-/~/g' | tr -d '\n'"
+-  OUTPUT_VARIABLE RTPMIDID_VERSION
+-)
++if(NOT RTPMIDID_VERSION)
++  execute_process(
++    COMMAND bash -c "git describe --match \"v[0-9]*\" --tags --abbrev=5 HEAD | sed 's/^v//g' | sed 's/-/~/g' | tr -d '\n'"
++    OUTPUT_VARIABLE RTPMIDID_VERSION
++  )
++endif()
+ add_definitions(-DRTPMIDID_VERSION=\"${RTPMIDID_VERSION}\")
+ add_definitions(-DLOG_LEVEL=${LOG_LEVEL})
+ message(STATUS "Version ${RTPMIDID_VERSION}")
+-- 
+2.56.0
+

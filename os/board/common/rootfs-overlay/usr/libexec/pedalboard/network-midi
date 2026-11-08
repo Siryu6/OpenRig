@@ -1,0 +1,123 @@
+#!/bin/sh
+#
+# Network MIDI (RTP-MIDI / AppleMIDI, docs/MIDI.md), off by default.
+#
+#   network-midi                  run by init and started again when it
+#                                 exits: off, nothing runs and nothing
+#                                 listens; on, starts avahi-daemon and runs
+#                                 rtpmidid as the pedalboard user
+#   network-midi set on|off NAME  switch it and name the session (empty:
+#                                 the host name), for the settings helper
+#
+# The choice is kept in $STATE (enabled: "on", name: the session name).
+# `set` stores it, then stops what runs: init starts this script again,
+# which applies it.
+
+STATE=/data/network-midi
+RUN=/run/network-midi
+CONTROL_DIR=/run/rtpmidid
+
+# A session name: up to 32 letters, digits, spaces, dots, dashes and
+# underscores, no space first or last nor two in a row. It is announced
+# over mDNS and given to rtpmidid on its command line. Empty: the host name.
+valid_name() {
+	case "$1" in
+	" "* | *" " | *"  "*) return 1 ;;
+	*[!A-Za-z0-9\ ._-]*) return 1 ;;
+	esac
+	[ ${#1} -le 32 ]
+}
+
+enabled() {
+	[ "$(cat "$STATE/enabled" 2>/dev/null)" = on ]
+}
+
+stop_avahi() {
+	/usr/sbin/avahi-daemon -c 2>/dev/null && /usr/sbin/avahi-daemon -k 2>/dev/null
+}
+
+# What runs now stops; init starts this script again on the new state
+apply() {
+	killall rtpmidid 2>/dev/null
+	pid=$(cat "$RUN/pid" 2>/dev/null)
+	[ -n "$pid" ] && kill "$pid" 2>/dev/null
+	return 0
+}
+
+if [ "$1" = set ]; then
+	case "$2" in
+	on | off) ;;
+	*)
+		echo "Invalid state"
+		exit 1
+		;;
+	esac
+	if ! valid_name "$3"; then
+		echo "Invalid name: up to 32 letters, digits, spaces, dots, dashes or underscores"
+		exit 1
+	fi
+	if [ -n "$3" ]; then
+		save_name() { echo "$1" >"$STATE/name.tmp" && mv -f "$STATE/name.tmp" "$STATE/name"; }
+	else
+		save_name() { rm -f "$STATE/name"; }
+	fi
+	if ! { install -d -m 755 "$STATE" &&
+		echo "$2" >"$STATE/enabled.tmp" && mv -f "$STATE/enabled.tmp" "$STATE/enabled" &&
+		save_name "$3" && sync; }; then
+		echo "The setting could not be saved"
+		exit 1
+	fi
+	logger -t network-midi "set $2${3:+, session \"$3\"}"
+	apply
+	exit 0
+fi
+
+install -d -m 755 "$RUN"
+echo $$ >"$RUN/pid"
+
+if ! enabled; then
+	stop_avahi
+	rm -f "$RUN/started"
+	# Waits for `set`
+	exec sleep 2147483647
+fi
+
+# Started again at once when rtpmidid exits: not more than every 2 s
+[ -e "$RUN/started" ] && sleep 2
+touch "$RUN/started"
+
+# The ALSA sequencer (also loaded by the UI launcher)
+modprobe -q snd-seq
+
+# mDNS on the wired and Wi-Fi interfaces only (those backed by a device)
+if ! /usr/sbin/avahi-daemon -c 2>/dev/null; then
+	interfaces=
+	for dev in /sys/class/net/*; do
+		[ -e "$dev/device" ] || continue
+		interfaces="${interfaces:+$interfaces,}${dev##*/}"
+	done
+	if [ -n "$interfaces" ]; then
+		awk -v list="$interfaces" '{ print } /^\[server\]$/ { print "allow-interfaces=" list }' \
+			/etc/avahi/avahi-daemon.conf >"$RUN/avahi-daemon.conf"
+	else
+		cp /etc/avahi/avahi-daemon.conf "$RUN/avahi-daemon.conf"
+	fi
+	/usr/sbin/avahi-daemon -D -f "$RUN/avahi-daemon.conf" ||
+		logger -t network-midi "avahi-daemon did not start: the session is not announced"
+fi
+
+name=$(cat "$STATE/name" 2>/dev/null)
+valid_name "$name" || name=
+set -- --ini /etc/rtpmidid/default.ini --control "$CONTROL_DIR/control.sock"
+[ -n "$name" ] && set -- "$@" --rtpmidid-name "$name"
+install -d -o pedalboard -g pedalboard -m 755 "$CONTROL_DIR"
+logger -t network-midi "starting rtpmidid, session \"${name:-$(hostname)}\" on UDP 5004-5005"
+
+# As the pedalboard user (audio group: the ALSA sequencer). The status
+# goes through a file: a pipe gives logger's.
+{
+	/usr/bin/setpriv --reuid=pedalboard --regid=pedalboard --init-groups --reset-env \
+		/usr/bin/rtpmidid "$@" 2>&1
+	echo $? >"$RUN/status"
+} | logger -t rtpmidid
+logger -t network-midi "rtpmidid exited ($(cat "$RUN/status" 2>/dev/null))"

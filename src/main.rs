@@ -13,6 +13,8 @@ mod live_ui;
 #[cfg(feature = "midi")]
 mod midi_io;
 mod midi_ui;
+#[cfg(feature = "midi")]
+mod network_midi_ui;
 mod plugin_view;
 #[cfg(feature = "remote")]
 mod remote_ui;
@@ -1853,7 +1855,11 @@ fn main() -> Result<()> {
     rigs_ui::setup(&app, &state);
     #[cfg(feature = "rigs-online")]
     rigs_online_ui::setup(&app, &state);
-    midi_ui::setup(&app, &state);
+    #[cfg(feature = "midi")]
+    let network_midi = network_midi_ui::setup(&app);
+    #[cfg(not(feature = "midi"))]
+    let network_midi = None;
+    midi_ui::setup(&app, &state, network_midi);
     #[cfg(feature = "remote")]
     remote_ui::setup(&app, &state, headless);
     let _routing_meters = routing_ui::setup(&app, &state, engine.as_deref());

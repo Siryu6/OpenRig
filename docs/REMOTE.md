@@ -45,7 +45,8 @@ Then, from the phone or tablet:
 - on the pedal's hotspot `OpenRig-XXXX` (key: the remote control password),
   open <http://10.42.0.1>;
 - on your own network, open `http://<the pedal's address>` (your router
-  lists it as `pedalboard`).
+  lists it as `pedalboard`). With Network MIDI on, avahi also announces the
+  pedal's name: `http://pedalboard.local` works too.
 
 ### With a touchscreen
 
