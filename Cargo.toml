@@ -35,13 +35,16 @@ path = "src/bin/bench.rs"
 required-features = ["nam"]
 
 [features]
-default = ["winit", "lv2", "nam", "tone3000", "midi", "update", "store", "rigs-online"]
+default = ["winit", "headless", "lv2", "nam", "tone3000", "midi", "update", "store", "rigs-online", "remote"]
 # Desktop window (X11 / Wayland)
 winit = ["slint/backend-winit", "slint/renderer-femtovg"]
 # Full screen straight on the display (DRM/KMS + libinput), without X11 or
 # Wayland: the pedalboard OS image. With winit too, it is the fallback when
 # there is no display server. Needs libinput, libxkbcommon, libgbm and EGL.
 kms = ["slint/backend-linuxkms-noseat", "slint/renderer-femtovg"]
+# Runs without a touchscreen: the UI is drawn in memory (software
+# renderer) and streamed to a phone or tablet by the web remote
+headless = ["slint/renderer-software", "slint/software-renderer-path"]
 # Real LV2 hosting through liblilv (system library: liblilv-dev / lilv)
 lv2 = ["dep:lilv", "dep:lv2_raw"]
 # Footswitches and rotary encoder on Raspberry Pi GPIO
@@ -65,6 +68,9 @@ store = ["dep:ureq", "dep:ring", "dep:minisign-verify", "dep:tar", "dep:flate2",
 # openrig.eu in the Rigs panel: browse, download, favourite and publish rigs
 # (HTTPS client, QR code of the link page)
 rigs-online = ["dep:ureq", "dep:qrcodegen"]
+# Remote control from a phone or tablet: a web app served by the pedal
+# (HTTP + WebSocket, off until a password is set)
+remote = ["dep:axum", "dep:tokio", "dep:argon2", "dep:getrandom", "dep:png", "dep:jpeg-encoder"]
 
 [dependencies]
 lilv = { version = "0.3.1", optional = true }
@@ -122,6 +128,13 @@ minisign-verify = { version = "0.3", optional = true }
 tar = { version = "0.4", default-features = false, optional = true }
 flate2 = { version = "1", optional = true }
 lzma-rs = { version = "0.3", optional = true }
+# Web remote: HTTP / WebSocket server on one thread, password hashes
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "ws", "json", "query"], optional = true }
+tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros"], optional = true }
+argon2 = { version = "0.5", features = ["std"], optional = true }
+getrandom = { version = "0.3", optional = true }
+# Frames of the full editor streamed to the browser
+jpeg-encoder = { version = "0.7", optional = true }
 
 [dev-dependencies]
 blake2 = "0.11"  # minisign signatures of the store test

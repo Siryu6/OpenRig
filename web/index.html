@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#16181d">
+<meta name="color-scheme" content="dark">
+<title>OpenRig</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="stylesheet" href="/app.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+
+<section id="login" class="login" hidden>
+  <form id="login-form" class="login-card" autocomplete="on">
+    <img src="/icon.svg" alt="" class="login-logo">
+    <h1>OpenRig</h1>
+    <p class="muted">Use your phone or tablet as the pedal's screen.</p>
+    <input type="text" name="username" value="openrig" autocomplete="username" hidden>
+    <label for="password">Remote control password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="63">
+    <button type="submit" class="primary">Sign in</button>
+    <p id="login-error" class="error" role="alert"></p>
+  </form>
+</section>
+
+<section id="app" class="app" hidden>
+  <nav class="tabs" id="tabs">
+    <button data-view="editor" id="tab-editor">Editor</button>
+    <button data-view="live" id="tab-live">Live</button>
+    <button data-view="status" id="tab-status">Status</button>
+    <span class="conn" id="conn" title="Connection"></span>
+  </nav>
+
+  <div id="view-editor" class="view editor-view" hidden>
+    <canvas id="screen" tabindex="0" aria-label="The pedal's screen"></canvas>
+    <input id="keys" class="keys" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Keyboard">
+    <button id="kbd" class="kbd" title="Phone keyboard" aria-label="Phone keyboard">&#9000;</button>
+    <p id="rotate" class="rotate" hidden>Turn your phone sideways for the full editor, or use the Live view.</p>
+    <p id="no-editor" class="center muted" hidden>The pedal has a touchscreen: the full editor is on it. The Live view works from here.</p>
+  </div>
+
+  <div id="view-live" class="view live" hidden>
+    <header class="live-head">
+      <button id="prev" class="step" aria-label="Previous preset">&#8249;</button>
+      <div class="preset">
+        <select id="preset-select" aria-label="Preset"></select>
+        <div id="scene-name" class="muted"></div>
+      </div>
+      <button id="next" class="step" aria-label="Next preset">&#8250;</button>
+    </header>
+
+    <div class="meters" aria-hidden="true">
+      <div class="meter"><span>IN</span><div class="bar"><i id="m0"></i></div><b id="clip-in"></b></div>
+      <div class="meter"><span>L</span><div class="bar"><i id="m1"></i></div><b id="clip-out"></b></div>
+      <div class="meter"><span>R</span><div class="bar"><i id="m2"></i></div><b></b></div>
+    </div>
+
+    <div id="setlist" hidden>
+      <h2 id="setlist-name"></h2>
+      <div id="setlist-slots" class="grid"></div>
+    </div>
+
+    <h2>Scenes</h2>
+    <div id="scenes" class="grid"></div>
+
+    <div class="row">
+      <button id="tap" class="tap">TAP <span id="bpm"></span></button>
+      <button id="tuner-toggle">Tuner</button>
+    </div>
+
+    <div id="tuner" class="tuner" hidden>
+      <div class="note"><span id="tuner-note">–</span><sub id="tuner-octave"></sub></div>
+      <div class="needle-track"><div class="needle-zero"></div><div id="needle" class="needle"></div></div>
+      <div id="tuner-info" class="muted">Play a string</div>
+    </div>
+
+    <h2>Blocks</h2>
+    <div id="blocks"></div>
+  </div>
+
+  <div id="view-status" class="view status" hidden>
+    <dl id="status-list"></dl>
+    <p class="muted">Remote control is turned on and off on the pedal (pedalboard.txt, or Settings → Remote control).</p>
+    <p class="warn">On someone else's Wi-Fi, others on that network can see what the pedal and this device exchange. Use the pedal's hotspot or a network you trust.</p>
+    <div class="row">
+      <button id="logout">Sign out</button>
+      <button id="logout-all" class="danger">Sign out all devices</button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+</section>
+</body>
+</html>

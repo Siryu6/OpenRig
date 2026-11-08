@@ -8,6 +8,8 @@ pub mod monitor;
 pub mod persist;
 pub mod plugins;
 pub mod presets;
+#[cfg(feature = "remote")]
+pub mod remote;
 pub mod rigs;
 pub mod state;
 #[cfg(feature = "store")]
