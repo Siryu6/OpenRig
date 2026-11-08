@@ -194,7 +194,10 @@ adds two, started by `/usr/libexec/pedalboard/network-midi` from inittab
   on UDP 5004–5005, each session an ALSA sequencer port the app listens to
   once the device is allowed. Configuration in `/etc/rtpmidid/default.ini`
   (no ALSA port exported to the network), control socket
-  `/run/rtpmidid/control.sock`. The switch and the session name are kept in
+  `/run/rtpmidid/control.sock`. Three local patches: the version from the
+  build, numeric peer addresses on the control socket, and the session
+  announced when avahi becomes ready after rtpmidid started (else it is
+  never published). The switch and the session name are kept in
   `/data/network-midi/` and written by the settings helper
   (`<id> network-midi on|off [name]`), which checks the name again.
 

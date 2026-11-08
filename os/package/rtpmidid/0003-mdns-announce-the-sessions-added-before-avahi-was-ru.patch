@@ -1,0 +1,34 @@
+From 1e191540f7933b8df625707d53c134177715f680 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Guillaume=20GRAB=C3=89?=
+ <guillaume.grabe@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 23:43:38 +0100
+Subject: [PATCH] mdns: announce the sessions added before avahi was running
+
+announce_rtpmidi() before the avahi client reaches AVAHI_CLIENT_S_RUNNING
+finds no entry group: it keeps the announcement and says it will be
+announced when connected, but setup_entry_group() never announced it.
+With avahi-daemon started together with rtpmidid, the session was never
+published. Announce what is kept once the entry group exists.
+
+Upstream: not sent yet
+---
+ lib/mdns_rtpmidi.cpp | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/lib/mdns_rtpmidi.cpp b/lib/mdns_rtpmidi.cpp
+index e28a9a6..64dfd75 100644
+--- a/lib/mdns_rtpmidi.cpp
++++ b/lib/mdns_rtpmidi.cpp
+@@ -351,6 +351,9 @@ void rtpmidid::mdns_rtpmidi_t::setup_entry_group() {
+     ERROR("Name collision?");
+     return;
+   }
++  // Sessions announced before the client was running (avahi-daemon
++  // started at the same time) are published now
++  announce_all();
+ }
+ 
+ /// Asks the network mdns for entries.
+-- 
+2.56.0
+
