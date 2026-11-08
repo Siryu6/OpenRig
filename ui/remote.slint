@@ -1,0 +1,154 @@
+// Settings → Remote control: use a phone or tablet as the pedal's screen.
+// Set by Rust (src/remote_ui.rs) through `app.global::<RemoteControl>()`.
+import { Theme } from "theme.slint";
+import { Button, Card, Icon, Toggle } from "components/controls.slint";
+
+export global RemoteControl {
+    // Built with the remote feature
+    in property <bool> available: false;
+    // A password is set: the pedal serves the remote
+    in property <bool> enabled: false;
+    // This UI is the one streamed to the phone (no touchscreen)
+    in property <bool> headless: false;
+    // Where to open it ("http://10.42.0.1"), one per line
+    in property <string> addresses: "";
+    in property <int> clients: 0;
+    // The pedal's own Wi-Fi: "" (not on this system), "off", "waiting",
+    // "on OpenRig-1A2B", "unavailable <why>"
+    in property <string> hotspot: "";
+    // auto | on | off (pedalboard.txt)
+    in property <string> hotspot-mode: "auto";
+    in property <string> message: "";
+    in property <bool> message-error: false;
+    // Password keyboard open, and what is typed
+    in-out property <bool> editing: false;
+    in-out property <string> draft: "";
+
+    callback set-password(string);
+    callback turn-off();
+    callback sign-out-all();
+    callback set-hotspot-mode(string);
+    callback refresh();
+}
+
+component Line inherits Text {
+    color: Theme.text-secondary;
+    font-size: Theme.font-small;
+    wrap: word-wrap;
+}
+
+export component RemoteCard inherits Card {
+    VerticalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-md;
+
+        HorizontalLayout {
+            spacing: Theme.space-sm;
+            VerticalLayout {
+                alignment: center;
+                Icon {
+                    name: "share";
+                    color: Theme.accent;
+                }
+            }
+            Text {
+                horizontal-stretch: 1;
+                text: "Remote control";
+                color: Theme.text-primary;
+                font-size: Theme.font-title;
+                font-weight: Theme.weight-semibold;
+                vertical-alignment: center;
+            }
+            // Off from the phone itself would cut the screen off
+            if !RemoteControl.headless: VerticalLayout {
+                alignment: center;
+                Toggle {
+                    checked: RemoteControl.enabled;
+                    toggled(on) => {
+                        if on {
+                            RemoteControl.draft = "";
+                            RemoteControl.editing = true;
+                        } else {
+                            RemoteControl.turn-off();
+                        }
+                    }
+                }
+            }
+        }
+
+        Line {
+            text: "Use your phone or tablet as the pedal's screen: the full editor in landscape, or a live view for the stage. Sign in with the remote control password.";
+        }
+
+        if !RemoteControl.enabled: Line {
+            text: "Off: nothing listens on the network. Turn it on to set a password.";
+        }
+
+        if RemoteControl.enabled: VerticalLayout {
+            spacing: Theme.space-sm;
+            if RemoteControl.addresses != "": Text {
+                text: "Open in the browser: " + RemoteControl.addresses;
+                color: Theme.text-primary;
+                font-size: Theme.font-body;
+                wrap: word-wrap;
+            }
+            if RemoteControl.addresses == "": Line {
+                text: "No network yet: join a Wi-Fi network or plug Ethernet in, or use the pedal's hotspot.";
+            }
+            Line {
+                text: RemoteControl.clients == 0 ? "No device connected" :
+                    RemoteControl.clients == 1 ? "1 device connected" :
+                    RemoteControl.clients + " devices connected";
+            }
+            if RemoteControl.hotspot != "": HorizontalLayout {
+                spacing: Theme.space-sm;
+                Line {
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    text: "Hotspot (" + RemoteControl.hotspot-mode + "): " + (
+                        RemoteControl.hotspot == "off" ? "off" :
+                        RemoteControl.hotspot == "waiting" ? "starts if no network is joined" :
+                        RemoteControl.hotspot) + ". Password: the remote control password.";
+                }
+                for mode in ["auto", "on", "off"]: Button {
+                    horizontal-stretch: 0;
+                    text: mode;
+                    variant: RemoteControl.hotspot-mode == mode ? "primary" : "ghost";
+                    clicked => {
+                        RemoteControl.set-hotspot-mode(mode);
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.space-sm;
+                alignment: start;
+                Button {
+                    text: "Change password";
+                    icon: "lock";
+                    clicked => {
+                        RemoteControl.draft = "";
+                        RemoteControl.editing = true;
+                    }
+                }
+                Button {
+                    text: "Sign out all devices";
+                    variant: "ghost";
+                    clicked => {
+                        RemoteControl.sign-out-all();
+                    }
+                }
+            }
+            Line {
+                text: "On someone else's Wi-Fi, others on that network can see what the pedal and the phone exchange (plain HTTP). Use the pedal's hotspot or a network you trust.";
+                color: Theme.warning;
+            }
+        }
+
+        if RemoteControl.message != "": Text {
+            text: RemoteControl.message;
+            color: RemoteControl.message-error ? Theme.danger : Theme.text-secondary;
+            font-size: Theme.font-small;
+            wrap: word-wrap;
+        }
+    }
+}

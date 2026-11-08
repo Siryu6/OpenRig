@@ -16,7 +16,8 @@ mkdir -p /run/pedalboard
 		sed -n 's/^[[:space:]]*\([a-z_]*\)[[:space:]]*=[[:space:]]*\([A-Za-z0-9_.:,-]*\)[[:space:]]*$/\1 \2/p' |
 			while read -r key value; do
 				case "$key" in
-				audio_device | sample_rate | period | periods | display_rotation | wifi_country)
+				audio_device | sample_rate | period | periods | display_rotation | wifi_country | \
+					remote_hotspot | display)
 					echo "$key='$value'" ;;
 				esac
 			done

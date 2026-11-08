@@ -112,6 +112,26 @@ fi
 mkdir -p /data/pedalboard /data/rauc
 chown pedalboard:pedalboard /data/pedalboard
 
+# Remote control password and Wi-Fi network written in pedalboard.txt: kept
+# on the data partition (a hash; NetworkManager profiles) and replaced in
+# the file by "(saved)", so the boot partition holds no secret
+remote_setup() {
+	/usr/bin/pedalboard remote-setup /boot/pedalboard.txt /data/pedalboard \
+		/etc/NetworkManager/system-connections "$@"
+}
+remote_setup --check >/dev/null 2>&1
+if [ $? -eq 2 ]; then
+	if mount -o remount,rw /boot; then
+		remote_setup || log "remote control settings of pedalboard.txt not saved"
+		sync
+		mount -o remount,ro /boot
+		[ -e /data/pedalboard/remote.json ] &&
+			chown pedalboard:pedalboard /data/pedalboard/remote.json
+	else
+		log "boot partition read-only: remote control settings not saved"
+	fi
+fi
+
 # Wi-Fi country, applied when the Wi-Fi driver loads
 if [ -n "$wifi_country" ]; then
 	mkdir -p /run/modprobe.d

@@ -5,6 +5,7 @@ import { LogoMark, LogoText } from "../components/logo.slint";
 import { NetMidiDevice, SystemSetting, WifiNetwork } from "../types.slint";
 import { Tone3000Logo } from "../components/tone3000_brand.slint";
 import { Features } from "../features.slint";
+import { RemoteCard, RemoteControl } from "../remote.slint";
 
 // Signal strength as four bars
 component SignalBars inherits Rectangle {
@@ -1185,6 +1186,9 @@ export component SettingsView inherits Rectangle {
                 }
             }
 
+            // ---------------------------------------------------- Remote control
+            if RemoteControl.available: RemoteCard { }
+
             Card {
                 VerticalLayout {
                     padding: Theme.space-lg;
@@ -1743,6 +1747,55 @@ export component SettingsView inherits Rectangle {
                 cancel => {
                     root.wifi-password = "";
                     root.wifi-password-ssid = "";
+                }
+            }
+        }
+    }
+
+    // Remote control password
+    if RemoteControl.editing: Rectangle {
+        background: Theme.scrim;
+        TouchArea { }
+
+        VerticalLayout {
+            Rectangle {
+                vertical-stretch: 1;
+                background: Theme.panel;
+                VerticalLayout {
+                    alignment: center;
+                    padding-left: Theme.space-lg;
+                    spacing: 2px;
+                    Text {
+                        text: "Remote control password";
+                        color: Theme.text-primary;
+                        font-size: Theme.font-headline;
+                        font-weight: Theme.weight-bold;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: "8 to 63 characters, also the password of the pedal's hotspot. Devices signed in sign in again.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        overflow: elide;
+                    }
+                }
+            }
+            VirtualKeyboard {
+                current-text: RemoteControl.draft;
+                placeholder: "Password";
+                submit-label: "Save";
+                secret: true;
+                text-changed(t) => {
+                    RemoteControl.draft = t;
+                }
+                submit => {
+                    RemoteControl.set-password(RemoteControl.draft);
+                    RemoteControl.draft = "";
+                    RemoteControl.editing = false;
+                }
+                cancel => {
+                    RemoteControl.draft = "";
+                    RemoteControl.editing = false;
                 }
             }
         }
