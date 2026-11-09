@@ -5,10 +5,16 @@
 //! [`Looper::control`], which allocates and frees the layers (11.5 MB each)
 //! outside the lock the audio thread shares.
 //!
-//! With the tempo of the preset and a bar length, the looper can count one
-//! bar in before recording and round the first recording to whole bars
+//! With the tempo of the preset and a bar length, the looper can click the
+//! beats (a metronome), count one bar in before recording (or overdubbing
+//! from a stop), and round the first recording to whole bars
 //! (see [`LooperSettings`]). The bar grid starts where the recording starts;
 //! its tempo is fixed for the loop when recording starts.
+//!
+//! The loop can be multiplied (repeated n times: each layer keeps its own
+//! length and repeats, so this is instant), played at half speed (an octave
+//! down, like the half speed of hardware loopers), and keeps a small peak
+//! overview of itself for the waveform display, updated as it plays.
 
 use std::f32::consts::TAU;
 use std::sync::Mutex;
@@ -27,6 +33,12 @@ const CLICK_HZ: f32 = 1000.0;
 const ACCENT_HZ: f32 = 1600.0;
 /// Level of the other beats, relative to the first one
 const CLICK_BEAT_GAIN: f32 = 0.6;
+/// Points of the waveform overview of the loop
+pub const WAVE_POINTS: usize = 256;
+/// Points of the overview of the recording in progress, across the whole
+/// buffer (15 ms each at 30 s): the loop's overview is made from them when
+/// the recording ends
+const RECORD_POINTS: usize = 2048;
 
 pub const MIN_BEATS_PER_BAR: u8 = 2;
 pub const MAX_BEATS_PER_BAR: u8 = 12;
@@ -34,23 +46,28 @@ pub const MAX_BEATS_PER_BAR: u8 = 12;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LooperState {
     Stopped,
-    /// Clicking one bar before recording
+    /// Clicking one bar before recording or overdubbing
     CountIn,
     Recording,
     Playing,
     Overdubbing,
 }
 
-/// Count-in and bar quantization, kept with the session
+/// Count-in, bar quantization and click, kept with the session
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct LooperSettings {
     /// Beats in a bar (4 for 4/4, 6 for 6/8 with the tempo in eighths)
     pub beats_per_bar: u8,
-    /// Click one bar before recording; recording starts on the next downbeat
+    /// Click one bar before recording, or before overdubbing from a stop;
+    /// recording starts on the next downbeat
     pub count_in: bool,
     /// The first recording ends at the end of a bar
     pub quantize: bool,
+    /// Click every beat while recording, playing and overdubbing (the
+    /// metronome). The first recording then always ends on a bar line, so the
+    /// click stays in time with the loop.
+    pub click: bool,
     /// Click level, 0.0 to 1.0
     pub click_level: f32,
 }
@@ -61,6 +78,7 @@ impl Default for LooperSettings {
             beats_per_bar: 4,
             count_in: false,
             quantize: false,
+            click: false,
             click_level: 0.5,
         }
     }
@@ -79,6 +97,40 @@ impl LooperSettings {
         };
         self
     }
+}
+
+/// What the UI shows, read in one go
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LooperStatus {
+    pub state: LooperState,
+    /// Seconds (while recording: so far)
+    pub length: f32,
+    pub position: f32,
+    pub layers: usize,
+    /// Bar (from 1; 0 during the count-in) and beat (from 1), when on the
+    /// bar grid
+    pub beat: Option<(usize, usize)>,
+    pub beats_per_bar: usize,
+    /// Bars in the loop, 0 when not whole bars
+    pub bars: usize,
+    pub ending: bool,
+    pub half_speed: bool,
+    /// The loop can be doubled (it fits the buffer twice)
+    pub can_double: bool,
+    /// Changes whenever the waveform overview does
+    pub wave_version: u64,
+}
+
+/// A loop read from a file, to put in the looper (see [`Looper::load`]):
+/// interleaved stereo frames at `sample_rate`
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoopAudio {
+    pub frames: Vec<f32>,
+    pub sample_rate: u32,
+    /// Bar grid of the loop when it was saved (0 bars: free length)
+    pub bpm: f32,
+    pub beats_per_bar: u8,
+    pub bars: usize,
 }
 
 /// Samples in a beat at `bpm` (at least one)
@@ -100,6 +152,19 @@ pub fn quantized_length(recorded: usize, bar: usize, snap: usize) -> usize {
         (bars - 1) * bar
     } else {
         bars * bar
+    }
+}
+
+/// Peaks of `from` regrouped into `to`: each point of `to` is the highest of
+/// the points of `from` it covers
+fn regroup(from: &[f32], to: &mut [f32]) {
+    let (n, m) = (from.len(), to.len());
+    for (i, point) in to.iter_mut().enumerate() {
+        let start = i * n / m;
+        let end = ((i + 1) * n / m).max(start + 1).min(n);
+        *point = from
+            .get(start..end)
+            .map_or(0.0, |s| s.iter().fold(0.0f32, |a, &b| a.max(b)));
     }
 }
 
@@ -151,21 +216,63 @@ impl Click {
     }
 }
 
+/// A recording or overdub: interleaved (left, right) frames, as long as the
+/// buffer. It repeats every `length` frames: a layer recorded before the
+/// loop was multiplied plays once per repeat.
+struct Layer {
+    frames: Box<[f32]>,
+    /// Frames in one pass of the layer (0 while the first one records)
+    length: usize,
+}
+
+impl Layer {
+    /// (left, right) at `position` of the loop
+    fn at(&self, position: usize) -> (f32, f32) {
+        let position = if position < self.length || self.length == 0 {
+            position
+        } else {
+            position % self.length
+        };
+        match self.frames.get(2 * position..2 * position + 2) {
+            Some(&[left, right]) => (left, right),
+            _ => (0.0, 0.0),
+        }
+    }
+
+    /// Write its repeats out, up to `length` frames, so it can be recorded
+    /// on across the whole loop
+    fn unfold(&mut self, length: usize) {
+        let length = length.min(self.frames.len() / 2);
+        if self.length == 0 || self.length >= length {
+            return;
+        }
+        let mut filled = self.length;
+        while filled < length {
+            let n = (length - filled).min(filled);
+            self.frames.copy_within(0..2 * n, 2 * filled);
+            filled += n;
+        }
+        self.length = length;
+    }
+}
+
 pub struct Looper {
     sample_rate: f32,
     max_samples: usize,
-    /// Layer 0 is the first recording, the others are overdubs. Frames are
-    /// interleaved (left, right).
-    layers: Vec<Box<[f32]>>,
+    /// Layer 0 is the first recording, the others are overdubs
+    layers: Vec<Layer>,
     max_layers: usize,
     /// Zeroed layer ready for the next recording or overdub
     spare: Option<Box<[f32]>>,
     /// Layers removed, to free outside the lock
-    garbage: Vec<Box<[f32]>>,
+    garbage: Vec<Layer>,
     state: LooperState,
     /// Loop length in samples (0 = no loop)
     loop_length: usize,
     playhead: usize,
+    /// Between `playhead` and the next frame, at half speed
+    fraction: f32,
+    half_speed: bool,
     level: f32,
     settings: LooperSettings,
     /// Tempo of the next recording
@@ -173,12 +280,28 @@ pub struct Looper {
     /// Beat and bar of the loop, in samples, fixed when recording starts
     beat_length: usize,
     bar_length: usize,
-    /// Samples into the count-in
+    /// Samples into the count-in, and the state that follows it
     count: usize,
+    after_count: LooperState,
+    /// Beat of the grid the last click was for (`usize::MAX`: none yet), so
+    /// the metronome clicks once at the start of each beat
+    click_beat: usize,
     /// Quantized end of the recording, and the state that follows it
     end_at: Option<usize>,
     after_end: LooperState,
     click: Click,
+    /// Peaks of the loop (layers summed, before the level), refreshed as it
+    /// plays: each point is rewritten on each pass
+    wave: [f32; WAVE_POINTS],
+    /// Point of `wave` being refreshed, and its peak so far on this pass
+    wave_point: usize,
+    wave_peak: f32,
+    /// Peaks of the recording in progress, over the whole buffer
+    record_wave: [f32; RECORD_POINTS],
+    /// Bumped when the overview changes
+    wave_version: u64,
+    /// Bumped when the loop is replaced or erased
+    loop_id: u64,
 }
 
 impl Looper {
@@ -198,15 +321,25 @@ impl Looper {
             state: LooperState::Stopped,
             loop_length: 0,
             playhead: 0,
+            fraction: 0.0,
+            half_speed: false,
             level: 1.0,
             settings,
             bpm,
             beat_length,
             bar_length: beat_length * settings.beats_per_bar as usize,
             count: 0,
+            after_count: LooperState::Recording,
+            click_beat: usize::MAX,
             end_at: None,
             after_end: LooperState::Playing,
             click: Click::new(sample_rate),
+            wave: [0.0; WAVE_POINTS],
+            wave_point: usize::MAX,
+            wave_peak: 0.0,
+            record_wave: [0.0; RECORD_POINTS],
+            wave_version: 0,
+            loop_id: 0,
         }
     }
 
@@ -217,31 +350,86 @@ impl Looper {
         looper.settings = self.settings;
         looper.bpm = self.bpm;
         looper.level = self.level;
+        // A new overview, even if the old one was empty too
+        looper.wave_version = self.wave_version + 1;
         looper
     }
 
-    /// (left, right) of the loop at frame `position`
-    fn loop_frame(&self, position: usize) -> (f32, f32) {
-        let (l, r) = self.layers.iter().fold((0.0, 0.0), |(l, r), layer| {
-            match layer.get(2 * position..2 * position + 2) {
-                Some(&[left, right]) => (l + left, r + right),
-                _ => (l, r),
-            }
-        });
+    /// (left, right) of the layers summed at frame `position`
+    fn mix(&self, position: usize) -> (f32, f32) {
+        self.layers.iter().fold((0.0, 0.0), |(l, r), layer| {
+            let (left, right) = layer.at(position);
+            (l + left, r + right)
+        })
+    }
+
+    /// (left, right) of the loop at the playhead, between two frames at
+    /// half speed, after the level. Notes the peak for the overview.
+    fn loop_frame(&mut self) -> (f32, f32) {
+        let (mut l, mut r) = self.mix(self.playhead);
+        if self.fraction == 0.0 {
+            self.note_peak(l, r);
+        } else {
+            let next = if self.playhead + 1 < self.loop_length {
+                self.playhead + 1
+            } else {
+                0
+            };
+            let (nl, nr) = self.mix(next);
+            l += (nl - l) * self.fraction;
+            r += (nr - r) * self.fraction;
+        }
         (l * self.level, r * self.level)
     }
 
+    /// Point of the overview at `position` of the loop
+    fn wave_point_at(&self, position: usize) -> usize {
+        (position * WAVE_POINTS / self.loop_length.max(1)).min(WAVE_POINTS - 1)
+    }
+
+    /// Note the loop's peak at the playhead in the overview: a point is
+    /// cleared when the playhead enters it, so each pass rewrites it
+    fn note_peak(&mut self, l: f32, r: f32) {
+        let peak = l.abs().max(r.abs());
+        let point = self.wave_point_at(self.playhead);
+        if point != self.wave_point {
+            if self.wave_point < WAVE_POINTS && self.wave[self.wave_point] != self.wave_peak {
+                self.wave[self.wave_point] = self.wave_peak;
+                self.wave_version += 1;
+            }
+            self.wave_point = point;
+            self.wave_peak = 0.0;
+        }
+        self.wave_peak = self.wave_peak.max(peak);
+    }
+
+    /// Move the playhead one frame of output on (half a frame at half speed)
     fn advance(&mut self) {
+        if self.half_speed {
+            self.fraction += 0.5;
+            if self.fraction < 1.0 {
+                return;
+            }
+            self.fraction = 0.0;
+        }
         self.playhead += 1;
         if self.playhead >= self.loop_length {
             self.playhead = 0;
+            // A loop shorter than a beat still clicks on each pass
+            self.click_beat = usize::MAX;
         }
+    }
+
+    /// The first recording is rounded to whole bars: asked for, or implied
+    /// by the metronome (a loop off the bar grid would drift from it)
+    fn quantizing(&self) -> bool {
+        self.settings.quantize || self.settings.click
     }
 
     /// Longest recording: the buffer, rounded down to whole bars when
     /// quantizing
     fn record_limit(&self) -> usize {
-        if self.settings.quantize && self.bar_length <= self.max_samples {
+        if self.quantizing() && self.bar_length <= self.max_samples {
             self.max_samples - self.max_samples % self.bar_length
         } else {
             self.max_samples
@@ -259,12 +447,11 @@ impl Looper {
     }
 
     /// State changes due at the next frame: the clicks of the count-in, its
-    /// end, the recording at its end
+    /// end, the recording at its end, the metronome
     fn on_frame(&mut self) {
         if self.state == LooperState::CountIn {
             if self.count >= self.bar_length {
-                self.state = LooperState::Recording;
-                self.playhead = 0;
+                self.end_count_in();
             } else if self.count.is_multiple_of(self.beat_length) {
                 self.click(self.count == 0);
             }
@@ -281,6 +468,50 @@ impl Looper {
                 self.close_loop(end, next);
             }
         }
+        if matches!(
+            self.state,
+            LooperState::Recording | LooperState::Playing | LooperState::Overdubbing
+        ) {
+            // Followed even when the metronome is off: switched on, it
+            // waits for the next beat
+            let beat = self.playhead / self.beat_length;
+            if beat != self.click_beat {
+                self.click_beat = beat;
+                if self.settings.click {
+                    self.click(beat.is_multiple_of(self.beats_per_bar()));
+                }
+            }
+        }
+    }
+
+    /// Start a bar of clicks, then go to `then`
+    fn start_count_in(&mut self, then: LooperState) {
+        self.count = 0;
+        self.after_count = then;
+        self.state = LooperState::CountIn;
+    }
+
+    /// The count-in is over: the loop starts on this downbeat. Runs on the
+    /// audio thread: no allocation (the overdub layer was prepared).
+    fn end_count_in(&mut self) {
+        self.playhead = 0;
+        self.click_beat = usize::MAX;
+        self.state = self.after_count;
+        if self.state == LooperState::Overdubbing {
+            self.push_overdub_layer();
+        }
+    }
+
+    /// Any transport key during the count-in cancels it: a recording to be
+    /// leaves nothing, a loop to be overdubbed stays stopped
+    fn cancel_count_in(&mut self) {
+        if self.after_count == LooperState::Recording {
+            self.clear();
+        } else {
+            self.count = 0;
+            self.playhead = 0;
+            self.state = LooperState::Stopped;
+        }
     }
 
     /// Record the signal and mix the loop into it, in place (`left` and
@@ -294,25 +525,37 @@ impl Looper {
                 LooperState::CountIn => self.count += 1,
                 LooperState::Recording => {
                     let at = 2 * self.playhead;
-                    if let Some(frame) = self.layers.first_mut().and_then(|f| f.get_mut(at..at + 2))
+                    if let Some(frame) = self
+                        .layers
+                        .first_mut()
+                        .and_then(|layer| layer.frames.get_mut(at..at + 2))
                     {
                         frame.copy_from_slice(&[*l, *r]);
+                    }
+                    let point = self.playhead * RECORD_POINTS / self.max_samples.max(1);
+                    if let Some(peak) = self.record_wave.get_mut(point) {
+                        let new = peak.max(l.abs()).max(r.abs());
+                        if new != *peak {
+                            *peak = new;
+                            self.wave_version += 1;
+                        }
                     }
                     self.playhead += 1;
                 }
                 LooperState::Playing => {
-                    let (loop_l, loop_r) = self.loop_frame(self.playhead);
+                    let (loop_l, loop_r) = self.loop_frame();
                     *l += loop_l;
                     *r += loop_r;
                     self.advance();
                 }
                 LooperState::Overdubbing => {
-                    let (loop_l, loop_r) = self.loop_frame(self.playhead);
+                    // Always at full speed (see `overdub`)
+                    let (loop_l, loop_r) = self.loop_frame();
                     let at = 2 * self.playhead;
                     if let Some([left, right]) = self
                         .layers
                         .last_mut()
-                        .and_then(|layer| layer.get_mut(at..at + 2))
+                        .and_then(|layer| layer.frames.get_mut(at..at + 2))
                     {
                         *left += *l * OVERDUB_GAIN;
                         *right += *r * OVERDUB_GAIN;
@@ -356,27 +599,48 @@ impl Looper {
             .unwrap_or_else(|| new_layer(self.max_samples))
     }
 
+    /// A new overdub layer over the whole loop, from the spare one; with all
+    /// layers used, the last one keeps accumulating. On the audio thread: no
+    /// allocation (`overdub` unfolded the last layer already).
+    fn push_overdub_layer(&mut self) {
+        if self.layers.len() < self.max_layers {
+            if let Some(frames) = self.spare.take() {
+                self.layers.push(Layer {
+                    frames,
+                    length: self.loop_length,
+                });
+            }
+        }
+    }
+
     /// Start recording a new loop (erases the current one), after a bar of
     /// clicks with the count-in. During the count-in, cancels it.
     pub fn record(&mut self) {
         if self.state == LooperState::CountIn {
-            self.clear();
+            self.cancel_count_in();
             return;
         }
         self.garbage.append(&mut self.layers);
-        let layer = self.take_layer();
-        self.layers.push(layer);
+        let frames = self.take_layer();
+        self.layers.push(Layer { frames, length: 0 });
         self.loop_length = 0;
         self.playhead = 0;
+        self.fraction = 0.0;
+        self.half_speed = false;
         self.end_at = None;
         self.beat_length = beat_samples(self.sample_rate, self.bpm);
         self.bar_length = self.beat_length * self.settings.beats_per_bar as usize;
-        self.count = 0;
-        self.state = if self.settings.count_in {
-            LooperState::CountIn
+        self.click_beat = usize::MAX;
+        self.record_wave = [0.0; RECORD_POINTS];
+        self.wave = [0.0; WAVE_POINTS];
+        self.wave_version += 1;
+        self.loop_id += 1;
+        if self.settings.count_in {
+            self.start_count_in(LooperState::Recording);
         } else {
-            LooperState::Recording
-        };
+            self.count = 0;
+            self.state = LooperState::Recording;
+        }
     }
 
     /// End the first recording, then go to `next` (playing, stopped or
@@ -392,7 +656,7 @@ impl Looper {
             return;
         }
         let recorded = self.playhead;
-        let end = if self.settings.quantize {
+        let end = if self.quantizing() {
             quantized_length(recorded, self.bar_length, self.snap_samples())
                 .min(self.record_limit())
         } else {
@@ -411,15 +675,23 @@ impl Looper {
     fn close_loop(&mut self, length: usize, next: LooperState) {
         self.end_at = None;
         self.loop_length = length;
+        if let Some(first) = self.layers.first_mut() {
+            first.length = length;
+        }
+        // The overview, from the recording's
+        let points = (length * RECORD_POINTS)
+            .div_ceil(self.max_samples.max(1))
+            .clamp(1, RECORD_POINTS);
+        regroup(&self.record_wave[..points], &mut self.wave);
+        self.wave_point = usize::MAX;
+        self.wave_version += 1;
         // Ended on a bar line already behind: the loop goes on from there
         let over = self.playhead.saturating_sub(length);
         self.playhead = if over < length { over } else { 0 };
         self.state = match next {
             _ if length == 0 => LooperState::Stopped,
             LooperState::Overdubbing => {
-                if self.layers.len() < self.max_layers {
-                    self.layers.extend(self.spare.take());
-                }
+                self.push_overdub_layer();
                 LooperState::Overdubbing
             }
             LooperState::Stopped => LooperState::Stopped,
@@ -428,18 +700,22 @@ impl Looper {
         if self.state == LooperState::Stopped {
             self.playhead = 0;
         }
+        self.click_beat = usize::MAX;
     }
 
-    /// Play the loop. While recording, this closes the loop (at the end of
-    /// the bar when quantizing); while overdubbing, it keeps the overdub and
-    /// continues. During the count-in, cancels it.
+    /// Play the loop (at once: no count-in, the loop is its own guide).
+    /// While recording, this closes the loop (at the end of the bar when
+    /// quantizing); while overdubbing, it keeps the overdub and continues.
+    /// During the count-in, cancels it.
     pub fn play(&mut self) {
         match self.state {
-            LooperState::CountIn => self.clear(),
+            LooperState::CountIn => self.cancel_count_in(),
             LooperState::Recording => self.end_recording(LooperState::Playing),
             LooperState::Overdubbing => self.state = LooperState::Playing,
             LooperState::Stopped if self.loop_length > 0 => {
                 self.playhead = 0;
+                self.fraction = 0.0;
+                self.click_beat = usize::MAX;
                 self.state = LooperState::Playing;
             }
             _ => {}
@@ -448,28 +724,47 @@ impl Looper {
 
     pub fn stop(&mut self) {
         match self.state {
-            LooperState::CountIn => self.clear(),
+            LooperState::CountIn => self.cancel_count_in(),
             LooperState::Recording => self.end_recording(LooperState::Stopped),
             _ => {
                 self.state = LooperState::Stopped;
                 self.playhead = 0;
+                self.fraction = 0.0;
             }
         }
     }
 
     /// Record a new layer on top of the loop, without moving the playhead
+    /// (from a stop, after a bar of clicks with the count-in). Overdubs are
+    /// recorded at full speed: at half speed, the loop goes back to it.
     pub fn overdub(&mut self) {
         match self.state {
-            LooperState::CountIn => self.clear(),
+            LooperState::CountIn => self.cancel_count_in(),
             LooperState::Recording => self.end_recording(LooperState::Overdubbing),
             LooperState::Overdubbing => {}
             _ if self.loop_length == 0 => {}
             _ => {
-                if self.layers.len() < self.max_layers {
-                    let layer = self.take_layer();
-                    self.layers.push(layer);
+                self.set_half_speed(false);
+                // The audio thread takes the layer: it must be ready
+                if self.spare.is_none() {
+                    self.spare = Some(new_layer(self.max_samples));
                 }
-                // With all layers used, the last one keeps accumulating
+                if self.layers.len() == self.max_layers {
+                    // Its repeats are recorded on one by one
+                    let length = self.loop_length;
+                    if let Some(last) = self.layers.last_mut() {
+                        last.unfold(length);
+                    }
+                }
+                if self.state == LooperState::Stopped && self.settings.count_in {
+                    self.playhead = 0;
+                    self.start_count_in(LooperState::Overdubbing);
+                    return;
+                }
+                if self.state == LooperState::Stopped {
+                    self.click_beat = usize::MAX;
+                }
+                self.push_overdub_layer();
                 self.state = LooperState::Overdubbing;
             }
         }
@@ -477,10 +772,11 @@ impl Looper {
 
     /// Single-button control (footswitch):
     /// stopped → (count-in →) record → play → overdub → play → ...
+    /// During a count-in, cancels it.
     pub fn cycle(&mut self) {
         match self.state {
             LooperState::Stopped if self.loop_length == 0 => self.record(),
-            LooperState::CountIn => self.record(),
+            LooperState::CountIn => self.cancel_count_in(),
             LooperState::Stopped | LooperState::Recording | LooperState::Overdubbing => self.play(),
             LooperState::Playing => self.overdub(),
         }
@@ -501,9 +797,61 @@ impl Looper {
         self.garbage.append(&mut self.layers);
         self.loop_length = 0;
         self.playhead = 0;
+        self.fraction = 0.0;
+        self.half_speed = false;
         self.count = 0;
         self.end_at = None;
+        self.click_beat = usize::MAX;
+        self.wave = [0.0; WAVE_POINTS];
+        self.wave_version += 1;
+        self.loop_id += 1;
         self.state = LooperState::Stopped;
+    }
+
+    /// Repeat the loop `times` times: overdubs then span the longer loop.
+    /// Instant (the layers repeat, nothing is copied); an overdub running
+    /// is kept and the loop plays on. False when there is no loop yet or the
+    /// result would not fit the buffer.
+    pub fn multiply(&mut self, times: usize) -> bool {
+        if times < 2
+            || self.loop_length == 0
+            || matches!(self.state, LooperState::CountIn | LooperState::Recording)
+        {
+            return false;
+        }
+        let Some(length) = self
+            .loop_length
+            .checked_mul(times)
+            .filter(|&length| length <= self.max_samples)
+        else {
+            return false;
+        };
+        if self.state == LooperState::Overdubbing {
+            self.state = LooperState::Playing;
+        }
+        self.loop_length = length;
+        // The overview repeats too
+        let tiled: Vec<f32> = (0..times).flat_map(|_| self.wave).collect();
+        regroup(&tiled, &mut self.wave);
+        self.wave_point = usize::MAX;
+        self.wave_version += 1;
+        true
+    }
+
+    /// Play the loop at half speed (an octave down) or back at full speed.
+    /// Overdubbing goes on playing: overdubs are recorded at full speed.
+    pub fn set_half_speed(&mut self, half: bool) {
+        if half && self.state == LooperState::Overdubbing {
+            self.state = LooperState::Playing;
+        }
+        self.half_speed = half;
+        if !half {
+            self.fraction = 0.0;
+        }
+    }
+
+    pub fn half_speed(&self) -> bool {
+        self.half_speed
     }
 
     pub fn set_level(&mut self, level: f32) {
@@ -596,6 +944,173 @@ impl Looper {
     pub fn level(&self) -> f32 {
         self.level
     }
+
+    /// Everything the UI shows, in one lock
+    pub fn status(&self) -> LooperStatus {
+        LooperStatus {
+            state: self.state,
+            length: self.loop_length_seconds(),
+            position: self.position_seconds(),
+            layers: self.layer_count(),
+            beat: self.beat(),
+            beats_per_bar: self.beats_per_bar(),
+            bars: self.loop_bars(),
+            ending: self.ending(),
+            half_speed: self.half_speed,
+            can_double: self.loop_length > 0
+                && 2 * self.loop_length <= self.max_samples
+                && !matches!(self.state, LooperState::CountIn | LooperState::Recording),
+            wave_version: self.wave_version,
+        }
+    }
+
+    /// Overview of the loop: [`WAVE_POINTS`] peaks from its start to its end
+    /// (while recording: of the recording so far). Empty without a loop.
+    pub fn waveform(&self) -> Vec<f32> {
+        let mut wave = vec![0.0; WAVE_POINTS];
+        match self.state {
+            LooperState::Recording => {
+                let points = (self.playhead * RECORD_POINTS / self.max_samples.max(1) + 1)
+                    .min(RECORD_POINTS);
+                regroup(&self.record_wave[..points], &mut wave);
+            }
+            _ if self.loop_length == 0 => wave.clear(),
+            _ => wave.copy_from_slice(&self.wave),
+        }
+        wave
+    }
+
+    /// The loop as audio (layers summed, before the level), to save it.
+    /// Copied a few thousand frames per lock, so the audio thread is not
+    /// held up. None without a loop, while recording, or when the loop
+    /// changes meanwhile.
+    pub fn snapshot(looper: &Mutex<Looper>) -> Option<LoopAudio> {
+        const CHUNK: usize = 4096;
+        let lock = || looper.lock().unwrap_or_else(|e| e.into_inner());
+        let (length, sample_rate, bpm, beats_per_bar, bars, id) = {
+            let l = lock();
+            if l.loop_length == 0
+                || matches!(l.state, LooperState::Recording | LooperState::CountIn)
+            {
+                return None;
+            }
+            (
+                l.loop_length,
+                l.sample_rate,
+                60.0 * l.sample_rate / l.beat_length as f32,
+                l.beats_per_bar() as u8,
+                l.loop_bars(),
+                l.loop_id,
+            )
+        };
+        let mut frames = vec![0.0f32; 2 * length];
+        for (n, chunk) in frames.chunks_mut(2 * CHUNK).enumerate() {
+            let l = lock();
+            // A new recording, a clear, a multiply or a load
+            if l.loop_length != length || l.loop_id != id {
+                return None;
+            }
+            for (i, frame) in chunk.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+                let (left, right) = l.mix(n * CHUNK + i);
+                *frame = [left, right];
+            }
+        }
+        Some(LoopAudio {
+            frames,
+            sample_rate: sample_rate as u32,
+            bpm,
+            beats_per_bar,
+            bars,
+        })
+    }
+
+    /// Replace the loop with `audio` (stopped, ready to play). The layer is
+    /// prepared (resampled to the looper's rate if needed) outside the lock.
+    pub fn load(looper: &Mutex<Looper>, audio: &LoopAudio) -> Result<(), String> {
+        let lock = || looper.lock().unwrap_or_else(|e| e.into_inner());
+        let (sample_rate, max_samples) = {
+            let l = lock();
+            (l.sample_rate, l.max_samples)
+        };
+        let frames = resample(&audio.frames, audio.sample_rate as f32, sample_rate);
+        let mut length = (frames.len() / 2).min(max_samples);
+        if length == 0 {
+            return Err("the loop is empty".into());
+        }
+        let beats = audio
+            .beats_per_bar
+            .clamp(MIN_BEATS_PER_BAR, MAX_BEATS_PER_BAR) as usize;
+        // Whole bars stay whole bars, whatever the rounding of the rate
+        let beat_length = if audio.bars > 0 && length >= audio.bars * beats {
+            length / (audio.bars * beats)
+        } else {
+            beat_samples(sample_rate, audio.bpm)
+        };
+        if audio.bars > 0 && length >= audio.bars * beats {
+            length = beat_length * beats * audio.bars;
+        }
+        let mut layer = new_layer(max_samples);
+        layer[..2 * length].copy_from_slice(&frames[..2 * length]);
+        let peaks: Vec<f32> = layer[..2 * length]
+            .chunks(2 * length.div_ceil(RECORD_POINTS).max(1))
+            .map(|c| c.iter().fold(0.0f32, |a, s| a.max(s.abs())))
+            .collect();
+        let mut wave = [0.0; WAVE_POINTS];
+        regroup(&peaks, &mut wave);
+        let garbage = {
+            let mut l = lock();
+            if l.sample_rate != sample_rate {
+                return Err("the audio settings changed: load the loop again".into());
+            }
+            let old = std::mem::take(&mut l.layers);
+            l.garbage.extend(old);
+            l.layers.push(Layer {
+                frames: layer,
+                length,
+            });
+            l.loop_length = length;
+            l.playhead = 0;
+            l.fraction = 0.0;
+            l.half_speed = false;
+            l.count = 0;
+            l.end_at = None;
+            l.beat_length = beat_length;
+            l.bar_length = beat_length * beats;
+            l.click_beat = usize::MAX;
+            l.wave = wave;
+            l.wave_point = usize::MAX;
+            l.wave_version += 1;
+            l.loop_id += 1;
+            l.state = LooperState::Stopped;
+            std::mem::take(&mut l.garbage)
+        };
+        drop(garbage);
+        Ok(())
+    }
+}
+
+/// Interleaved stereo `frames` at `from` Hz, at `to` Hz (linear
+/// interpolation: loops come back at the rate they were saved at, unless
+/// the audio interface changed)
+fn resample(frames: &[f32], from: f32, to: f32) -> Vec<f32> {
+    let n = frames.len() / 2;
+    if from == to || n == 0 || from <= 0.0 || to <= 0.0 {
+        return frames[..2 * n].to_vec();
+    }
+    let out = ((n as f64) * to as f64 / from as f64).round() as usize;
+    let step = from as f64 / to as f64;
+    let mut resampled = Vec::with_capacity(2 * out);
+    for i in 0..out {
+        let at = i as f64 * step;
+        let j = (at as usize).min(n - 1);
+        let k = (j + 1).min(n - 1);
+        let t = (at - j as f64) as f32;
+        for c in 0..2 {
+            let (a, b) = (frames[2 * j + c], frames[2 * k + c]);
+            resampled.push(a + (b - a) * t);
+        }
+    }
+    resampled
 }
 
 /// A zeroed layer of `max_samples` stereo frames, with its memory mapped:
@@ -933,5 +1448,261 @@ mod tests {
         // Older sessions have no looper settings
         let old: LooperSettings = serde_json::from_str("{}").unwrap();
         assert_eq!(old, LooperSettings::default());
+    }
+
+    #[test]
+    fn the_metronome_clicks_every_beat_and_accents_the_bar() {
+        let mut looper = clicking(LooperSettings {
+            click: true,
+            click_level: 1.0,
+            ..LooperSettings::default()
+        });
+        looper.record();
+        // Recording: one click per beat, the first of the bar louder
+        let out = feed(&mut looper, std::iter::repeat_n(0.0, 2 * 96000));
+        let beats: Vec<f32> = out.chunks(24000).map(|b| peak(&b[..2000])).collect();
+        assert_eq!(beats.len(), 8);
+        assert!(beats.iter().all(|&p| p > 0.1));
+        assert!(beats[0] > beats[1] * 1.2 && beats[4] > beats[3] * 1.2);
+        assert_eq!(peak(&out[2000..24000]), 0.0);
+        // The click implies whole bars: a stop in bar 3 ends it
+        feed(&mut looper, std::iter::repeat_n(0.0, 5000));
+        looper.play();
+        assert!(looper.ending());
+        feed(&mut looper, std::iter::repeat_n(0.0, 91001));
+        assert_eq!(looper.state(), LooperState::Playing);
+        assert_eq!(looper.loop_bars(), 3);
+        // Playing: the accent comes back with the loop
+        let out = feed(&mut looper, std::iter::repeat_n(0.0, 3 * 96000));
+        let bars: Vec<f32> = out.chunks(96000).map(|b| peak(&b[..2000])).collect();
+        assert!(bars.iter().all(|&p| p > 0.9));
+        assert!(peak(&out[24000..26000]) < 0.7);
+
+        // Switched off: silence
+        looper.set_settings(LooperSettings {
+            click: false,
+            ..looper.settings()
+        });
+        // (after the click already running)
+        assert_eq!(
+            peak(&feed(&mut looper, std::iter::repeat_n(0.0, 96000))[2000..]),
+            0.0
+        );
+    }
+
+    #[test]
+    fn overdub_from_a_stop_counts_in_play_does_not() {
+        let mut looper = timed(LooperSettings {
+            count_in: true,
+            click_level: 0.0,
+            ..LooperSettings::default()
+        });
+        looper.record();
+        feed(&mut looper, std::iter::repeat_n(0.0, 2000));
+        feed(&mut looper, std::iter::repeat_n(0.5, 2000));
+        looper.stop();
+        assert_eq!(looper.state(), LooperState::Stopped);
+
+        // Play: at once
+        looper.play();
+        assert_eq!(looper.state(), LooperState::Playing);
+        looper.stop();
+
+        // Overdub: a bar of clicks first, the loop silent meanwhile
+        looper.overdub();
+        assert_eq!(looper.state(), LooperState::CountIn);
+        assert_eq!(looper.layer_count(), 1);
+        let out = feed(&mut looper, std::iter::repeat_n(0.25, 2000));
+        assert!(out.iter().all(|&s| s == 0.25));
+        feed(&mut looper, std::iter::repeat_n(0.25, 1));
+        assert_eq!(looper.state(), LooperState::Overdubbing);
+        assert_eq!(looper.overdub_count(), 1);
+        assert_eq!(looper.position_seconds(), 0.001);
+
+        // Cancelled, the loop stays
+        looper.stop();
+        looper.overdub();
+        looper.play();
+        assert_eq!(looper.state(), LooperState::Stopped);
+        assert_eq!(looper.loop_length_seconds(), 2.0);
+        // From playing, the overdub starts at once
+        looper.play();
+        looper.overdub();
+        assert_eq!(looper.state(), LooperState::Overdubbing);
+    }
+
+    #[test]
+    fn multiply_repeats_the_loop_and_overdubs_span_it() {
+        let mut looper = Looper::new(1000.0);
+        looper.record();
+        feed(&mut looper, (0..100).map(|i| i as f32));
+        looper.play();
+        assert!(looper.multiply(2));
+        assert_eq!(looper.loop_length_seconds(), 0.2);
+        let out = feed(&mut looper, std::iter::repeat_n(0.0, 200));
+        assert_eq!(out[150], 50.0);
+        // An overdub on the second half only
+        feed(&mut looper, std::iter::repeat_n(0.0, 100));
+        looper.overdub();
+        feed(&mut looper, std::iter::repeat_n(1.0, 100));
+        looper.play();
+        let out = feed(&mut looper, std::iter::repeat_n(0.0, 200));
+        assert_eq!(out[50], 50.0);
+        assert_eq!(out[150], 50.0 + OVERDUB_GAIN);
+        // Too long for the buffer (30 s)
+        assert!(!looper.multiply(200));
+        assert!(looper.multiply(3));
+        assert_eq!(looper.loop_length_seconds(), 0.6);
+        // Nothing to multiply
+        looper.clear();
+        assert!(!looper.multiply(2));
+    }
+
+    #[test]
+    fn with_all_layers_used_the_last_one_unfolds_before_an_overdub() {
+        let mut looper = Looper::new(1000.0);
+        looper.max_layers = 1;
+        looper.record();
+        feed(&mut looper, (0..100).map(|i| i as f32));
+        looper.play();
+        looper.multiply(2);
+        feed(&mut looper, std::iter::repeat_n(0.0, 100));
+        looper.overdub();
+        assert_eq!(looper.layer_count(), 1);
+        feed(&mut looper, std::iter::repeat_n(1.0, 100));
+        looper.play();
+        let out = feed(&mut looper, std::iter::repeat_n(0.0, 200));
+        // The overdub went into the second repeat only
+        assert_eq!(out[10], 10.0);
+        assert_eq!(out[110], 10.0 + OVERDUB_GAIN);
+    }
+
+    #[test]
+    fn half_speed_plays_an_octave_down_and_overdubs_at_full_speed() {
+        let mut looper = Looper::new(1000.0);
+        looper.record();
+        feed(&mut looper, (0..100).map(|i| i as f32));
+        looper.play();
+        looper.set_half_speed(true);
+        let out = feed(&mut looper, std::iter::repeat_n(0.0, 200));
+        // Twice as long, halfway frames in between
+        assert_eq!(&out[..4], &[0.0, 0.5, 1.0, 1.5]);
+        assert_eq!(out[199], 99.0 / 2.0); // back between the last and the first
+        assert_eq!(looper.position_seconds(), 0.0);
+        assert!(looper.status().half_speed);
+        // An overdub goes back to full speed
+        looper.overdub();
+        assert_eq!(looper.state(), LooperState::Overdubbing);
+        assert!(!looper.half_speed());
+        // Half speed while overdubbing keeps the overdub and plays on
+        looper.set_half_speed(true);
+        assert_eq!(looper.state(), LooperState::Playing);
+        // A new recording is at full speed
+        looper.record();
+        assert!(!looper.half_speed());
+    }
+
+    #[test]
+    fn the_waveform_follows_the_loop() {
+        let mut looper = Looper::new(1000.0); // 30000 frames max
+        assert!(looper.waveform().is_empty());
+        looper.record();
+        let version = looper.status().wave_version;
+        feed(
+            &mut looper,
+            (0..3000).map(|i| if i < 1500 { 0.5 } else { 0.25 }),
+        );
+        assert!(looper.status().wave_version > version);
+        // While recording: what was recorded so far, across
+        let wave = looper.waveform();
+        assert_eq!(wave.len(), WAVE_POINTS);
+        assert_eq!(wave[0], 0.5);
+        assert_eq!(wave[WAVE_POINTS - 1], 0.25);
+        looper.play();
+        let wave = looper.waveform();
+        assert_eq!(wave[10], 0.5);
+        assert_eq!(wave[200], 0.25);
+        // Played over, unchanged: no new version
+        feed(&mut looper, std::iter::repeat_n(0.0, 3000));
+        let version = looper.status().wave_version;
+        feed(&mut looper, std::iter::repeat_n(0.0, 3000));
+        assert_eq!(looper.status().wave_version, version);
+        assert_eq!(looper.waveform()[10], 0.5);
+        // An overdub shows on the next pass
+        looper.overdub();
+        feed(&mut looper, std::iter::repeat_n(0.5, 3000));
+        looper.play();
+        feed(&mut looper, std::iter::repeat_n(0.0, 3000));
+        assert!((looper.waveform()[10] - (0.5 + 0.5 * OVERDUB_GAIN)).abs() < 1e-6);
+        // Undone: shows on the next pass too. Multiplied: twice across
+        looper.undo();
+        feed(&mut looper, std::iter::repeat_n(0.0, 3000));
+        assert_eq!(looper.waveform()[10], 0.5);
+        looper.multiply(2);
+        let wave = looper.waveform();
+        assert_eq!(wave[5], 0.5);
+        assert_eq!(wave[100], 0.25);
+        assert_eq!(wave[133], 0.5);
+        looper.clear();
+        assert!(looper.waveform().is_empty());
+    }
+
+    #[test]
+    fn a_saved_loop_loads_back_on_its_bars() {
+        let looper = Mutex::new(timed(quantized()));
+        assert!(Looper::snapshot(&looper).is_none());
+        Looper::control(&looper, |l| {
+            l.set_level(0.5);
+            l.record();
+        });
+        feed(&mut looper.locked(), (0..3990).map(|i| i as f32 / 4000.0));
+        assert!(Looper::snapshot(&looper).is_none()); // still recording
+        Looper::control(&looper, |l| l.play());
+        feed(&mut looper.locked(), std::iter::repeat_n(0.0, 11));
+        let audio = Looper::snapshot(&looper).unwrap();
+        assert_eq!(audio.frames.len(), 2 * 4000);
+        assert_eq!(audio.sample_rate, 1000);
+        assert_eq!((audio.bpm, audio.beats_per_bar, audio.bars), (120.0, 4, 2));
+        // Before the level
+        assert_eq!(audio.frames[2 * 100], 0.025);
+
+        let other = Mutex::new(Looper::new(1000.0));
+        Looper::load(&other, &audio).unwrap();
+        let mut l = other.locked();
+        assert_eq!(l.state(), LooperState::Stopped);
+        assert_eq!(l.loop_bars(), 2);
+        assert_eq!(l.beats_per_bar(), 4);
+        assert_eq!(l.waveform().len(), WAVE_POINTS);
+        l.play();
+        let out = feed(&mut l, std::iter::repeat_n(0.0, 4000));
+        assert_eq!(out[100], 0.025);
+        assert_eq!(l.beat(), Some((1, 1)));
+        drop(l);
+
+        // At another rate, the loop keeps its bars and its duration
+        let other = Mutex::new(Looper::new(1500.0));
+        Looper::load(&other, &audio).unwrap();
+        let l = other.locked();
+        assert_eq!(l.loop_bars(), 2);
+        assert_eq!(l.loop_length_seconds(), 4.0);
+        assert!((l.mix(150).0 - 0.025).abs() < 1e-4);
+        drop(l);
+
+        // Free length (no bars)
+        let free = LoopAudio {
+            frames: vec![0.1; 2 * 1234],
+            sample_rate: 1000,
+            bpm: 90.0,
+            beats_per_bar: 3,
+            bars: 0,
+        };
+        Looper::load(&other, &free).unwrap();
+        assert_eq!(other.locked().loop_length, 1234 * 3 / 2);
+        assert_eq!(other.locked().loop_bars(), 0);
+        let empty = LoopAudio {
+            frames: vec![],
+            ..free
+        };
+        assert!(Looper::load(&other, &empty).is_err());
     }
 }
