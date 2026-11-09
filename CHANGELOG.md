@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/Siryu6/OpenRig/compare/v0.12.1...v0.13.0) - 2026-11-09
+
+### Added
+
+- web remote control, phone or tablet as the pedal's screen ([#99](https://github.com/Siryu6/OpenRig/pull/99))
+- network MIDI over RTP-MIDI with device approval ([#97](https://github.com/Siryu6/OpenRig/pull/97))
+
+### Fixed
+
+- *(os)* ship xkb keymap data so a physical keyboard no longer crashes the app ([#101](https://github.com/Siryu6/OpenRig/pull/101))
+
 ## [0.12.1](https://github.com/Siryu6/OpenRig/compare/v0.12.0...v0.12.1) - 2026-11-07
 
 ### Fixed
