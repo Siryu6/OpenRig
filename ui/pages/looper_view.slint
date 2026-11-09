@@ -321,7 +321,7 @@ export component LooperView inherits Rectangle {
                     Text {
                         text: (root.loop-bars > 0 ? (root.loop-bars == 1 ? "1 bar" : root.loop-bars + " bars") : "")
                             + (root.loop-bars > 0 && root.layer-count > 0 ? "  ·  " : "")
-                            + (root.layer-count == 0 ? "" : root.layer-count == 1 ? "1 layer" : root.layer-count + " layers");
+                            + (root.layer-count == 0 || root.loop-length == 0 ? "" : root.layer-count == 1 ? "1 layer" : root.layer-count + " layers");
                         color: Theme.text-secondary;
                         font-size: Theme.font-small;
                         vertical-alignment: center;
