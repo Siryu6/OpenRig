@@ -135,6 +135,9 @@ export component App inherits Window {
     private property <bool> t3k-editing-key: false;
     private property <string> t3k-key-draft: "";
     private property <bool> t3k-confirm-disconnect: false;
+    // A keyboard of the Settings is open: its text field has the focus
+    private property <bool> settings-typing: root.wifi-password-ssid != "" || root.netmidi-renaming
+        || root.t3k-editing-key || RemoteControl.editing;
     // Settings → Hardware: where the stops after the footswitches start
     private property <int> hw-tap-start: 1 + (Features.gpio ? root.hardware-footswitch-pins.length : 0);
     private property <int> hw-encoder-start: root.hw-tap-start + (root.footswitch-count >= 2 ? 1 : 0);
@@ -1058,6 +1061,15 @@ export component App inherits Window {
         // Learning only makes sense in the block editor
         if (root.current-view != 1 && root.midi-learning) {
             root.midi-learn-toggled(false);
+        }
+    }
+
+    // A keyboard of the Settings closed: its text field had the focus and
+    // took it away with it, so turns and presses went nowhere until the
+    // page changed; it goes back to the encoder
+    changed settings-typing => {
+        if (!root.settings-typing) {
+            keys.focus();
         }
     }
 
