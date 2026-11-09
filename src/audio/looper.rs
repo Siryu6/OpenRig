@@ -1078,6 +1078,9 @@ impl Looper {
 
     /// Replace the loop with `audio` (stopped, ready to play). The layer is
     /// prepared (resampled to the looper's rate if needed) outside the lock.
+    /// A loop longer than the looper's buffer is refused, as hardware
+    /// loopers refuse a file larger than their memory: cut, it would no
+    /// longer be the loop saved, nor fit its bars.
     pub fn load(looper: &Mutex<Looper>, audio: &LoopAudio) -> Result<(), String> {
         let lock = || looper.lock().unwrap_or_else(|e| e.into_inner());
         let (sample_rate, max_samples) = {
@@ -1085,10 +1088,18 @@ impl Looper {
             (l.sample_rate, l.max_samples)
         };
         let frames = resample(&audio.frames, audio.sample_rate as f32, sample_rate);
-        let mut length = (frames.len() / 2).min(max_samples);
+        let mut length = frames.len() / 2;
         if length == 0 {
             return Err("the loop is empty".into());
         }
+        // (a few frames over: the rounding of a resampling)
+        if length > max_samples + (sample_rate / 100.0) as usize {
+            return Err(format!(
+                "it lasts {:.1} s, the looper holds {MAX_LOOP_SECONDS:.0} s at most",
+                length as f32 / sample_rate
+            ));
+        }
+        length = length.min(max_samples);
         let beats = audio
             .beats_per_bar
             .clamp(MIN_BEATS_PER_BAR, MAX_BEATS_PER_BAR) as usize;
@@ -1878,5 +1889,33 @@ mod tests {
             ..free
         };
         assert!(Looper::load(&other, &empty).is_err());
+    }
+
+    #[test]
+    fn a_loop_longer_than_the_buffer_is_refused() {
+        // 1000 Hz, 30 s at most: 16 bars of 2 s are too long
+        let looper = Mutex::new(Looper::new(1000.0));
+        let long = LoopAudio {
+            frames: vec![0.1; 2 * 32000],
+            sample_rate: 1000,
+            bpm: 120.0,
+            beats_per_bar: 4,
+            bars: 16,
+        };
+        let error = Looper::load(&looper, &long).unwrap_err();
+        assert!(error.contains("32.0 s"), "{error}");
+        assert_eq!(looper.locked().loop_length, 0);
+
+        // A frame over (rounding): loaded on its bars
+        let exact = LoopAudio {
+            frames: vec![0.1; 2 * 30001],
+            bars: 15,
+            ..long
+        };
+        Looper::load(&looper, &exact).unwrap();
+        let l = looper.locked();
+        assert_eq!(l.loop_length, 30000);
+        assert_eq!(l.loop_bars(), 15);
+        assert_eq!(l.beats_per_bar(), 4);
     }
 }
