@@ -1,3 +1,4 @@
+import { Features } from "../features.slint";
 import { Theme } from "../theme.slint";
 import { SceneInfo, SceneSlotInfo, PresetInfo } from "../types.slint";
 import { Badge, Button, Card, EmptyState, Icon, SectionHeader, Segmented } from "../components/controls.slint";
@@ -284,7 +285,8 @@ export component SceneManager inherits Rectangle {
                     width: parent.switch-d;
                     height: parent.switch-d;
                     border-radius: self.width / 2;
-                    background: slot-ta.pressed ? @linear-gradient(180deg, #6b7079 0%, #9aa0a8 100%)
+                    background: Features.flat ? (slot-ta.pressed ? #838890 : #979ca4)
+                        : slot-ta.pressed ? @linear-gradient(180deg, #6b7079 0%, #9aa0a8 100%)
                         : @linear-gradient(180deg, #c3c8cf 0%, #6b7079 100%);
                     border-width: 2px;
                     border-color: #2a2d33;
@@ -293,7 +295,7 @@ export component SceneManager inherits Rectangle {
                         width: parent.width * 0.62;
                         height: parent.height * 0.62;
                         border-radius: self.width / 2;
-                        background: slot-ta.pressed ? #858a93 : @linear-gradient(180deg, #9ea4ac 0%, #d2d6db 100%);
+                        background: slot-ta.pressed ? #858a93 : Features.flat ? #b8bdc3 : @linear-gradient(180deg, #9ea4ac 0%, #d2d6db 100%);
                         border-width: 1px;
                         border-color: #00000040;
                     }

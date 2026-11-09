@@ -10,4 +10,8 @@ export global Features {
     in-out property <bool> update: false;
     // Built with the gpio feature: footswitches and encoder on the GPIO
     in-out property <bool> gpio: false;
+    // Drawn in memory for the remote control (no screen): its software
+    // renderer draws a gradient without the rounded corners, so rounded
+    // shapes use a plain colour there
+    in-out property <bool> flat: false;
 }

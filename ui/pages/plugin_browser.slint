@@ -1,3 +1,4 @@
+import { Features } from "../features.slint";
 import { Theme } from "../theme.slint";
 import { PluginItem } from "../types.slint";
 import { Badge, Button, Chip, EmptyState, Icon, SectionHeader } from "../components/controls.slint";
@@ -177,7 +178,7 @@ export component PluginBrowser {
                                 if plugin.kind == "" && !plugin.has-picture: Rectangle {
                                     width: 56px;
                                     border-radius: Theme.radius-md;
-                                    background: @linear-gradient(180deg, plugin.color.brighter(0.18) 0%, plugin.color.darker(0.12) 100%);
+                                    background: Features.flat ? plugin.color : @linear-gradient(180deg, plugin.color.brighter(0.18) 0%, plugin.color.darker(0.12) 100%);
                                     border-width: 1px;
                                     border-color: plugin.color.brighter(0.5);
                                     Text {
