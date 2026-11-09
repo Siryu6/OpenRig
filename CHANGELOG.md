@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1](https://github.com/Siryu6/OpenRig/compare/v0.14.0...v0.14.1) - 2026-11-09
+
+### Fixed
+
+- *(audio)* switch off a plugin that overloads the CPU or puts out NaN ([#120](https://github.com/Siryu6/OpenRig/pull/120))
+
 ## [0.14.0](https://github.com/Siryu6/OpenRig/compare/v0.13.0...v0.14.0) - 2026-11-09
 
 ### Added
