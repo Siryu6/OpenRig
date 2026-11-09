@@ -255,6 +255,7 @@ fn on_message(app: &App, state: &AppState, message: MidiMessage) {
                 LooperAction::Play => looper.play(),
                 LooperAction::Stop => looper.stop(),
                 LooperAction::Undo => looper.undo(),
+                LooperAction::HalfSpeed(on) => looper.set_half_speed(on),
             })
         }
         MidiAction::Tap => live_ui::tap(app, state),

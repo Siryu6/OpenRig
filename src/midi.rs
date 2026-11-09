@@ -17,6 +17,7 @@
 //! | CC 61 | Looper: 0–63 stop, 64–127 play |
 //! | CC 63 | Looper: undo (64–127) |
 //! | CC 64 | Tap tempo (64–127) |
+//! | CC 66 | Looper: 0–63 full speed, 64–127 half speed |
 //! | CC 68 | Tuner on / off |
 //! | CC 69 | Scene: 0–7 scene 1–8, 8 next, 9 previous |
 //! | CC 71 | Footswitch mode: 0 Stomp, 2 Setlist, 3 Scenes, 4 next, 5 previous |
@@ -165,6 +166,8 @@ pub enum LooperAction {
     Play,
     Stop,
     Undo,
+    /// Half speed (true) or full speed
+    HalfSpeed(bool),
 }
 
 /// What a message asks for
@@ -261,6 +264,7 @@ pub fn action(message: MidiMessage, settings: &MidiSettings) -> Option<MidiActio
                 LooperAction::Stop
             })),
             CC_LOOPER_UNDO if high(value) => Some(MidiAction::Looper(LooperAction::Undo)),
+            CC_LOOPER_SPEED => Some(MidiAction::Looper(LooperAction::HalfSpeed(high(value)))),
             CC_TAP if high(value) => Some(MidiAction::Tap),
             CC_TUNER => Some(MidiAction::Tuner),
             CC_SCENE => match value {
@@ -471,6 +475,14 @@ mod tests {
         assert_eq!(act(cc(32, 2)), Some(MidiAction::Bank(2)));
         assert_eq!(act(cc(0, 1)), Some(MidiAction::BankMsb(1)));
         assert_eq!(act(cc(72, 100)), Some(MidiAction::PresetStep(Step::Next)));
+        assert_eq!(
+            act(cc(66, 127)),
+            Some(MidiAction::Looper(LooperAction::HalfSpeed(true)))
+        );
+        assert_eq!(
+            act(cc(66, 0)),
+            Some(MidiAction::Looper(LooperAction::HalfSpeed(false)))
+        );
         // Reserved global CCs do nothing; the others are for the blocks
         assert_eq!(act(cc(70, 127)), None);
         assert_eq!(
