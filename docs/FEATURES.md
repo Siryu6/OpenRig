@@ -152,15 +152,26 @@ What OpenRig does, in more technical detail than the
   and restored at startup, so switching the pedalboard off is safe.
 - **Tuner** down to 38 Hz (7- and 8-string drop tunings, bass; analysis only while the tuner page is open, optional mute) and
   **looper** (record, overdub layers, undo, 30 s max) after the effects.
-  On the tempo of the preset (tap tempo, MIDI clock) and a bar of 2 to 12
-  beats (6/8, 9/8 and 12/8 click in eighth notes), the looper can count one
-  bar in (a click on each beat, higher on the first; recording starts on the
-  next downbeat; Record, Play or Stop during the count-in cancels it) and
-  quantize the first recording: stopping it carries on to the end of the
-  bar, so the loop is a whole number of bars, or ends on the bar line just
-  crossed when the stop comes within an eighth of a beat (100 ms at most)
-  after it. Overdubs keep the length. The click has its own level, is heard
-  on the main mix and never recorded. These settings are kept with the
+  On the tempo of the preset (tap tempo on the page too, MIDI clock) and a
+  bar of 2 to 12 beats (6/8, 9/8 and 12/8 click in eighth notes), the
+  looper can count one bar in before a recording, or before an overdub
+  started from a stop (a click on each beat, higher on the first; it starts
+  on the next downbeat; any transport key during the count-in cancels it),
+  and quantize the first recording: stopping it carries on to the end of
+  the bar, so the loop is a whole number of bars, or ends on the bar line
+  just crossed when the stop comes within an eighth of a beat (100 ms at
+  most) after it. A metronome click can run while recording, playing and
+  overdubbing (the bars are then always quantized). The click has its own
+  level, is heard on the main mix and never recorded. The page shows the
+  bar and beat large, and the loop's waveform with its bar lines and the
+  playhead. Overdubs keep the length; Loop ×2 doubles it (the loop plays
+  twice, later overdubs span both), up to 30 s. ½ Speed plays the loop an
+  octave down at half speed (MIDI CC66 too); overdubs go back to full
+  speed. Saved loops: the loop as it sounds (all layers mixed) is saved
+  under a name (the date and time by default) as a WAV file with its bar
+  grid in `loops/` of the data directory, and loaded back or deleted from
+  the Loops list; a WAV file copied there is listed too, as a free-length
+  loop. The count-in, quantize and click settings are kept with the
   session.
 - **Resource monitor**: the top bar shows the DSP load (time spent in the
   audio callback vs. the buffer period) and the SoC temperature, coloured
@@ -172,7 +183,7 @@ What OpenRig does, in more technical detail than the
 - **MIDI** (feature `midi`, default): every USB / DIN MIDI input is heard,
   hot-plugged. Helix-compatible map: Program Change and CC0 banks for
   presets (or setlist slots), CC69 scenes, CC64 tap, CC68 tuner, CC49–56
-  footswitches, CC60–63 looper; MIDI clock sets the tempo; MIDI learn on any
+  footswitches, CC60–63 and CC66 looper; MIDI clock sets the tempo; MIDI learn on any
   block parameter or on / off (expression pedals) with a heel / toe range,
   saved with the preset; notes and free CCs go to LV2 plugins taking MIDI.
   See [MIDI.md](MIDI.md).
@@ -190,8 +201,8 @@ What OpenRig does, in more technical detail than the
   holding goes back to the value before. Presets: turn to pick, press to
   load. Live: the switches (a press acts like the footswitch), then the
   tempo (press, then turn), tap and the mode. Looper: Record, Overdub,
-  Play, Stop, Undo, Clear, the level, the tempo, the bar, count-in,
-  quantize and the click level. Tuner: mute and the reference
+  Play, Stop, Undo, Clear, Loop ×2, ½ Speed, Loops, the tempo, tap, the
+  bar, count-in, quantize, the click, the click level and the level. Tuner: mute and the reference
   pitch. Holding on a main page opens a page switcher (Rack, Presets,
   Live, Tuner, Looper, Settings). Settings → Hardware sets what is wired: from
   no footswitch to 8, the GPIO of each (with a LED that lights while it is

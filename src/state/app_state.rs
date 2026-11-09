@@ -1036,6 +1036,11 @@ impl AppState {
         self.data_dir.join("models")
     }
 
+    /// Saved loops of the looper
+    pub fn loops_dir(&self) -> PathBuf {
+        crate::audio::loop_files::dir(&self.data_dir)
+    }
+
     /// Files the block `uri` can load from the models directory
     /// (subdirectories included), as paths relative to it, sorted
     pub fn list_files(&self, uri: &str) -> Vec<String> {

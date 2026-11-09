@@ -121,6 +121,13 @@ export enum LooperState {
     Overdubbing,
 }
 
+// A loop saved by the looper
+export struct SavedLoopInfo {
+    id: string,
+    name: string,
+    detail: string,                   // "2 bars · 96 BPM 3/4 · 0:05.0"
+}
+
 // Resource monitor snapshot (refreshed every second by Rust).
 // Unknown values are -1 (0 for memory-total-mb).
 export struct ResourceStatus {

@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import {
-    PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus,
+    PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, SavedLoopInfo, ResourceStatus,
     T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile, RoutingOutput, RoutingBlock, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot, SystemSetting, NetMidiDevice
 } from "types.slint";
 // Pages
@@ -35,7 +35,7 @@ import { PlotEvents } from "components/plot.slint";
 
 // Re-export the data types used by the Rust side
 export { ChoiceSearch, Encoder, Features, RemoteControl, PlotEvents, Rigs, RigFileInfo, RigItem, RigsOnline, OnlineRig, OnlineDep, TextEdit, TextEditing, Theme }
-export { PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot, SystemSetting }
+export { PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, SavedLoopInfo, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot, SystemSetting }
 
 // A control the encoder stops on: its name, its row in a list
 struct EncoderStop {
@@ -90,7 +90,7 @@ export component App inherits Window {
     private property <int> page-focus: 0;
     private property <int> page-slots: root.current-view == 4 ? root.presets.length
         : root.current-view == 9 ? root.live-tiles.length + 3
-        : root.current-view == 5 ? 12
+        : root.current-view == 5 ? 17
         : root.current-view == 3 ? 2
         : root.current-view == 7 ? root.hardware-start + 1
         : root.current-view == 12 ? root.hw-i2c-start + (Features.gpio ? 1 : 0) + (Features.gpio && root.hardware-i2c ? 3 : 0) : 0;
@@ -174,10 +174,20 @@ export component App inherits Window {
     in-out property <int> looper-beats: 4;
     in-out property <int> looper-bars: 0;
     in-out property <bool> looper-ending: false;
-    // Settings: bar, count-in, bar quantization, click level
+    // Half speed, room to double the loop, its waveform (peaks 0..1 from
+    // its start to its end)
+    in-out property <bool> looper-half-speed: false;
+    in-out property <bool> looper-can-double: false;
+    in-out property <[float]> looper-wave: [];
+    // Saved loops, the list shown and the name offered when saving
+    in-out property <bool> looper-show-loops: false;
+    in-out property <[SavedLoopInfo]> looper-saved: [];
+    in-out property <string> looper-default-name: "";
+    // Settings: bar, count-in, bar quantization, click, click level
     in-out property <int> looper-beats-per-bar: 4;
     in-out property <bool> looper-count-in: false;
     in-out property <bool> looper-quantize: false;
+    in-out property <bool> looper-click: false;
     in-out property <float> looper-click-level: 0.5;
 
     // Plugins / chain
@@ -509,7 +519,13 @@ export component App inherits Window {
     callback looper-undo();
     callback looper-clear();
     callback looper-level-changed(float);
-    callback looper-settings-changed(int, bool, bool, float);
+    callback looper-settings-changed(int, bool, bool, bool, float);
+    callback looper-multiply();
+    callback looper-half-speed-changed(bool);
+    callback looper-loops-opened();
+    callback looper-save(string);     // name ("": the date and time)
+    callback looper-load(string);     // id
+    callback looper-delete(string);   // id
 
     callback set-stereo-mode(bool);
     callback wifi-refresh(bool);                     // rescan
@@ -656,35 +672,36 @@ export component App inherits Window {
         }
     }
 
-    // The value a page's encoder adjusts: tempo, looper level / tempo / bar /
-    // click level, reference pitch
+    // The value a page's encoder adjusts: tempo, looper tempo / bar / click
+    // level / level, reference pitch
     function page-value() -> float {
         root.current-view == 9 ? root.tempo
-            : root.current-view == 5 ? (root.page-focus == 7 ? root.tempo : root.page-focus == 8 ? root.looper-beats-per-bar
-                : root.page-focus == 11 ? root.looper-click-level : root.looper-level)
+            : root.current-view == 5 ? (root.page-focus == 9 ? root.tempo : root.page-focus == 11 ? root.looper-beats-per-bar
+                : root.page-focus == 15 ? root.looper-click-level : root.looper-level)
             : root.tuner-reference-pitch
     }
 
     // Encoder steps per unit of the page value (levels move by 5 %)
     function page-scale() -> float {
-        root.current-view == 5 && (root.page-focus == 6 || root.page-focus == 11) ? 20 : 1
+        root.current-view == 5 && (root.page-focus == 15 || root.page-focus == 16) ? 20 : 1
     }
 
-    function set-looper-settings(beats: int, count-in: bool, quantize: bool, click-level: float) {
+    function set-looper-settings(beats: int, count-in: bool, quantize: bool, click: bool, click-level: float) {
         root.looper-beats-per-bar = max(2, min(12, beats));
         root.looper-count-in = count-in;
         root.looper-quantize = quantize;
+        root.looper-click = click;
         root.looper-click-level = max(0, min(1, click-level));
-        root.looper-settings-changed(root.looper-beats-per-bar, count-in, quantize, root.looper-click-level);
+        root.looper-settings-changed(root.looper-beats-per-bar, count-in, quantize, click, root.looper-click-level);
     }
 
     function set-page-value(v: float) {
-        if (root.current-view == 9 || (root.current-view == 5 && root.page-focus == 7)) {
+        if (root.current-view == 9 || (root.current-view == 5 && root.page-focus == 9)) {
             root.set-tempo(max(40, min(240, v)));
-        } else if (root.current-view == 5 && root.page-focus == 8) {
-            root.set-looper-settings(v, root.looper-count-in, root.looper-quantize, root.looper-click-level);
         } else if (root.current-view == 5 && root.page-focus == 11) {
-            root.set-looper-settings(root.looper-beats-per-bar, root.looper-count-in, root.looper-quantize, v);
+            root.set-looper-settings(v, root.looper-count-in, root.looper-quantize, root.looper-click, root.looper-click-level);
+        } else if (root.current-view == 5 && root.page-focus == 15) {
+            root.set-looper-settings(root.looper-beats-per-bar, root.looper-count-in, root.looper-quantize, root.looper-click, v);
         } else if (root.current-view == 5) {
             root.looper-level = max(0, min(1, v));
             root.looper-level-changed(root.looper-level);
@@ -707,7 +724,7 @@ export component App inherits Window {
             root.tap-tempo();
         } else if (root.current-view == 9 && i == root.live-tiles.length + 2) {
             root.live-mode-changed(root.live-mode == "scenes" ? "stomp" : root.live-mode == "stomp" ? "setlist" : "scenes");
-        } else if (root.current-view == 5 && i < 6) {
+        } else if (root.current-view == 5 && i < 9) {
             if (i == 0) {
                 root.looper-record();
             } else if (i == 1) {
@@ -717,19 +734,34 @@ export component App inherits Window {
             } else if (i == 3) {
                 root.looper-stop();
             } else if (i == 4) {
-                root.looper-undo();
-            } else {
+                // Disabled during a count-in, as on the page
+                if (root.looper-state != LooperState.CountIn) {
+                    root.looper-undo();
+                }
+            } else if (i == 5) {
                 root.looper-clear();
+            } else if (i == 6) {
+                root.looper-multiply();
+            } else if (i == 7) {
+                root.looper-half-speed = !root.looper-half-speed;
+                root.looper-half-speed-changed(root.looper-half-speed);
+            } else {
+                root.looper-show-loops = true;
+                root.looper-loops-opened();
             }
-        } else if (root.current-view == 5 && i == 9) {
-            root.set-looper-settings(root.looper-beats-per-bar, !root.looper-count-in, root.looper-quantize, root.looper-click-level);
         } else if (root.current-view == 5 && i == 10) {
-            root.set-looper-settings(root.looper-beats-per-bar, root.looper-count-in, !root.looper-quantize, root.looper-click-level);
+            root.tap-tempo();
+        } else if (root.current-view == 5 && i == 12) {
+            root.set-looper-settings(root.looper-beats-per-bar, !root.looper-count-in, root.looper-quantize, root.looper-click, root.looper-click-level);
+        } else if (root.current-view == 5 && i == 13) {
+            root.set-looper-settings(root.looper-beats-per-bar, root.looper-count-in, !root.looper-quantize, root.looper-click, root.looper-click-level);
+        } else if (root.current-view == 5 && i == 14) {
+            root.set-looper-settings(root.looper-beats-per-bar, root.looper-count-in, root.looper-quantize, !root.looper-click, root.looper-click-level);
         } else if (root.current-view == 3 && i == 0) {
             root.tuner-mute-enabled = !root.tuner-mute-enabled;
             root.tuner-mute-toggled(root.tuner-mute-enabled);
         } else {
-            // Tempo, looper level, tempo, bar and click, reference pitch
+            // Tempo, looper tempo / bar / click level / level, reference pitch
             root.adjust-from = root.page-value();
             root.adjusting = true;
         }
@@ -1455,13 +1487,42 @@ export component App inherits Window {
                 beats-per-bar: root.looper-beats-per-bar;
                 count-in: root.looper-count-in;
                 quantize: root.looper-quantize;
+                click: root.looper-click;
                 click-level: root.looper-click-level;
+                half-speed: root.looper-half-speed;
+                can-double: root.looper-can-double;
+                wave: root.looper-wave;
+                show-loops <=> root.looper-show-loops;
+                saved: root.looper-saved;
+                default-name: root.looper-default-name;
 
                 tempo-changed(bpm) => {
                     root.set-tempo(max(40, min(240, bpm)));
                 }
-                settings-changed(beats, count-in, quantize, click-level) => {
-                    root.set-looper-settings(beats, count-in, quantize, click-level);
+                tap => {
+                    root.tap-tempo();
+                }
+                settings-changed(beats, count-in, quantize, click, click-level) => {
+                    root.set-looper-settings(beats, count-in, quantize, click, click-level);
+                }
+                multiply-clicked => {
+                    root.looper-multiply();
+                }
+                half-speed-toggled => {
+                    root.looper-half-speed = !root.looper-half-speed;
+                    root.looper-half-speed-changed(root.looper-half-speed);
+                }
+                loops-opened => {
+                    root.looper-loops-opened();
+                }
+                save-loop(name) => {
+                    root.looper-save(name);
+                }
+                load-loop(id) => {
+                    root.looper-load(id);
+                }
+                delete-loop(id) => {
+                    root.looper-delete(id);
                 }
                 record-clicked => {
                     root.looper-record();

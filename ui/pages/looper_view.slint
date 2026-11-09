@@ -1,8 +1,10 @@
 import { Theme } from "../theme.slint";
-import { LooperState } from "../types.slint";
-import { Button, Display, FocusRing, Icon, Slider, Stepper } from "../components/controls.slint";
+import { LooperState, SavedLoopInfo } from "../types.slint";
+import { Badge, Button, Display, EmptyState, FocusRing, Icon, SectionHeader, Slider, Stepper } from "../components/controls.slint";
+import { Plot } from "../components/plot.slint";
+import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 
-export { LooperState }
+export { LooperState, SavedLoopInfo }
 
 // Large transport key (record / overdub / play / stop), with a LED that
 // lights in its colour while that mode runs
@@ -92,13 +94,14 @@ component BeatLeds inherits HorizontalLayout {
     in property <int> beats: 4;
     in property <int> beat: 0;
     in property <color> tone;
+    in property <length> size: 12px;
 
-    spacing: 6px;
+    spacing: root.size / 2;
     alignment: end;
     for i in root.beats: VerticalLayout {
         alignment: center;
         Rectangle {
-            width: i == 0 ? 16px : 12px;
+            width: i == 0 ? root.size * 4 / 3 : root.size;
             height: self.width;
             border-radius: self.width / 2;
             background: i + 1 == root.beat ? root.tone : Theme.led-off;
@@ -116,7 +119,90 @@ export global Meter {
     }
 }
 
-// Looper: status, transport, level, and the count-in and bar settings.
+// Tap tempo key: counts on touch down, the way a footswitch does (as on
+// the Live page)
+component TapKey inherits Rectangle {
+    in property <bool> focused: false;
+    callback tap();
+
+    min-width: 76px;
+    min-height: Theme.touch-target;
+    border-radius: Theme.radius-md;
+    background: ta.pressed ? Theme.key-pressed : Theme.key;
+    border-width: Theme.border-width;
+    border-color: Theme.edge-dark-soft;
+
+    if !ta.pressed: Rectangle {
+        x: Theme.radius-md / 2;
+        y: 1px;
+        width: parent.width - Theme.radius-md;
+        height: 1px;
+        background: Theme.edge-light;
+    }
+    HorizontalLayout {
+        alignment: center;
+        spacing: Theme.space-xs;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                name: "tap";
+                color: Theme.accent;
+            }
+        }
+        Text {
+            text: "TAP";
+            color: Theme.text-primary;
+            font-size: Theme.font-small;
+            font-weight: Theme.weight-bold;
+            letter-spacing: 1px;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                root.tap();
+            }
+        }
+    }
+    if root.focused: FocusRing { }
+}
+
+// Waveform of the loop (peaks 0..1 from its start to its end, mirrored
+// around the middle) in a plot frame, its bar lines and the playhead. The
+// peaks only change when the loop does: as it plays, only the playhead
+// line moves.
+component LoopWave inherits Plot {
+    in property <[float]> wave;
+    in property <int> bars: 0;          // bar lines (0: not whole bars)
+    in property <float> progress: 0;    // playhead, 0..1
+    in property <bool> playhead: false;
+    in property <color> tone;
+
+    rows: [0.5];
+    border-radius: Theme.radius-sm;
+
+    for peak[i] in root.wave: Rectangle {
+        x: root.width * i / root.wave.length;
+        width: max(1px, root.width / root.wave.length);
+        height: max(1px, peak * (root.height - 4px));
+        y: (root.height - self.height) / 2;
+        background: root.tone.with-alpha(0.55);
+    }
+    for b in max(0, root.bars - 1): Rectangle {
+        x: root.width * (b + 1) / root.bars;
+        width: 1px;
+        background: Theme.text-secondary.with-alpha(0.7);
+    }
+    if root.playhead: Rectangle {
+        x: max(0, min(root.width - 2px, root.width * root.progress - 1px));
+        width: 2px;
+        background: Theme.text-primary;
+    }
+}
+
+// Looper: status (bar and beat, waveform), transport, multiply, half speed,
+// saved loops, level, and the tempo, bar, count-in and click settings.
 export component LooperView inherits Rectangle {
     in property <LooperState> state: LooperState.Stopped;
     in property <float> loop-length: 0.0;      // seconds
@@ -131,25 +217,41 @@ export component LooperView inherits Rectangle {
     in property <int> beats: 4;
     in property <int> loop-bars: 0;
     in property <bool> ending: false;
+    in property <bool> half-speed: false;
+    in property <bool> can-double: false;
+    in property <[float]> wave: [];
+    // Saved loops
+    in-out property <bool> show-loops: false;
+    in property <[SavedLoopInfo]> saved: [];
+    in property <string> default-name: "";
     // Settings
     in property <float> tempo: 120;
     in property <bool> tempo-clock: false;     // set by a MIDI clock
     in property <int> beats-per-bar: 4;
     in property <bool> count-in: false;
     in property <bool> quantize: false;
+    in property <bool> click: false;
     in property <float> click-level: 0.5;
 
     callback tempo-changed(float);
-    callback settings-changed(int, bool, bool, float);
+    callback tap();
+    callback settings-changed(int, bool, bool, bool, float);
     callback record-clicked();
     callback play-clicked();
     callback stop-clicked();
     callback overdub-clicked();
     callback undo-clicked();
     callback clear-clicked();
+    callback multiply-clicked();
+    callback half-speed-toggled();
     callback level-changed(float);
-    // Encoder focus: Record, Overdub, Play, Stop, Undo, Clear, level, tempo,
-    // bar, count-in, quantize, click level
+    callback loops-opened();
+    callback save-loop(string);
+    callback load-loop(string);
+    callback delete-loop(string);
+    // Encoder focus: Record, Overdub, Play, Stop, Undo, Clear, x2, half
+    // speed, Loops, tempo, tap, bar, count-in, quantize, click, click level,
+    // level
     in property <int> focused: -1;
     in property <bool> adjusting;
 
@@ -158,12 +260,17 @@ export component LooperView inherits Rectangle {
         root.state == LooperState.Overdubbing ? Theme.warning :
         root.state == LooperState.Playing ? Theme.success : Theme.text-muted;
     private property <float> progress: root.loop-length > 0 ? max(0, min(1, root.current-position / root.loop-length)) : 0;
+    private property <bool> has-loop: root.loop-length > 0 && root.state != LooperState.Recording && root.state != LooperState.CountIn;
+    private property <bool> saving: false;
+    private property <string> save-name: "";
+    private property <string> confirm-delete-id: "";
 
     width: 100%;
     height: 100%;
 
     VerticalLayout {
         padding: Theme.space-lg;
+        padding-top: Theme.space-md;
         spacing: Theme.space-md;
 
         // ---------------- Status ----------------
@@ -172,8 +279,10 @@ export component LooperView inherits Rectangle {
             border-color: root.state == LooperState.Stopped ? Theme.edge-dark : root.state-color.with-alpha(0.6);
 
             VerticalLayout {
-                padding: Theme.space-xl;
-                spacing: Theme.space-md;
+                padding: Theme.space-md;
+                padding-left: Theme.space-lg;
+                padding-right: Theme.space-lg;
+                spacing: Theme.space-sm;
                 alignment: center;
 
                 HorizontalLayout {
@@ -199,17 +308,20 @@ export component LooperView inherits Rectangle {
                         font-weight: Theme.weight-bold;
                         vertical-alignment: center;
                     }
+                    if root.half-speed: VerticalLayout {
+                        alignment: center;
+                        Badge {
+                            text: "½ SPEED";
+                            tone: "accent";
+                        }
+                    }
                     Rectangle {
                         horizontal-stretch: 1;
                     }
-                    if root.loop-bars > 0: Text {
-                        text: (root.loop-bars == 1 ? "1 bar" : root.loop-bars + " bars") + "  ·  ";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-small;
-                        vertical-alignment: center;
-                    }
                     Text {
-                        text: root.layer-count == 1 ? "1 layer" : root.layer-count + " layers";
+                        text: (root.loop-bars > 0 ? (root.loop-bars == 1 ? "1 bar" : root.loop-bars + " bars") : "")
+                            + (root.loop-bars > 0 && root.layer-count > 0 ? "  ·  " : "")
+                            + (root.layer-count == 0 || root.loop-length == 0 ? "" : root.layer-count == 1 ? "1 layer" : root.layer-count + " layers");
                         color: Theme.text-secondary;
                         font-size: Theme.font-small;
                         vertical-alignment: center;
@@ -218,10 +330,22 @@ export component LooperView inherits Rectangle {
 
                 HorizontalLayout {
                     spacing: Theme.space-sm;
-                    // Counting in: the beat; else the time
+                    // On the bar grid: the bar (the beat while counting in),
+                    // big; else the time
+                    if root.beat > 0: VerticalLayout {
+                        alignment: end;
+                        Text {
+                            text: root.bar > 0 ? "BAR" : "GET READY";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-caption;
+                            font-weight: Theme.weight-bold;
+                        }
+                    }
                     Text {
-                        text: root.state == LooperState.CountIn ? root.beat : TimeFormat.format(root.current-position);
-                        color: root.state == LooperState.CountIn ? root.state-color : Theme.text-primary;
+                        text: root.state == LooperState.CountIn ? root.beat
+                            : root.beat > 0 ? root.bar
+                            : TimeFormat.format(root.current-position);
+                        color: root.beat > 0 ? root.state-color : Theme.text-primary;
                         font-size: Theme.font-display;
                         font-weight: Theme.weight-bold;
                     }
@@ -229,7 +353,10 @@ export component LooperView inherits Rectangle {
                         alignment: end;
                         padding-bottom: 6px;
                         Text {
-                            text: root.state == LooperState.CountIn ? "/ " + root.beats : "/ " + TimeFormat.format(root.loop-length);
+                            text: root.state == LooperState.CountIn ? "/ " + root.beats
+                                : root.beat > 0 && root.loop-bars > 0 ? "/ " + root.loop-bars
+                                : root.beat > 0 ? ""
+                                : "/ " + TimeFormat.format(root.loop-length);
                             color: Theme.text-secondary;
                             font-size: Theme.font-title;
                         }
@@ -241,30 +368,28 @@ export component LooperView inherits Rectangle {
                         alignment: center;
                         spacing: Theme.space-xs;
                         Text {
-                            text: root.bar > 0 ? "BAR " + root.bar : "GET READY";
+                            text: TimeFormat.format(root.current-position)
+                                + (root.loop-length > 0 && root.state != LooperState.Recording ? " / " + TimeFormat.format(root.loop-length) : "");
                             color: Theme.text-secondary;
-                            font-size: Theme.font-caption;
-                            font-weight: Theme.weight-bold;
+                            font-size: Theme.font-small;
                             horizontal-alignment: right;
                         }
                         BeatLeds {
                             beats: root.beats;
                             beat: root.beat;
                             tone: root.state-color;
+                            size: 18px;
                         }
                     }
                 }
 
-                // Progress bar
-                Rectangle {
-                    height: 6px;
-                    background: Theme.track;
-                    Rectangle {
-                        x: 0;
-                        width: parent.width * root.progress;
-                        height: 100%;
-                        background: root.state == LooperState.Stopped ? Theme.text-muted : root.state-color;
-                    }
+                LoopWave {
+                    height: 40px;
+                    wave: root.wave;
+                    bars: root.state == LooperState.Recording ? 0 : root.loop-bars;
+                    progress: root.progress;
+                    playhead: root.state == LooperState.Playing || root.state == LooperState.Overdubbing;
+                    tone: root.state == LooperState.Stopped ? Theme.text-secondary : root.state-color;
                 }
             }
         }
@@ -317,19 +442,22 @@ export component LooperView inherits Rectangle {
             }
         }
 
-        // ---------------- Edit + level ----------------
+        // ---------------- Edit ----------------
         HorizontalLayout {
             spacing: Theme.space-md;
             Button {
+                horizontal-stretch: 1;
                 icon: "undo";
                 focused: root.focused == 4;
                 text: "Undo";
-                enabled: root.layer-count > 0;
+                // Nothing played yet during a count-in
+                enabled: root.layer-count > 0 && root.state != LooperState.CountIn;
                 clicked => {
                     root.undo-clicked();
                 }
             }
             Button {
+                horizontal-stretch: 1;
                 icon: "trash";
                 focused: root.focused == 5;
                 text: "Clear";
@@ -337,6 +465,120 @@ export component LooperView inherits Rectangle {
                 enabled: root.loop-length > 0 || root.layer-count > 0;
                 clicked => {
                     root.clear-clicked();
+                }
+            }
+            // Multiply: the loop repeated, for longer overdubs
+            Button {
+                horizontal-stretch: 1;
+                focused: root.focused == 6;
+                text: "Loop ×2";
+                enabled: root.can-double;
+                clicked => {
+                    root.multiply-clicked();
+                }
+            }
+            // Half speed: an octave down (overdubs go back to full speed)
+            Button {
+                horizontal-stretch: 1;
+                focused: root.focused == 7;
+                text: "½ Speed";
+                active: root.half-speed;
+                clicked => {
+                    root.half-speed-toggled();
+                }
+            }
+            Button {
+                horizontal-stretch: 1;
+                icon: "folder";
+                focused: root.focused == 8;
+                text: "Loops";
+                clicked => {
+                    root.confirm-delete-id = "";
+                    root.show-loops = true;
+                    root.loops-opened();
+                }
+            }
+        }
+
+        // ---------------- Tempo and bars ----------------
+        HorizontalLayout {
+            spacing: Theme.space-md;
+            Stepper {
+                horizontal-stretch: 1;
+                focused: root.focused == 9;
+                adjusting: root.adjusting;
+                text: round(root.tempo) + " BPM";
+                can-decrement: !root.tempo-clock && root.tempo > 40;
+                can-increment: !root.tempo-clock && root.tempo < 240;
+                decrement => {
+                    root.tempo-changed(round(root.tempo) - 1);
+                }
+                increment => {
+                    root.tempo-changed(round(root.tempo) + 1);
+                }
+            }
+            TapKey {
+                focused: root.focused == 10;
+                tap => {
+                    root.tap();
+                }
+            }
+            Stepper {
+                horizontal-stretch: 1;
+                focused: root.focused == 11;
+                adjusting: root.adjusting;
+                text: Meter.signature(root.beats-per-bar);
+                can-decrement: root.beats-per-bar > 2;
+                can-increment: root.beats-per-bar < 12;
+                decrement => {
+                    root.settings-changed(root.beats-per-bar - 1, root.count-in, root.quantize, root.click, root.click-level);
+                }
+                increment => {
+                    root.settings-changed(root.beats-per-bar + 1, root.count-in, root.quantize, root.click, root.click-level);
+                }
+            }
+            Button {
+                focused: root.focused == 12;
+                text: "Count-in";
+                active: root.count-in;
+                clicked => {
+                    root.settings-changed(root.beats-per-bar, !root.count-in, root.quantize, root.click, root.click-level);
+                }
+            }
+            // With the click on, recordings are whole bars anyway
+            Button {
+                focused: root.focused == 13;
+                text: "Quantize";
+                active: root.quantize || root.click;
+                clicked => {
+                    root.settings-changed(root.beats-per-bar, root.count-in, !root.quantize, root.click, root.click-level);
+                }
+            }
+        }
+
+        // ---------------- Click and level ----------------
+        HorizontalLayout {
+            spacing: Theme.space-md;
+            Button {
+                focused: root.focused == 14;
+                text: "Click";
+                active: root.click;
+                clicked => {
+                    root.settings-changed(root.beats-per-bar, root.count-in, root.quantize, !root.click, root.click-level);
+                }
+            }
+            Stepper {
+                width: 170px;
+                focused: root.focused == 15;
+                adjusting: root.adjusting;
+                text: "Click " + round(root.click-level * 100) + "%";
+                can-decrement: root.click-level > 0;
+                can-increment: root.click-level < 1;
+                decrement => {
+                    root.settings-changed(root.beats-per-bar, root.count-in, root.quantize, root.click, max(0, round(root.click-level * 10 - 1) / 10));
+                }
+                increment => {
+                    root.settings-changed(root.beats-per-bar, root.count-in, root.quantize, root.click, min(1, round(root.click-level * 10 + 1) / 10));
                 }
             }
             Rectangle {
@@ -352,7 +594,7 @@ export component LooperView inherits Rectangle {
             level-slider := Slider {
                 horizontal-stretch: 1;
                 value: root.level;
-                focused: root.focused == 6;
+                focused: root.focused == 16;
                 adjusting: root.adjusting;
                 changed(v) => {
                     root.level-changed(v);
@@ -368,66 +610,180 @@ export component LooperView inherits Rectangle {
                 vertical-alignment: center;
             }
         }
+    }
 
-        // ---------------- Count-in and bars ----------------
-        HorizontalLayout {
+    // ---------------- Saved loops ----------------
+    if root.show-loops: Rectangle {
+        background: Theme.background;
+        TouchArea { }
+
+        VerticalLayout {
+            padding: Theme.space-lg;
             spacing: Theme.space-md;
-            Stepper {
-                horizontal-stretch: 1;
-                focused: root.focused == 7;
-                adjusting: root.adjusting;
-                text: round(root.tempo) + " BPM";
-                can-decrement: !root.tempo-clock && root.tempo > 40;
-                can-increment: !root.tempo-clock && root.tempo < 240;
-                decrement => {
-                    root.tempo-changed(round(root.tempo) - 1);
+
+            HorizontalLayout {
+                height: 48px;
+                spacing: Theme.space-md;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 2px;
+                    SectionHeader {
+                        text: "SAVED LOOPS";
+                    }
+                    Text {
+                        text: "Saved as WAV files in the loops folder of the data directory.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        overflow: elide;
+                    }
                 }
-                increment => {
-                    root.tempo-changed(round(root.tempo) + 1);
+                Button {
+                    horizontal-stretch: 0;
+                    icon: "save";
+                    text: "Save loop";
+                    variant: "primary";
+                    enabled: root.has-loop;
+                    clicked => {
+                        root.save-name = root.default-name;
+                        root.saving = true;
+                    }
                 }
-            }
-            Stepper {
-                horizontal-stretch: 1;
-                focused: root.focused == 8;
-                adjusting: root.adjusting;
-                text: Meter.signature(root.beats-per-bar);
-                can-decrement: root.beats-per-bar > 2;
-                can-increment: root.beats-per-bar < 12;
-                decrement => {
-                    root.settings-changed(root.beats-per-bar - 1, root.count-in, root.quantize, root.click-level);
-                }
-                increment => {
-                    root.settings-changed(root.beats-per-bar + 1, root.count-in, root.quantize, root.click-level);
-                }
-            }
-            Button {
-                focused: root.focused == 9;
-                text: "Count-in";
-                active: root.count-in;
-                clicked => {
-                    root.settings-changed(root.beats-per-bar, !root.count-in, root.quantize, root.click-level);
-                }
-            }
-            Button {
-                focused: root.focused == 10;
-                text: "Quantize";
-                active: root.quantize;
-                clicked => {
-                    root.settings-changed(root.beats-per-bar, root.count-in, !root.quantize, root.click-level);
+                Button {
+                    horizontal-stretch: 0;
+                    icon: "close";
+                    variant: "ghost";
+                    clicked => {
+                        root.show-loops = false;
+                    }
                 }
             }
-            Stepper {
-                horizontal-stretch: 1;
-                focused: root.focused == 11;
-                adjusting: root.adjusting;
-                text: "Click " + round(root.click-level * 100) + "%";
-                can-decrement: root.click-level > 0;
-                can-increment: root.click-level < 1;
-                decrement => {
-                    root.settings-changed(root.beats-per-bar, root.count-in, root.quantize, max(0, round(root.click-level * 10 - 1) / 10));
+
+            if root.saved.length == 0: Rectangle {
+                vertical-stretch: 1;
+                EmptyState {
+                    icon: "looper";
+                    title: "No saved loops";
+                    message: "Save the loop to keep it, then load it back from here.";
                 }
-                increment => {
-                    root.settings-changed(root.beats-per-bar, root.count-in, root.quantize, min(1, round(root.click-level * 10 + 1) / 10));
+            }
+
+            if root.saved.length > 0: Flickable {
+                vertical-stretch: 1;
+                min-height: 0px;
+                content-height: max(self.height, list.preferred-height);
+                interactive: list.preferred-height > self.height;
+
+                list := VerticalLayout {
+                    spacing: Theme.space-sm;
+                    for item in root.saved: row := Rectangle {
+                        property <bool> confirming: root.confirm-delete-id == item.id;
+                        height: 56px;
+                        border-radius: Theme.radius-lg;
+                        background: self.confirming ? Theme.danger-soft : Theme.panel;
+                        border-width: 1px;
+                        border-color: self.confirming ? Theme.danger : Theme.border;
+
+                        HorizontalLayout {
+                            padding: Theme.space-sm;
+                            padding-left: Theme.space-md;
+                            spacing: Theme.space-md;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: row.confirming ? "Delete \"" + item.name + "\"?" : item.name;
+                                    color: Theme.text-primary;
+                                    font-size: Theme.font-body;
+                                    font-weight: Theme.weight-semibold;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: row.confirming ? "This cannot be undone." : item.detail;
+                                    color: Theme.text-secondary;
+                                    font-size: Theme.font-small;
+                                    overflow: elide;
+                                }
+                            }
+                            if !row.confirming: Button {
+                                horizontal-stretch: 0;
+                                icon: "download";
+                                text: "Load";
+                                clicked => {
+                                    root.load-loop(item.id);
+                                }
+                            }
+                            if !row.confirming: Button {
+                                horizontal-stretch: 0;
+                                icon: "trash";
+                                variant: "ghost";
+                                clicked => {
+                                    root.confirm-delete-id = item.id;
+                                }
+                            }
+                            if row.confirming: Button {
+                                horizontal-stretch: 0;
+                                text: "Cancel";
+                                clicked => {
+                                    root.confirm-delete-id = "";
+                                }
+                            }
+                            if row.confirming: Button {
+                                horizontal-stretch: 0;
+                                text: "Delete";
+                                variant: "solid-danger";
+                                clicked => {
+                                    root.confirm-delete-id = "";
+                                    root.delete-loop(item.id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Name of the loop to save: the date and time unless changed
+    if root.saving: Rectangle {
+        background: Theme.scrim;
+        TouchArea { }
+
+        VerticalLayout {
+            Rectangle {
+                vertical-stretch: 1;
+                background: Theme.panel;
+                VerticalLayout {
+                    alignment: center;
+                    padding-left: Theme.space-lg;
+                    spacing: 2px;
+                    Text {
+                        text: "Save loop";
+                        color: Theme.text-primary;
+                        font-size: Theme.font-headline;
+                        font-weight: Theme.weight-bold;
+                    }
+                    Text {
+                        text: "Saves the loop as it sounds now, all layers mixed.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                    }
+                }
+            }
+            VirtualKeyboard {
+                current-text: root.save-name;
+                placeholder: "Loop name";
+                submit-label: "Save";
+                text-changed(t) => {
+                    root.save-name = t;
+                }
+                submit => {
+                    root.save-loop(root.save-name);
+                    root.saving = false;
+                }
+                cancel => {
+                    root.saving = false;
                 }
             }
         }
