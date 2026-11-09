@@ -120,6 +120,12 @@ What OpenRig does, in more technical detail than the
   with a 20 ms equal-power crossfade. Parameters, bypass (10 ms ramp), A/B and
   mix changes are applied live without rebuilding. The JACK callback does no
   allocation and takes no blocking lock.
+- **Plugin guard**: a plugin that takes more than half of the audio period
+  for about 0.3 s, or three quarters of it a few times in quick succession,
+  is switched off (bypassed) so it cannot freeze the board. So is a plugin
+  that keeps putting out invalid samples (NaN); a single bad block is
+  silenced. A toast says why ("Delay was switched off: it used too much
+  CPU"); switch the block back on to try again.
 - **Multi-core DSP**: a heavy rig runs on up to 8 cores (as many as the CPU has: one on a single core) with no added
   latency and the same samples as on one core. The branches of a split play
   at once on two cores; a long chain is cut into stages of about the same

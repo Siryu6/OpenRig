@@ -4,6 +4,7 @@ pub mod control_map;
 pub mod dsp;
 pub mod dynamics;
 pub mod eq_curve;
+pub mod guard;
 pub mod instance;
 pub mod ir;
 #[cfg(feature = "lv2")]

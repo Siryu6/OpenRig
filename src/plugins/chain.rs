@@ -19,11 +19,12 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tracing::warn;
 
+use super::guard::{GuardBoard, Trip, Watchdog};
 use super::instance::PluginInstance;
 use super::lv2_host::Lv2Host;
 use super::scanner::{self, FileKind};
@@ -327,6 +328,14 @@ struct PluginProc {
     spent: Arc<AtomicU64>,
     /// Records the sound in and out while the block's view is shown
     tap: &'static BlockTap,
+    /// Switches the plugin off when it takes too much of the period or
+    /// keeps putting out non-finite samples (see `guard`), and where it
+    /// tells the UI
+    watchdog: Watchdog,
+    trip: Arc<AtomicU8>,
+    /// Test only: time added to each run, as a slow plugin
+    #[cfg(test)]
+    stall: std::time::Duration,
 }
 
 impl PluginProc {
@@ -340,8 +349,45 @@ impl PluginProc {
         } else {
             self.run(l, r);
         }
-        self.spent
-            .fetch_add(start.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        #[cfg(test)]
+        std::thread::sleep(self.stall);
+        // A non-finite sample would spread through the rest of the chain
+        // (filters and reverbs keep it in their state): silence this
+        // block's output
+        let finite = l.iter().all(|s| s.is_finite())
+            && (!self.stereo_out || r.iter().all(|s| s.is_finite()));
+        if !finite {
+            l.fill(0.0);
+            if self.stereo_out {
+                r.fill(0.0);
+            }
+        }
+        let nanos = start.elapsed().as_nanos() as u64;
+        self.spent.fetch_add(nanos, Ordering::Relaxed);
+        if let Some(trip) = self.watchdog.record(l.len(), nanos, finite) {
+            self.switch_off(trip);
+        }
+    }
+
+    /// Bypass the plugin at once (it stops running, without a tail) and
+    /// tell the UI
+    fn switch_off(&mut self, trip: Trip) {
+        for instance in self.instances() {
+            instance.set_bypass_immediate(true);
+        }
+        GuardBoard::global().report(&self.trip, trip);
+    }
+
+    /// Bypass or not, from the user: switching the plugin on re-arms the
+    /// guard
+    fn set_enabled(&mut self, enabled: bool) {
+        for instance in self.instances() {
+            instance.set_bypass(!enabled);
+        }
+        if enabled && self.watchdog.tripped() {
+            self.watchdog.rearm();
+            self.trip.store(0, Ordering::Release);
+        }
     }
 
     fn run(&mut self, l: &mut [f32], r: &mut [f32]) {
@@ -928,14 +974,14 @@ fn apply_to(nodes: &mut [ProcNode], command: &ChainCommand) -> bool {
     for node in nodes {
         match node {
             ProcNode::Plugin(plugin) if plugin.left.instance_id == target => {
-                for instance in plugin.instances() {
-                    match *command {
-                        ChainCommand::SetParameter { index, value, .. } => {
+                match *command {
+                    ChainCommand::SetParameter { index, value, .. } => {
+                        for instance in plugin.instances() {
                             instance.set_parameter(index, value)
                         }
-                        ChainCommand::SetEnabled { enabled, .. } => instance.set_bypass(!enabled),
-                        _ => {}
                     }
+                    ChainCommand::SetEnabled { enabled, .. } => plugin.set_enabled(enabled),
+                    _ => {}
                 }
                 return true;
             }
@@ -1119,6 +1165,10 @@ impl EffectChain {
                                 stereo_out,
                                 spent: BlockMeter::global().counter(*instance_id),
                                 tap: BlockTap::global(),
+                                watchdog: Watchdog::new(sample_rate, self.max_block),
+                                trip: GuardBoard::global().slot(*instance_id),
+                                #[cfg(test)]
+                                stall: std::time::Duration::ZERO,
                             })));
                             stereo = stereo_out;
                         }
@@ -1841,5 +1891,102 @@ mod tests {
         assert_eq!(&bounds[..5], &[0, 1, 2, 3, 4]);
         let bounds = partition(&[0.0, 0.0, 9.0], 3);
         assert_eq!(&bounds[..4], &[0, 1, 2, 3]);
+    }
+
+    /// The plugin of `chain` with `instance_id` (at the top level)
+    fn plugin_proc(chain: &mut EffectChain, instance_id: usize) -> &mut PluginProc {
+        chain
+            .nodes
+            .iter_mut()
+            .find_map(|node| match node {
+                ProcNode::Plugin(p) if p.left.instance_id == instance_id => Some(&mut **p),
+                _ => None,
+            })
+            .expect("plugin in the chain")
+    }
+
+    fn trip_of(instance_id: usize) -> u8 {
+        GuardBoard::global()
+            .slot(instance_id)
+            .load(Ordering::Acquire)
+    }
+
+    #[test]
+    fn a_slow_plugin_is_switched_off_and_can_be_switched_back_on() {
+        // A 100 ms period (100 frames at 1 kHz) and a plugin taking 55 ms
+        // of it: heavy, but far from missing the deadline on its own
+        use crate::plugins::guard::{GRACE_SECONDS, HEAVY_SECONDS};
+        const ID: usize = 9101;
+        const FRAMES: usize = 100;
+        let host = Lv2Host::demo();
+        let spec = ChainSpec {
+            nodes: vec![plugin(ID), plugin(ID + 1)],
+            ..Default::default()
+        };
+        let (mut chain, errors) = EffectChain::build(&spec, &host, 1000.0, FRAMES);
+        assert!(errors.is_empty());
+        plugin_proc(&mut chain, ID).stall = std::time::Duration::from_millis(55);
+        let period = |chain: &mut EffectChain| {
+            let (mut l, mut r) = (vec![0.5; FRAMES], vec![0.0; FRAMES]);
+            chain.process(&mut l, &mut r);
+            l
+        };
+
+        // Cut after the grace time and the heavy time (0.5 s), not before
+        let periods = ((GRACE_SECONDS + HEAVY_SECONDS) * 10.0).round() as usize;
+        for _ in 0..periods - 1 {
+            period(&mut chain);
+        }
+        assert_eq!(trip_of(ID), 0);
+        for _ in 0..3 {
+            period(&mut chain);
+        }
+        assert_eq!(trip_of(ID), Trip::Cpu as u8);
+        let slow = plugin_proc(&mut chain, ID);
+        assert!(slow.watchdog.tripped());
+        assert!(slow.instances().all(|i| i.is_bypassed()));
+        // Only that plugin
+        assert!(!plugin_proc(&mut chain, ID + 1)
+            .instances()
+            .any(|i| i.is_bypassed()));
+        assert_eq!(trip_of(ID + 1), 0);
+        // Bypassed, the signal goes through
+        assert!(period(&mut chain).iter().all(|&s| s == 0.5));
+
+        // Switched back on by the user: re-armed
+        assert!(chain.apply(&ChainCommand::SetEnabled {
+            instance_id: ID,
+            enabled: true
+        }));
+        let slow = plugin_proc(&mut chain, ID);
+        assert!(!slow.watchdog.tripped());
+        assert!(!slow.instances().any(|i| i.is_bypassed()));
+        assert_eq!(trip_of(ID), 0);
+    }
+
+    #[test]
+    fn a_plugin_putting_out_nan_is_silenced_then_switched_off() {
+        const ID: usize = 9201;
+        let host = Lv2Host::demo();
+        let spec = ChainSpec {
+            nodes: vec![plugin(ID)],
+            ..Default::default()
+        };
+        let (mut chain, _) = EffectChain::build(&spec, &host, 48000.0, 64);
+        // The passthrough demo plugin puts out what it gets
+        let nan = |chain: &mut EffectChain| {
+            let (mut l, mut r) = (vec![f32::NAN; 64], vec![0.0; 64]);
+            chain.process(&mut l, &mut r);
+            (l, r)
+        };
+        let (l, r) = nan(&mut chain);
+        assert!(l.iter().chain(&r).all(|&s| s == 0.0), "silenced");
+        assert_eq!(trip_of(ID), 0);
+        nan(&mut chain);
+        nan(&mut chain);
+        assert_eq!(trip_of(ID), Trip::NonFinite as u8);
+        assert!(plugin_proc(&mut chain, ID)
+            .instances()
+            .all(|i| i.is_bypassed()));
     }
 }
