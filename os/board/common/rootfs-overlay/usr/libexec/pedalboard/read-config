@@ -17,7 +17,7 @@ mkdir -p /run/pedalboard
 			while read -r key value; do
 				case "$key" in
 				audio_device | sample_rate | period | periods | display_rotation | wifi_country | \
-					remote_hotspot | display)
+					remote_hotspot | display | keyboard_layout)
 					echo "$key='$value'" ;;
 				esac
 			done

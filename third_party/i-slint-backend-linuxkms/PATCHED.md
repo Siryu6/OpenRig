@@ -20,6 +20,13 @@ touch was wrong on a rotated screen (e.g. the portrait Raspberry Pi Touch
 Display 2 turned to landscape). Mouse moves are not changed. Still present
 in 1.18.1.
 
+Change, in `calloop_backend/input.rs` (`new_xkb_state`): when the keymap
+cannot be compiled, keyboard input is ignored with one warning instead of
+taking the app down. Without the xkb data (/usr/share/X11/xkb),
+`xkb_context_new()` returns NULL, which the xkbcommon crate does not check:
+the first key pressed segfaulted in libxkbcommon (and a keymap that failed
+to compile panicked). Still present in 1.18.1.
+
 Also, so the app's builds have no warning: in `drmoutput.rs`,
 `get_supported_formats` allows dead code when the software display is not
 built (femtovg alone, as here); in `display/gbmdisplay.rs`, the catch-all

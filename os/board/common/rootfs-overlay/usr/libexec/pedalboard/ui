@@ -11,6 +11,9 @@ case "$display_rotation" in
 0 | 90 | 180 | 270) ;;
 *) display_rotation=0 ;;
 esac
+case "$keyboard_layout" in
+"" | *[!a-z0-9_,-]*) keyboard_layout=us ;;
+esac
 case "$display" in
 auto | screen | remote) ;;
 *) display=auto ;;
@@ -69,6 +72,7 @@ keeper=$!
 		PEDALBOARD_NETWORK_MIDI_STATUS=/run/pedalboard/app/network-midi \
 		SLINT_BACKEND=linuxkms \
 		SLINT_KMS_ROTATION="$display_rotation" \
+		XKB_DEFAULT_LAYOUT="$keyboard_layout" \
 		PEDALBOARD_DISPLAY="$display" \
 		PEDALBOARD_REMOTE_STATUS=/run/pedalboard/app/remote \
 		/usr/bin/prlimit --rtprio=95 --memlock=unlimited \

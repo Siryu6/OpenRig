@@ -107,6 +107,7 @@ The first partition (FAT, readable from any computer) holds
 | `display_rotation` | `0` | 0, 90, 180 or 270 (clockwise; touch turns too) |
 | `display` | `auto` | Where the UI is: `auto` (the touchscreen; the remote control when there is none and a password is set), `screen` or `remote` |
 | `wifi_country` | empty | Two letters (`FR`, `US`…): the Wi-Fi channels allowed there |
+| `keyboard_layout` | `us` | Layout of a USB keyboard, xkb names: `us`, `fr`, `de`, `gb`, `ch`… |
 | `remote_password` | empty (off) | Remote control password, 8 to 63 characters, also the hotspot's key; `off` turns it off |
 | `remote_hotspot` | `auto` | The remote control's Wi-Fi hotspot: `auto` (after 45 s without a network), `on` or `off` |
 | `wifi_ssid`, `wifi_password` | empty | A Wi-Fi network to join without a screen |
