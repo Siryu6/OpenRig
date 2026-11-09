@@ -1073,8 +1073,10 @@ impl Looper {
             if l.sample_rate != sample_rate {
                 return Err("the audio settings changed: load the loop again".into());
             }
-            let old = std::mem::take(&mut l.layers);
-            l.garbage.extend(old);
+            // Moved out without giving up the room for every layer: the
+            // audio thread pushes overdub layers and must not reallocate
+            let l = &mut *l;
+            l.garbage.append(&mut l.layers);
             l.layers.push(Layer {
                 frames: layer,
                 length,
@@ -1749,6 +1751,8 @@ mod tests {
         Looper::load(&other, &audio).unwrap();
         let mut l = other.locked();
         assert_eq!(l.state(), LooperState::Stopped);
+        // Room kept for every layer: overdubs never reallocate in the callback
+        assert!(l.layers.capacity() >= l.max_layers);
         assert_eq!(l.loop_bars(), 2);
         assert_eq!(l.beats_per_bar(), 4);
         assert_eq!(l.waveform().len(), WAVE_POINTS);
