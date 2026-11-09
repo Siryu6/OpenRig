@@ -16,6 +16,11 @@ app; open it in any recent browser on the same network. It has two modes:
 A **Status** page shows the version, the pedal's addresses, the hotspot and
 the devices signed in, and signs devices out.
 
+The button at the right of the tabs puts the page in full screen (no
+address bar, no system bars) and back, where the browser allows it: Android
+browsers, desktop browsers and iPad. iPhone Safari has no full screen for
+pages, so the button is not shown there.
+
 The remote control is off until a password is set. Nothing of it runs while
 it is off: no web server, no timers, no work in the UI's refresh.
 
