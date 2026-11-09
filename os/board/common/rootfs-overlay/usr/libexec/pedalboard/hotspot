@@ -59,8 +59,19 @@ while [ ! -e "$PROFILE" ]; do
 	sleep 10
 done
 
-# The first Wi-Fi card; a USB one may come later
-dev=$(nmcli -t -f DEVICE,TYPE device 2>/dev/null | awk -F: '$2 == "wifi" { print $1; exit }')
+# The first Wi-Fi card; a USB one may come later. At boot NetworkManager
+# can list it a few seconds after this starts: wait up to 30 s for it.
+wifi_dev() {
+	nmcli -t -f DEVICE,TYPE device 2>/dev/null | awk -F: '$2 == "wifi" { print $1; exit }'
+}
+dev=$(wifi_dev)
+tries=15
+while [ -z "$dev" ] && [ $tries -gt 0 ]; do
+	status "Waiting: looking for the Wi-Fi card"
+	sleep 2
+	tries=$((tries - 1))
+	dev=$(wifi_dev)
+done
 if [ -z "$dev" ]; then
 	status "Unavailable: no Wi-Fi card"
 	sleep 30
