@@ -4,12 +4,13 @@
 //! the audio thread only ever sees the finished layer.
 
 use std::cell::{Cell, RefCell};
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use slint::{ComponentHandle, Model, VecModel};
 
-use pedalboard::audio::loop_files;
+use pedalboard::audio::loop_files::{self, SavedLoop};
 use pedalboard::audio::looper::{Looper, LooperState as Engine, SnapshotError};
 use pedalboard::state::AppState;
 use pedalboard::sync::MutexExt;
@@ -48,7 +49,7 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
     });
     on!(on_looper_loops_opened, |app, state| {
         app.set_looper_default_name(loop_files::default_name(chrono::Local::now()).into());
-        show_loops(&app, state);
+        refresh_loops(&app, state, |_| None);
     });
     on!(on_looper_save, |app, state, name| save(
         &app,
@@ -61,10 +62,10 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
         id.to_string()
     ));
     on!(on_looper_delete, |app, state, id| {
-        if let Err(e) = loop_files::delete(&state.loops_dir(), &id) {
-            show_status(&app, format!("{e:#}").into());
-        }
-        show_loops(&app, state);
+        let id = id.to_string();
+        refresh_loops(&app, state, move |dir| {
+            loop_files::delete(dir, &id).err().map(|e| format!("{e:#}"))
+        });
     });
 }
 
@@ -80,8 +81,35 @@ fn time(seconds: f32) -> String {
     format!("{}:{:02}.{}", tenths / 600, tenths / 10 % 60, tenths % 10)
 }
 
-fn show_loops(app: &App, state: &AppState) {
-    let loops = loop_files::list(&state.loops_dir())
+/// Run `work` in the loops folder (a message for the page, if any), then
+/// read the saved loops and show them, on a worker thread: the files are
+/// read from disk, possibly a slow SD card
+fn refresh_loops(
+    app: &App,
+    state: &Arc<AppState>,
+    work: impl FnOnce(&Path) -> Option<String> + Send + 'static,
+) {
+    let (weak, state) = (app.as_weak(), state.clone());
+    let spawned = std::thread::Builder::new()
+        .name("loop-list".into())
+        .spawn(move || {
+            let dir = state.loops_dir();
+            let status = work(&dir);
+            let loops = loop_files::list(&dir);
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                if let Some(status) = status {
+                    show_status(&app, status.into());
+                }
+                show_loops(&app, loops);
+            });
+        });
+    if spawned.is_err() {
+        show_status(app, "Loops not read".into());
+    }
+}
+
+fn show_loops(app: &App, loops: Vec<SavedLoop>) {
+    let loops = loops
         .into_iter()
         .map(|l| {
             let detail = match l.bars {
@@ -129,12 +157,13 @@ fn save(app: &App, state: &Arc<AppState>, name: String) {
                         .map_err(|e| format!("Loop not saved: {e:#}"))
                 }
             };
+            let loops = loop_files::list(&state.loops_dir());
             let _ = weak.upgrade_in_event_loop(move |app| {
                 match result {
                     Ok(name) => show_status(&app, format!("Loop saved: {name}").into()),
                     Err(e) => show_status(&app, e.into()),
                 }
-                show_loops(&app, &state);
+                show_loops(&app, loops);
             });
         });
     if spawned.is_err() {
