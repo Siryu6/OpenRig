@@ -1,0 +1,240 @@
+import { Theme } from "../theme.slint";
+import { Button, Card, Icon } from "controls.slint";
+import { LogoMark, LogoText } from "logo.slint";
+import { Features } from "../features.slint";
+
+// ⋮ → Updates (or About OpenRig without the update feature): the running
+// version, the license, and with the update feature, the check, the download
+// and the install of a new release. Closing it leaves a download or an install
+// running; the dot on ⋮ shows when there is something to install.
+export component UpdateDialog inherits Rectangle {
+    in-out property <bool> show: false;
+
+    // "idle" | "checking" | "up-to-date" | "available" (not installable here)
+    // | "preparing" (files still building) | "ready" | "downloading"
+    // | "installing" | "installed" | "error"
+    in property <string> status: "idle";
+    in property <string> current: "";         // running versions
+    in property <string> version: "";         // latest release
+    in property <string> kind: "";            // "app" | "system"
+    in property <string> size: "";            // "15 MB"
+    in property <float> progress: 0;          // download, 0..1
+    in property <string> message: "";         // error
+    callback check();
+    callback install();
+    callback restart();
+
+    visible: root.show;
+    background: Theme.scrim;
+
+    // Taps outside the card close it
+    TouchArea {
+        clicked => {
+            root.show = false;
+        }
+    }
+
+    Card {
+        width: min(parent.width - 2 * Theme.space-lg, 520px);
+        height: self.preferred-height;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+
+        // Swallows taps on the card
+        TouchArea { }
+
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-md;
+
+            // About: logo, version, license
+            HorizontalLayout {
+                spacing: Theme.space-lg;
+                VerticalLayout {
+                    alignment: center;
+                    LogoMark {
+                        size: 56px;
+                    }
+                }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: Theme.space-xs;
+                    HorizontalLayout {
+                        alignment: start;
+                        LogoText {
+                            font-size: 26px;
+                        }
+                    }
+                    Text {
+                        text: root.current;
+                        color: Theme.text-primary;
+                        font-size: Theme.font-small;
+                        font-weight: Theme.weight-medium;
+                    }
+                }
+            }
+            Text {
+                text: "Open source guitar rig: LV2 effects, neural amps and impulse responses on a Raspberry Pi. Free software under the GPL 3.0 or later; the license and the source code are at github.com/Siryu6/OpenRig.";
+                color: Theme.text-secondary;
+                font-size: Theme.font-small;
+                wrap: word-wrap;
+            }
+
+            // Updates
+            if Features.update: Rectangle {
+                height: 1px;
+                background: Theme.border;
+            }
+            if Features.update: HorizontalLayout {
+                spacing: Theme.space-sm;
+                VerticalLayout {
+                    alignment: center;
+                    Icon {
+                        name: "refresh";
+                        color: Theme.accent;
+                    }
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: "Updates";
+                    color: Theme.text-primary;
+                    font-size: Theme.font-title;
+                    font-weight: Theme.weight-semibold;
+                    vertical-alignment: center;
+                }
+                Button {
+                    horizontal-stretch: 0;
+                    text: root.status == "checking" ? "Checking…" : "Check for updates";
+                    variant: "ghost";
+                    enabled: root.status != "checking" && root.status != "downloading"
+                        && root.status != "installing" && root.status != "installed";
+                    clicked => {
+                        root.check();
+                    }
+                }
+            }
+
+            if Features.update && root.status == "up-to-date": Text {
+                text: "OpenRig is up to date.";
+                color: Theme.text-secondary;
+                font-size: Theme.font-small;
+            }
+            if Features.update && root.status == "available": Text {
+                text: "OpenRig " + root.version + " is available: github.com/Siryu6/OpenRig/releases";
+                color: Theme.text-secondary;
+                font-size: Theme.font-small;
+                wrap: word-wrap;
+            }
+            if Features.update && root.status == "preparing": Text {
+                text: "OpenRig " + root.version + " is out; its update for this pedalboard is still being built. Check again later.";
+                color: Theme.text-secondary;
+                font-size: Theme.font-small;
+                wrap: word-wrap;
+            }
+
+            if Features.update && root.status == "ready": HorizontalLayout {
+                spacing: Theme.space-md;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: Theme.space-xs;
+                    Text {
+                        text: "OpenRig " + root.version + " is available";
+                        color: Theme.text-primary;
+                        font-size: Theme.font-body;
+                        font-weight: Theme.weight-medium;
+                    }
+                    Text {
+                        text: root.kind == "app"
+                            ? "App update, " + root.size + ": it runs when you restart OpenRig; the system stays as it is."
+                            : "System update, " + root.size + ": this version needs a new system. It runs when you restart the pedalboard, which goes back to the current one if it does not start.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                        wrap: word-wrap;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Button {
+                        text: "Install";
+                        variant: "primary";
+                        clicked => {
+                            root.install();
+                        }
+                    }
+                }
+            }
+
+            if Features.update && root.status == "downloading": VerticalLayout {
+                spacing: Theme.space-sm;
+                Text {
+                    text: "Downloading OpenRig " + root.version + "… " + round(root.progress * 100) + " %";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-small;
+                }
+                Rectangle {
+                    height: 6px;
+                    border-radius: 3px;
+                    background: Theme.surface-raised;
+                    Rectangle {
+                        x: 0;
+                        width: parent.width * clamp(root.progress, 0, 1);
+                        border-radius: 3px;
+                        background: Theme.accent;
+                    }
+                }
+            }
+            if Features.update && root.status == "installing": Text {
+                text: root.kind == "app"
+                    ? "Installing OpenRig " + root.version + "…"
+                    : "Writing the new system. This takes a few minutes; keep the pedalboard on.";
+                color: Theme.text-secondary;
+                font-size: Theme.font-small;
+                wrap: word-wrap;
+            }
+
+            if Features.update && root.status == "installed": HorizontalLayout {
+                spacing: Theme.space-md;
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.kind == "app"
+                        ? "OpenRig " + root.version + " is installed. Restart OpenRig to use it."
+                        : "OpenRig " + root.version + " is installed. Restart the pedalboard to use it.";
+                    color: Theme.text-primary;
+                    font-size: Theme.font-small;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Button {
+                        text: root.kind == "app" ? "Restart OpenRig" : "Restart now";
+                        variant: "primary";
+                        clicked => {
+                            root.restart();
+                        }
+                    }
+                }
+            }
+
+            if Features.update && root.status == "error": Text {
+                text: root.message;
+                color: Theme.danger;
+                font-size: Theme.font-small;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                alignment: end;
+                Button {
+                    width: 140px;
+                    text: "Close";
+                    clicked => {
+                        root.show = false;
+                    }
+                }
+            }
+        }
+    }
+}

@@ -4,7 +4,7 @@ import { Icon } from "controls.slint";
 
 export { MenuItem }
 
-// Popup menu: list of items with an icon (Icon name) and a label.
+// Popup menu: list of items with an icon (Icon name), a label and an optional dot.
 export component ContextMenu inherits Rectangle {
     in property <[MenuItem]> items: [];
     callback item-clicked(string);
@@ -44,6 +44,15 @@ export component ContextMenu inherits Rectangle {
                     font-size: Theme.font-body;
                     vertical-alignment: center;
                     overflow: elide;
+                }
+                if item.badge: VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 10px;
+                        height: 10px;
+                        border-radius: 5px;
+                        background: Theme.accent;
+                    }
                 }
             }
 

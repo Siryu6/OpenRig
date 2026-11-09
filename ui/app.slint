@@ -18,6 +18,7 @@ import { CatalogView } from "pages/catalog_view.slint";
 import { SettingsView } from "pages/settings_view.slint";
 import { Tone3000View } from "pages/tone3000_view.slint";
 import { RoutingView } from "pages/routing_view.slint";
+import { HardwareView } from "pages/hardware_view.slint";
 import { Features } from "features.slint";
 import { RemoteControl } from "remote.slint";
 import { Encoder } from "encoder.slint";
@@ -28,6 +29,7 @@ import { ContextMenuOverlay } from "components/context_menu.slint";
 import { Button, Icon } from "components/controls.slint";
 import { ResourcePanel } from "components/resource_panel.slint";
 import { PowerDialog } from "components/power_dialog.slint";
+import { UpdateDialog } from "components/update_dialog.slint";
 import { NetMidiPrompt } from "components/netmidi_prompt.slint";
 import { PlotEvents } from "components/plot.slint";
 
@@ -48,7 +50,8 @@ export component App inherits Window {
 
     // ---------------------------------------------------------------- state
     // 0 = rack, 1 = editor, 2 = browser, 3 = tuner, 4 = presets, 5 = looper, 6 = setlists,
-    // 7 = settings, 8 = TONE3000 library, 9 = live
+    // 7 = settings, 8 = TONE3000 library, 9 = live, 10 = routing, 11 = store,
+    // 12 = hardware (from the settings)
     // (Rust: TUNER_VIEW and LIVE_VIEW in main.rs)
     in-out property <int> current-view: 0;
     in-out property <int> selected-plugin: 0;       // index into positioned-nodes
@@ -255,7 +258,8 @@ export component App inherits Window {
     in-out property <image> t3k-qr;
     in-out property <string> t3k-error: "";
 
-    // Updates (see SettingsView)
+    // Updates (⋮ → Updates, see UpdateDialog). update-current is set
+    // without the update feature too: the About dialog shows it
     in-out property <string> update-status: "idle";
     in-out property <string> update-current: "";
     in-out property <string> update-version: "";
@@ -263,8 +267,14 @@ export component App inherits Window {
     in-out property <string> update-size: "";
     in-out property <float> update-progress: 0;
     in-out property <string> update-message: "";
+    in-out property <bool> update-dialog: false;
+    // Dot on ⋮ and on its Updates item: an update to install, or installed
+    // and waiting for a restart
+    private property <bool> update-pending: Features.update
+        && (root.update-status == "ready" || root.update-status == "installed");
 
-    // Routing (view 10, opened from the settings)
+    // Routing (view 10, opened from ⋮; back goes where it was opened)
+    private property <int> routing-return-view: 0;
     in-out property <bool> routing-available: false;
     in-out property <string> routing-summary: "";
     in-out property <int> routing-inputs: 1;
@@ -467,6 +477,8 @@ export component App inherits Window {
     callback routing-toggle(int, string);            // "mute" | "solo" | "invert"
     callback power(string);                          // "poweroff" | "reboot" | "restart" (the app)
     callback quit-app();                             // without the OS image: save the session and quit
+    // Items of ⋮ (Rust: menu_ui): tone3000, update, power, update pending
+    pure callback main-menu(bool, bool, bool, bool) -> [MenuItem];
     in-out property <bool> power-dialog: false;
     private property <string> power-action: "";       // set once chosen
 
@@ -662,6 +674,20 @@ export component App inherits Window {
         root.pages-open = true;
     }
 
+    function open-routing() {
+        if (root.current-view != 10) {
+            root.routing-return-view = root.current-view;
+        }
+        root.current-view = 10;
+    }
+
+    // Label of the back button leading to view v
+    function view-name(v: int) -> string {
+        return v == 1 ? root.selected-plugin-name : v == 2 ? "Effects" : v == 3 ? "Tuner"
+            : v == 4 ? "Presets" : v == 5 ? "Looper" : v == 6 ? "Setlists" : v == 7 ? "Settings"
+            : v == 8 ? "TONE3000" : v == 9 ? "Live" : v == 11 ? "Store" : v == 12 ? "Hardware" : "Rack";
+    }
+
     function open-page(index: int) {
         root.pages-open = false;
         root.current-view = root.page-views[index];
@@ -698,14 +724,17 @@ export component App inherits Window {
                 root.current-view == 7 ? "Settings" :
                 root.current-view == 8 ? "TONE3000" :
                 root.current-view == 10 ? "Routing" :
+                root.current-view == 12 ? "Hardware" :
                 root.current-view == 11 ? (root.catalog-open >= 0 ? "Plugin" : "Store") : "Add effect";
             preset-name: root.current-preset-name;
             scene-name: root.live-scene-name;
             tempo: root.tempo;
-            back-label: root.current-view == 10 ? "Settings" : root.current-view == 11 ? (root.catalog-open >= 0 ? "Store" : "Effects") : "Rack";
-            show-back-button: root.current-view == 1 || root.current-view == 2 || root.current-view == 7 || root.current-view == 8 || root.current-view == 10 || root.current-view == 11;
+            back-label: root.current-view == 10 ? root.view-name(root.routing-return-view)
+                : root.current-view == 12 ? "Settings" : root.current-view == 11 ? (root.catalog-open >= 0 ? "Store" : "Effects") : "Rack";
+            show-back-button: root.current-view == 1 || root.current-view == 2 || root.current-view == 7 || root.current-view == 8 || root.current-view == 10 || root.current-view == 11 || root.current-view == 12;
             audio-running: root.audio-running;
             resources: root.resources;
+            menu-badge: root.update-pending;
 
             resources-clicked => {
                 root.show-resources = true;
@@ -714,8 +743,9 @@ export component App inherits Window {
                 if (root.current-view == 11 && root.catalog-open >= 0) {
                     root.catalog-open = -1;
                 } else {
-                    root.current-view = root.current-view == 8 ? root.t3k-return-view : root.current-view == 10 ? 7
-                        : root.current-view == 11 ? 2 : 0;
+                    root.current-view = root.current-view == 8 ? root.t3k-return-view
+                        : root.current-view == 10 ? root.routing-return-view
+                        : root.current-view == 12 ? 7 : root.current-view == 11 ? 2 : 0;
                 }
             }
             rack-clicked => {
@@ -734,29 +764,8 @@ export component App inherits Window {
                 root.current-view = 9;
             }
             menu-clicked => {
-                if (Features.tone3000 && Features.power) {
-                    root.context-menu-items = [
-                        { id: "tone3000", label: "TONE3000", icon: "plug", enabled: true },
-                        { id: "settings", label: "Settings", icon: "settings", enabled: true },
-                        { id: "power", label: "Power off", icon: "power", enabled: true },
-                    ];
-                } else if (Features.tone3000) {
-                    root.context-menu-items = [
-                        { id: "tone3000", label: "TONE3000", icon: "plug", enabled: true },
-                        { id: "settings", label: "Settings", icon: "settings", enabled: true },
-                        { id: "quit", label: "Quit OpenRig", icon: "power", enabled: true },
-                    ];
-                } else if (Features.power) {
-                    root.context-menu-items = [
-                        { id: "settings", label: "Settings", icon: "settings", enabled: true },
-                        { id: "power", label: "Power off", icon: "power", enabled: true },
-                    ];
-                } else {
-                    root.context-menu-items = [
-                        { id: "settings", label: "Settings", icon: "settings", enabled: true },
-                        { id: "quit", label: "Quit OpenRig", icon: "power", enabled: true },
-                    ];
-                }
+                root.context-menu-items = root.main-menu(Features.tone3000, Features.update, Features.power,
+                    root.update-pending);
                 root.context-menu-x = root.width - 248px;
                 root.context-menu-y = Theme.top-bar-height + 4px;
                 root.show-context-menu = true;
@@ -1266,6 +1275,7 @@ export component App inherits Window {
 
             if root.current-view == 10: RoutingView {
                 available: root.routing-available;
+                summary: root.routing-summary;
                 inputs: root.routing-inputs;
                 input: root.routing-input;
                 outputs: root.routing-outputs;
@@ -1296,11 +1306,7 @@ export component App inherits Window {
                 }
             }
 
-            if root.current-view == 7: SettingsView {
-                routing-summary: root.routing-summary;
-                open-routing => {
-                    root.current-view = 10;
-                }
+            if root.current-view == 12: HardwareView {
                 footswitch-count: root.footswitch-count;
                 tap-switch: root.tap-switch;
                 tap-switch-changed(on) => {
@@ -1330,6 +1336,12 @@ export component App inherits Window {
                 }
                 hardware-set-encoder-button(on) => {
                     root.hardware-set-encoder-button(on);
+                }
+            }
+
+            if root.current-view == 7: SettingsView {
+                open-hardware => {
+                    root.current-view = 12;
                 }
                 midi-available: root.midi-available;
                 midi-devices: root.midi-devices;
@@ -1423,22 +1435,6 @@ export component App inherits Window {
                 t3k-url: root.t3k-url;
                 t3k-qr: root.t3k-qr;
                 t3k-error: root.t3k-error;
-                update-status: root.update-status;
-                update-current: root.update-current;
-                update-version: root.update-version;
-                update-kind: root.update-kind;
-                update-size: root.update-size;
-                update-progress: root.update-progress;
-                update-message: root.update-message;
-                update-check => {
-                    root.update-check();
-                }
-                update-install => {
-                    root.update-install();
-                }
-                update-restart => {
-                    root.update-restart();
-                }
 
                 t3k-connect(key) => {
                     root.t3k-connect(key);
@@ -1528,6 +1524,10 @@ export component App inherits Window {
                 root.target-split-index = -1;
             } else if (id == "tone3000") {
                 root.open-tone3000(-1);
+            } else if (id == "routing") {
+                root.open-routing();
+            } else if (id == "updates" || id == "about") {
+                root.update-dialog = true;
             } else if (id == "settings") {
                 root.current-view = 7;
             } else if (id == "power") {
@@ -1621,6 +1621,26 @@ export component App inherits Window {
         action <=> root.power-action;
         power(action) => {
             root.power(action);
+        }
+    }
+
+    UpdateDialog {
+        show <=> root.update-dialog;
+        status: root.update-status;
+        current: root.update-current;
+        version: root.update-version;
+        kind: root.update-kind;
+        size: root.update-size;
+        progress: root.update-progress;
+        message: root.update-message;
+        check => {
+            root.update-check();
+        }
+        install => {
+            root.update-install();
+        }
+        restart => {
+            root.update-restart();
         }
     }
 
@@ -1780,6 +1800,8 @@ export component App inherits Window {
                     root.netmidi-later();
                 } else if (root.power-dialog) {
                     root.power-dialog = false;
+                } else if (root.update-dialog) {
+                    root.update-dialog = false;
                 } else if (root.current-view == 1 && root.arranging) {
                     // Drops the picked parameter, else leaves Arrange
                     if (root.adjusting) {
@@ -1798,6 +1820,8 @@ export component App inherits Window {
                 } else if (root.current-view == 8) {
                     root.current-view = root.t3k-return-view;
                 } else if (root.current-view == 10) {
+                    root.current-view = root.routing-return-view;
+                } else if (root.current-view == 12) {
                     root.current-view = 7;
                 } else if (root.current-view == 11) {
                     if (root.catalog-open >= 0) {

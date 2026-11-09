@@ -1,7 +1,6 @@
 import { Theme } from "../theme.slint";
 import { Button, Card, Icon, SectionHeader, Segmented, Stepper, Toggle } from "../components/controls.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
-import { LogoMark, LogoText } from "../components/logo.slint";
 import { NetMidiDevice, SystemSetting, WifiNetwork } from "../types.slint";
 import { Tone3000Logo } from "../components/tone3000_brand.slint";
 import { Features } from "../features.slint";
@@ -24,7 +23,7 @@ component SignalBars inherits Rectangle {
 }
 
 // A setting: its label on the left, its control on the right
-component SettingRow inherits HorizontalLayout {
+export component SettingRow inherits HorizontalLayout {
     in property <string> label;
     in property <color> label-color: Theme.text-secondary;
     spacing: Theme.space-md;
@@ -42,8 +41,10 @@ component SettingRow inherits HorizontalLayout {
     @children
 }
 
-// Settings page: hardware, MIDI, Wi-Fi, and TONE3000 Connect, which links a tone3000.com
-// account with the OAuth device flow (code + QR on screen, approval on a phone).
+// Settings page, the settings used most first: Wi-Fi, audio, display, MIDI, remote control,
+// TONE3000 Connect (links a tone3000.com account with the OAuth device flow: code + QR on
+// screen, approval on a phone), processing, and last the entry of the Hardware page.
+// Routing and Updates / About have their own place in the ⋮ menu.
 export component SettingsView inherits Rectangle {
     // Wi-Fi
     in property <string> wifi-status: "unsupported"; // "unsupported" | "no-device" | "off" | "on"
@@ -59,27 +60,8 @@ export component SettingsView inherits Rectangle {
     callback wifi-disconnect();
     callback wifi-forget(string);
 
-    // Hardware: footswitches (and their GPIOs), encoder
-    in property <int> footswitch-count: 4;
-    in property <bool> tap-switch: true;
-    in property <int> footswitch-down-mask: 0;
-    in property <[int]> hardware-footswitch-pins: [];
-    in property <bool> hardware-encoder: false;
-    in property <int> hardware-encoder-a: 5;
-    in property <int> hardware-encoder-b: 6;
-    in property <int> hardware-encoder-button: 13;  // -1: none
-    in property <int> hardware-encoder-steps: 4;
-    in property <bool> hardware-i2c: false;
-    in property <string> hardware-i2c-module: "";
-    in property <int> hardware-i2c-steps: 1;
-    in property <bool> hardware-i2c-reverse: false;
-    in property <string> hardware-i2c-found: "";   // boards found, or why not
-    in property <string> hardware-message: "";
-    callback tap-switch-changed(bool);
-    callback hardware-set-i2c(bool);
-    callback hardware-step(string, int, int);
-    callback hardware-set-encoder(bool);
-    callback hardware-set-encoder-button(bool);
+    // Hardware has its own page (HardwareView), opened from the last card
+    callback open-hardware();
 
     // MIDI
     in property <bool> midi-available: false;
@@ -139,24 +121,6 @@ export component SettingsView inherits Rectangle {
     callback t3k-cancel();
     callback t3k-disconnect();
 
-    // Updates (Features.update: built with the update feature)
-    // "idle" | "checking" | "up-to-date" | "available" (not installable here)
-    // | "preparing" (files still building) | "ready" | "downloading"
-    // | "installing" | "installed" | "error"
-    in property <string> update-status: "idle";
-    in property <string> update-current: "";         // running versions
-    in property <string> update-version: "";         // latest release
-    in property <string> update-kind: "";            // "app" | "system"
-    in property <string> update-size: "";            // "15 MB"
-    in property <float> update-progress: 0;          // download, 0..1
-    in property <string> update-message: "";         // error
-    callback update-check();
-    callback update-install();
-    callback update-restart();
-
-    // Inputs and outputs (the routing itself has its own view)
-    in property <string> routing-summary: "";
-    callback open-routing();
 
 
     private property <bool> editing-key: false;
@@ -187,304 +151,192 @@ export component SettingsView inherits Rectangle {
                 text: "SETTINGS";
             }
 
-            // ------------------------------------------------- Hardware
+            // ---------------------------------------------------- Wi-Fi
             Card {
                 VerticalLayout {
                     padding: Theme.space-lg;
                     spacing: Theme.space-md;
 
                     HorizontalLayout {
-                        spacing: Theme.space-md;
+                        spacing: Theme.space-sm;
                         VerticalLayout {
                             alignment: center;
                             Icon {
-                                name: "footswitch";
+                                name: "wifi";
                                 color: Theme.accent;
                             }
                         }
-                        VerticalLayout {
+                        Text {
                             horizontal-stretch: 1;
+                            text: "Wi-Fi";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-title;
+                            font-weight: Theme.weight-semibold;
+                            vertical-alignment: center;
+                        }
+                        if root.wifi-status == "on": Button {
+                            icon: "refresh";
+                            horizontal-stretch: 0;
+                            text: root.wifi-scanning ? "Scanning…" : "Scan";
+                            variant: "ghost";
+                            enabled: !root.wifi-scanning;
+                            clicked => {
+                                root.wifi-refresh(true);
+                            }
+                        }
+                        if root.wifi-status == "on" || root.wifi-status == "off": VerticalLayout {
                             alignment: center;
-                            spacing: 2px;
-                            Text {
-                                text: "Hardware";
-                                color: Theme.text-primary;
-                                font-size: Theme.font-title;
-                                font-weight: Theme.weight-semibold;
-                            }
-                            Text {
-                                text: Features.gpio ? "What is wired to the GPIO header: each input between its GPIO (BCM number) and ground. Changes apply at once."
-                                    : "Footswitches played from the keys 1–8 of a keyboard. MIDI footswitches work whatever the number.";
-                                color: Theme.text-secondary;
-                                font-size: Theme.font-small;
-                                wrap: word-wrap;
+                            Toggle {
+                                checked: root.wifi-status == "on";
+                                toggled(on) => {
+                                    root.wifi-set-enabled(on);
+                                }
                             }
                         }
                     }
 
-                    SettingRow {
-                        label: "FOOTSWITCHES";
-                        Stepper {
-                            width: 180px;
-                            text: root.footswitch-count == 0 ? "None" : root.footswitch-count;
-                            can-decrement: root.footswitch-count > 0;
-                            can-increment: root.footswitch-count < 8;
-                            decrement => {
-                                root.hardware-step("footswitches", 0, -1);
-                            }
-                            increment => {
-                                root.hardware-step("footswitches", 0, 1);
-                            }
-                        }
-                    }
-
-                    // One row per switch, its LED lit while it is pressed
-                    if Features.gpio: VerticalLayout {
+                    // To reach the pedal over SSH (issue #20)
+                    if root.wifi-addresses != "": HorizontalLayout {
                         spacing: Theme.space-sm;
-                        for pin[i] in root.hardware-footswitch-pins: SettingRow {
-                            label: "FS " + (i + 1);
-                            label-color: Theme.text-primary;
-                            VerticalLayout {
-                                alignment: center;
-                                Rectangle {
-                                    property <bool> down: Math.mod(Math.floor(root.footswitch-down-mask / Math.pow(2, i)), 2) == 1;
-                                    width: 10px;
-                                    height: 10px;
-                                    border-radius: 5px;
-                                    background: self.down ? Theme.accent : Theme.display;
-                                    border-width: 1px;
-                                    border-color: self.down ? Theme.accent : Theme.border-strong;
-                                }
-                            }
-                            Stepper {
-                                width: 180px;
-                                text: "GPIO " + pin;
-                                decrement => {
-                                    root.hardware-step("footswitch", i, -1);
-                                }
-                                increment => {
-                                    root.hardware-step("footswitch", i, 1);
-                                }
-                            }
+                        Text {
+                            horizontal-stretch: 0;
+                            text: "IP address";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: root.wifi-addresses;
+                            color: Theme.text-primary;
+                            font-size: Theme.font-small;
+                            vertical-alignment: center;
+                            wrap: word-wrap;
                         }
                     }
-
-                    if root.footswitch-count >= 2: SettingRow {
-                        label: "TAP TEMPO ON FS " + root.footswitch-count;
-                        Toggle {
-                            checked: root.tap-switch;
-                            toggled(on) => {
-                                root.tap-switch-changed(on);
-                            }
-                        }
-                    }
-                    if root.footswitch-count >= 2: Text {
-                        text: "The last footswitch taps the tempo; hold it to open the tuner, press any switch to close it.";
-                        color: Theme.text-muted;
+                    if root.wifi-status == "unsupported": Text {
+                        text: "Wi-Fi is managed by the system on this computer.";
+                        color: Theme.text-secondary;
                         font-size: Theme.font-small;
                         wrap: word-wrap;
                     }
-
-                    if Features.gpio: SettingRow {
-                        label: "ROTARY ENCODER";
-                        Toggle {
-                            checked: root.hardware-encoder;
-                            toggled(on) => {
-                                root.hardware-set-encoder(on);
-                            }
-                        }
+                    if root.wifi-status == "no-device": Text {
+                        text: "No Wi-Fi adapter found.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
                     }
-                    if Features.gpio && root.hardware-encoder: VerticalLayout {
-                        spacing: Theme.space-sm;
-                        SettingRow {
-                            label: "A";
-                            label-color: Theme.text-primary;
-                            Stepper {
-                                width: 180px;
-                                text: "GPIO " + root.hardware-encoder-a;
-                                decrement => {
-                                    root.hardware-step("encoder-a", 0, -1);
-                                }
-                                increment => {
-                                    root.hardware-step("encoder-a", 0, 1);
-                                }
-                            }
-                        }
-                        SettingRow {
-                            label: "B";
-                            label-color: Theme.text-primary;
-                            Stepper {
-                                width: 180px;
-                                text: "GPIO " + root.hardware-encoder-b;
-                                decrement => {
-                                    root.hardware-step("encoder-b", 0, -1);
-                                }
-                                increment => {
-                                    root.hardware-step("encoder-b", 0, 1);
-                                }
-                            }
-                        }
-                        SettingRow {
-                            label: "PUSH BUTTON";
-                            label-color: Theme.text-primary;
-                            Toggle {
-                                checked: root.hardware-encoder-button >= 0;
-                                toggled(on) => {
-                                    root.hardware-set-encoder-button(on);
-                                }
-                            }
-                            if root.hardware-encoder-button >= 0: Stepper {
-                                width: 180px;
-                                text: "GPIO " + root.hardware-encoder-button;
-                                decrement => {
-                                    root.hardware-step("encoder-button", 0, -1);
-                                }
-                                increment => {
-                                    root.hardware-step("encoder-button", 0, 1);
-                                }
-                            }
-                        }
-                        SettingRow {
-                            label: "STEPS PER DETENT";
-                            label-color: Theme.text-primary;
-                            Stepper {
-                                width: 180px;
-                                text: root.hardware-encoder-steps;
-                                can-decrement: root.hardware-encoder-steps > 1;
-                                can-increment: root.hardware-encoder-steps < 4;
-                                decrement => {
-                                    root.hardware-step("encoder-steps", 0, -1);
-                                }
-                                increment => {
-                                    root.hardware-step("encoder-steps", 0, 1);
-                                }
-                            }
-                        }
-                        Text {
-                            text: "Turning moves the focus like the arrow keys, the button confirms like Return. Lower the steps per detent if it takes several clicks to move.";
-                            color: Theme.text-muted;
-                            font-size: Theme.font-small;
-                            wrap: word-wrap;
-                        }
+                    if root.wifi-status == "off": Text {
+                        text: "Wi-Fi is off. Turn it on to get models and plugins.";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-small;
+                    }
+                    if root.wifi-status == "on" && root.wifi-networks.length == 0: Text {
+                        text: root.wifi-scanning ? "Looking for networks…" : "No network found.";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-small;
                     }
 
-                    if Features.gpio: SettingRow {
-                        label: "EXTERNAL ENCODERS (I2C)";
-                        Toggle {
-                            checked: root.hardware-i2c;
-                            toggled(on) => {
-                                root.hardware-set-i2c(on);
-                            }
-                        }
-                    }
-                    if Features.gpio && root.hardware-i2c: VerticalLayout {
-                        spacing: Theme.space-sm;
-                        SettingRow {
-                            label: "BOARD";
-                            label-color: Theme.text-primary;
-                            Stepper {
-                                width: 220px;
-                                text: root.hardware-i2c-module;
-                                decrement => {
-                                    root.hardware-step("i2c-module", 0, -1);
-                                }
-                                increment => {
-                                    root.hardware-step("i2c-module", 0, 1);
-                                }
-                            }
-                        }
-                        SettingRow {
-                            label: "STEPS PER DETENT";
-                            label-color: Theme.text-primary;
-                            Stepper {
-                                width: 180px;
-                                text: root.hardware-i2c-steps;
-                                can-decrement: root.hardware-i2c-steps > 1;
-                                can-increment: root.hardware-i2c-steps < 4;
-                                decrement => {
-                                    root.hardware-step("i2c-steps", 0, -1);
-                                }
-                                increment => {
-                                    root.hardware-step("i2c-steps", 0, 1);
+                    if root.wifi-status == "on": VerticalLayout {
+                        spacing: 4px;
+                        for net in root.wifi-networks: Rectangle {
+                            private property <bool> busy: root.wifi-busy-ssid == net.ssid;
+                            private property <bool> open: root.wifi-open-ssid == net.ssid;
+                            height: Theme.touch-target + 8px;
+                            border-radius: Theme.radius-md;
+                            background: row-ta.pressed ? Theme.surface-hover : net.connected ? Theme.accent-soft : Theme.surface-raised;
+                            border-width: 1px;
+                            border-color: net.connected ? Theme.accent : Theme.border;
+
+                            row-ta := TouchArea {
+                                enabled: root.wifi-busy-ssid == "";
+                                clicked => {
+                                    if (net.connected || net.saved) {
+                                        root.wifi-open-ssid = open ? "" : net.ssid;
+                                    } else if (net.secured) {
+                                        root.wifi-password = "";
+                                        root.wifi-password-ssid = net.ssid;
+                                    } else {
+                                        root.wifi-open-ssid = "";
+                                        root.wifi-connect(net.ssid, "");
+                                    }
                                 }
                             }
-                        }
-                        SettingRow {
-                            label: "REVERSE";
-                            label-color: Theme.text-primary;
-                            Toggle {
-                                checked: root.hardware-i2c-reverse;
-                                toggled(on) => {
-                                    root.hardware-step("i2c-reverse", 0, on ? 1 : -1);
+
+                            HorizontalLayout {
+                                padding-left: Theme.space-md;
+                                padding-right: Theme.space-sm;
+                                spacing: Theme.space-md;
+                                VerticalLayout {
+                                    alignment: center;
+                                    SignalBars {
+                                        signal: net.signal;
+                                        bar-color: net.connected ? Theme.accent : Theme.text-primary;
+                                    }
+                                }
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: net.ssid;
+                                    color: Theme.text-primary;
+                                    font-size: Theme.font-body;
+                                    font-weight: net.connected ? Theme.weight-semibold : Theme.weight-medium;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                if net.secured: VerticalLayout {
+                                    alignment: center;
+                                    Icon {
+                                        name: "lock";
+                                        size: 16px;
+                                        color: Theme.text-muted;
+                                    }
+                                }
+                                if !open: Text {
+                                    text: busy ? "Connecting…" : net.connected ? "Connected" : net.saved ? "Saved" : "";
+                                    color: net.connected || busy ? Theme.accent : Theme.text-muted;
+                                    font-size: Theme.font-small;
+                                    vertical-alignment: center;
+                                }
+                                if open && !net.connected: VerticalLayout {
+                                    alignment: center;
+                                    Button {
+                                        text: "Connect";
+                                        variant: "primary";
+                                        clicked => {
+                                            root.wifi-open-ssid = "";
+                                            root.wifi-connect(net.ssid, "");
+                                        }
+                                    }
+                                }
+                                if open && net.connected: VerticalLayout {
+                                    alignment: center;
+                                    Button {
+                                        text: "Disconnect";
+                                        clicked => {
+                                            root.wifi-open-ssid = "";
+                                            root.wifi-disconnect();
+                                        }
+                                    }
+                                }
+                                if open: VerticalLayout {
+                                    alignment: center;
+                                    Button {
+                                        text: "Forget";
+                                        variant: "danger";
+                                        clicked => {
+                                            root.wifi-open-ssid = "";
+                                            root.wifi-forget(net.ssid);
+                                        }
+                                    }
                                 }
                             }
-                        }
-                        if root.hardware-i2c-found != "": Text {
-                            text: root.hardware-i2c-found;
-                            color: Theme.text-secondary;
-                            font-size: Theme.font-small;
-                            wrap: word-wrap;
-                        }
-                        Text {
-                            text: "On SDA/SCL (GPIO 2 and 3). Encoders 1-5 turn the knobs of the rack's strip: press swaps with the value before turning, hold goes back to the default; on a list, press opens it and picks. A 6th encoder turns the strip's pages. Chain several boards with different addresses.";
-                            color: Theme.text-muted;
-                            font-size: Theme.font-small;
-                            wrap: word-wrap;
                         }
                     }
 
-                    if root.hardware-message != "": Text {
-                        text: root.hardware-message;
+                    if root.wifi-message != "": Text {
+                        text: root.wifi-message;
                         color: Theme.danger;
                         font-size: Theme.font-small;
                         wrap: word-wrap;
-                    }
-                }
-            }
-
-            // ----------------------------------------- Inputs and outputs
-            Card {
-                VerticalLayout {
-                    padding: Theme.space-lg;
-                    spacing: Theme.space-md;
-
-                    HorizontalLayout {
-                        spacing: Theme.space-md;
-                        VerticalLayout {
-                            alignment: center;
-                            Icon {
-                                name: "routing";
-                                color: Theme.accent;
-                            }
-                        }
-                        VerticalLayout {
-                            horizontal-stretch: 1;
-                            alignment: center;
-                            spacing: 2px;
-                            Text {
-                                text: "Inputs and outputs";
-                                color: Theme.text-primary;
-                                font-size: Theme.font-title;
-                                font-weight: Theme.weight-semibold;
-                            }
-                            Text {
-                                text: root.routing-summary;
-                                color: Theme.text-secondary;
-                                font-size: Theme.font-small;
-                                wrap: word-wrap;
-                            }
-                        }
-                        VerticalLayout {
-                            alignment: center;
-                            Button {
-                                width: 160px;
-                                text: "Routing";
-                                icon: "routing";
-                                clicked => {
-                                    root.open-routing();
-                                }
-                            }
-                        }
                     }
                 }
             }
@@ -564,70 +416,6 @@ export component SettingsView inherits Rectangle {
                             enabled: !root.system-busy;
                             clicked => {
                                 root.system-apply();
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ----------------------------------------------- Processing
-            if root.dsp-max-cores > 1: Card {
-                VerticalLayout {
-                    padding: Theme.space-lg;
-                    spacing: Theme.space-md;
-
-                    HorizontalLayout {
-                        spacing: Theme.space-md;
-                        VerticalLayout {
-                            alignment: center;
-                            Icon {
-                                name: "rack";
-                                color: Theme.accent;
-                            }
-                        }
-                        VerticalLayout {
-                            horizontal-stretch: 1;
-                            alignment: center;
-                            spacing: 2px;
-                            Text {
-                                text: "Processing";
-                                color: Theme.text-primary;
-                                font-size: Theme.font-title;
-                                font-weight: Theme.weight-semibold;
-                            }
-                            Text {
-                                text: "Heavy rigs share the effects across the cores, without added latency";
-                                color: Theme.text-secondary;
-                                font-size: Theme.font-small;
-                                wrap: word-wrap;
-                            }
-                        }
-                    }
-
-                    HorizontalLayout {
-                        spacing: Theme.space-md;
-                        VerticalLayout {
-                            alignment: center;
-                            horizontal-stretch: 1;
-                            Text {
-                                text: "DSP CORES";
-                                color: Theme.text-secondary;
-                                font-size: Theme.font-caption;
-                                font-weight: Theme.weight-bold;
-                                letter-spacing: 0.8px;
-                            }
-                        }
-                        Stepper {
-                            width: 180px;
-                            text: root.dsp-cores == 0 ? "Auto (" + root.dsp-max-cores + ")"
-                                : root.dsp-cores == 1 ? "1 core" : root.dsp-cores + " cores";
-                            can-decrement: root.dsp-cores > 0;
-                            can-increment: root.dsp-cores < root.dsp-max-cores;
-                            decrement => {
-                                root.dsp-cores-changed(root.dsp-cores - 1);
-                            }
-                            increment => {
-                                root.dsp-cores-changed(root.dsp-cores + 1);
                             }
                         }
                     }
@@ -996,199 +784,10 @@ export component SettingsView inherits Rectangle {
                 }
             }
 
-            // ---------------------------------------------------- Wi-Fi
-            Card {
-                VerticalLayout {
-                    padding: Theme.space-lg;
-                    spacing: Theme.space-md;
-
-                    HorizontalLayout {
-                        spacing: Theme.space-sm;
-                        VerticalLayout {
-                            alignment: center;
-                            Icon {
-                                name: "wifi";
-                                color: Theme.accent;
-                            }
-                        }
-                        Text {
-                            horizontal-stretch: 1;
-                            text: "Wi-Fi";
-                            color: Theme.text-primary;
-                            font-size: Theme.font-title;
-                            font-weight: Theme.weight-semibold;
-                            vertical-alignment: center;
-                        }
-                        if root.wifi-status == "on": Button {
-                            icon: "refresh";
-                            horizontal-stretch: 0;
-                            text: root.wifi-scanning ? "Scanning…" : "Scan";
-                            variant: "ghost";
-                            enabled: !root.wifi-scanning;
-                            clicked => {
-                                root.wifi-refresh(true);
-                            }
-                        }
-                        if root.wifi-status == "on" || root.wifi-status == "off": VerticalLayout {
-                            alignment: center;
-                            Toggle {
-                                checked: root.wifi-status == "on";
-                                toggled(on) => {
-                                    root.wifi-set-enabled(on);
-                                }
-                            }
-                        }
-                    }
-
-                    // To reach the pedal over SSH (issue #20)
-                    if root.wifi-addresses != "": HorizontalLayout {
-                        spacing: Theme.space-sm;
-                        Text {
-                            horizontal-stretch: 0;
-                            text: "IP address";
-                            color: Theme.text-secondary;
-                            font-size: Theme.font-small;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            horizontal-stretch: 1;
-                            text: root.wifi-addresses;
-                            color: Theme.text-primary;
-                            font-size: Theme.font-small;
-                            vertical-alignment: center;
-                            wrap: word-wrap;
-                        }
-                    }
-                    if root.wifi-status == "unsupported": Text {
-                        text: "Wi-Fi is managed by the system on this computer.";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-small;
-                        wrap: word-wrap;
-                    }
-                    if root.wifi-status == "no-device": Text {
-                        text: "No Wi-Fi adapter found.";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-small;
-                    }
-                    if root.wifi-status == "off": Text {
-                        text: "Wi-Fi is off. Turn it on to get models and plugins.";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-small;
-                    }
-                    if root.wifi-status == "on" && root.wifi-networks.length == 0: Text {
-                        text: root.wifi-scanning ? "Looking for networks…" : "No network found.";
-                        color: Theme.text-muted;
-                        font-size: Theme.font-small;
-                    }
-
-                    if root.wifi-status == "on": VerticalLayout {
-                        spacing: 4px;
-                        for net in root.wifi-networks: Rectangle {
-                            private property <bool> busy: root.wifi-busy-ssid == net.ssid;
-                            private property <bool> open: root.wifi-open-ssid == net.ssid;
-                            height: Theme.touch-target + 8px;
-                            border-radius: Theme.radius-md;
-                            background: row-ta.pressed ? Theme.surface-hover : net.connected ? Theme.accent-soft : Theme.surface-raised;
-                            border-width: 1px;
-                            border-color: net.connected ? Theme.accent : Theme.border;
-
-                            row-ta := TouchArea {
-                                enabled: root.wifi-busy-ssid == "";
-                                clicked => {
-                                    if (net.connected || net.saved) {
-                                        root.wifi-open-ssid = open ? "" : net.ssid;
-                                    } else if (net.secured) {
-                                        root.wifi-password = "";
-                                        root.wifi-password-ssid = net.ssid;
-                                    } else {
-                                        root.wifi-open-ssid = "";
-                                        root.wifi-connect(net.ssid, "");
-                                    }
-                                }
-                            }
-
-                            HorizontalLayout {
-                                padding-left: Theme.space-md;
-                                padding-right: Theme.space-sm;
-                                spacing: Theme.space-md;
-                                VerticalLayout {
-                                    alignment: center;
-                                    SignalBars {
-                                        signal: net.signal;
-                                        bar-color: net.connected ? Theme.accent : Theme.text-primary;
-                                    }
-                                }
-                                Text {
-                                    horizontal-stretch: 1;
-                                    text: net.ssid;
-                                    color: Theme.text-primary;
-                                    font-size: Theme.font-body;
-                                    font-weight: net.connected ? Theme.weight-semibold : Theme.weight-medium;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                }
-                                if net.secured: VerticalLayout {
-                                    alignment: center;
-                                    Icon {
-                                        name: "lock";
-                                        size: 16px;
-                                        color: Theme.text-muted;
-                                    }
-                                }
-                                if !open: Text {
-                                    text: busy ? "Connecting…" : net.connected ? "Connected" : net.saved ? "Saved" : "";
-                                    color: net.connected || busy ? Theme.accent : Theme.text-muted;
-                                    font-size: Theme.font-small;
-                                    vertical-alignment: center;
-                                }
-                                if open && !net.connected: VerticalLayout {
-                                    alignment: center;
-                                    Button {
-                                        text: "Connect";
-                                        variant: "primary";
-                                        clicked => {
-                                            root.wifi-open-ssid = "";
-                                            root.wifi-connect(net.ssid, "");
-                                        }
-                                    }
-                                }
-                                if open && net.connected: VerticalLayout {
-                                    alignment: center;
-                                    Button {
-                                        text: "Disconnect";
-                                        clicked => {
-                                            root.wifi-open-ssid = "";
-                                            root.wifi-disconnect();
-                                        }
-                                    }
-                                }
-                                if open: VerticalLayout {
-                                    alignment: center;
-                                    Button {
-                                        text: "Forget";
-                                        variant: "danger";
-                                        clicked => {
-                                            root.wifi-open-ssid = "";
-                                            root.wifi-forget(net.ssid);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if root.wifi-message != "": Text {
-                        text: root.wifi-message;
-                        color: Theme.danger;
-                        font-size: Theme.font-small;
-                        wrap: word-wrap;
-                    }
-                }
-            }
-
             // ---------------------------------------------------- Remote control
             if RemoteControl.available: RemoteCard { }
 
+            // ---------------------------------------------- TONE3000 Connect
             Card {
                 VerticalLayout {
                     padding: Theme.space-lg;
@@ -1433,181 +1032,111 @@ export component SettingsView inherits Rectangle {
                 }
             }
 
-            // -------------------------------------------- Updates
-            if Features.update: Card {
+            // ----------------------------------------------- Processing
+            if root.dsp-max-cores > 1: Card {
                 VerticalLayout {
                     padding: Theme.space-lg;
                     spacing: Theme.space-md;
 
                     HorizontalLayout {
-                        spacing: Theme.space-sm;
+                        spacing: Theme.space-md;
                         VerticalLayout {
                             alignment: center;
                             Icon {
-                                name: "refresh";
+                                name: "rack";
                                 color: Theme.accent;
                             }
                         }
-                        Text {
-                            horizontal-stretch: 1;
-                            text: "Updates";
-                            color: Theme.text-primary;
-                            font-size: Theme.font-title;
-                            font-weight: Theme.weight-semibold;
-                            vertical-alignment: center;
-                        }
-                        Button {
-                            horizontal-stretch: 0;
-                            text: root.update-status == "checking" ? "Checking…" : "Check for updates";
-                            variant: "ghost";
-                            enabled: root.update-status != "checking" && root.update-status != "downloading"
-                                && root.update-status != "installing" && root.update-status != "installed";
-                            clicked => {
-                                root.update-check();
-                            }
-                        }
-                    }
-
-                    Text {
-                        text: root.update-current;
-                        color: Theme.text-muted;
-                        font-size: Theme.font-small;
-                    }
-
-                    if root.update-status == "up-to-date": Text {
-                        text: "OpenRig is up to date.";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-small;
-                    }
-                    if root.update-status == "available": Text {
-                        text: "OpenRig " + root.update-version + " is available: github.com/Siryu6/OpenRig/releases";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-small;
-                        wrap: word-wrap;
-                    }
-                    if root.update-status == "preparing": Text {
-                        text: "OpenRig " + root.update-version + " is out; its update for this pedalboard is still being built. Check again later.";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-small;
-                        wrap: word-wrap;
-                    }
-
-                    if root.update-status == "ready": HorizontalLayout {
-                        spacing: Theme.space-md;
                         VerticalLayout {
                             horizontal-stretch: 1;
                             alignment: center;
-                            spacing: Theme.space-xs;
+                            spacing: 2px;
                             Text {
-                                text: "OpenRig " + root.update-version + " is available";
+                                text: "Processing";
                                 color: Theme.text-primary;
-                                font-size: Theme.font-body;
-                                font-weight: Theme.weight-medium;
+                                font-size: Theme.font-title;
+                                font-weight: Theme.weight-semibold;
                             }
                             Text {
-                                text: root.update-kind == "app"
-                                    ? "App update, " + root.update-size + ": it runs when you restart OpenRig; the system stays as it is."
-                                    : "System update, " + root.update-size + ": this version needs a new system. It runs when you restart the pedalboard, which goes back to the current one if it does not start.";
+                                text: "Heavy rigs share the effects across the cores, without added latency";
                                 color: Theme.text-secondary;
                                 font-size: Theme.font-small;
                                 wrap: word-wrap;
                             }
                         }
-                        VerticalLayout {
-                            alignment: center;
-                            Button {
-                                text: "Install";
-                                variant: "primary";
-                                clicked => {
-                                    root.update-install();
-                                }
-                            }
-                        }
                     }
 
-                    if root.update-status == "downloading": VerticalLayout {
-                        spacing: Theme.space-sm;
-                        Text {
-                            text: "Downloading OpenRig " + root.update-version + "… " + round(root.update-progress * 100) + " %";
-                            color: Theme.text-secondary;
-                            font-size: Theme.font-small;
-                        }
-                        Rectangle {
-                            height: 6px;
-                            border-radius: 3px;
-                            background: Theme.surface-raised;
-                            Rectangle {
-                                x: 0;
-                                width: parent.width * clamp(root.update-progress, 0, 1);
-                                border-radius: 3px;
-                                background: Theme.accent;
-                            }
-                        }
-                    }
-                    if root.update-status == "installing": Text {
-                        text: root.update-kind == "app"
-                            ? "Installing OpenRig " + root.update-version + "…"
-                            : "Writing the new system. This takes a few minutes; keep the pedalboard on.";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-small;
-                        wrap: word-wrap;
-                    }
-
-                    if root.update-status == "installed": HorizontalLayout {
+                    HorizontalLayout {
                         spacing: Theme.space-md;
-                        Text {
-                            horizontal-stretch: 1;
-                            text: root.update-kind == "app"
-                                ? "OpenRig " + root.update-version + " is installed. Restart OpenRig to use it."
-                                : "OpenRig " + root.update-version + " is installed. Restart the pedalboard to use it.";
-                            color: Theme.text-primary;
-                            font-size: Theme.font-small;
-                            vertical-alignment: center;
-                            wrap: word-wrap;
-                        }
                         VerticalLayout {
                             alignment: center;
-                            Button {
-                                text: root.update-kind == "app" ? "Restart OpenRig" : "Restart now";
-                                variant: "primary";
-                                clicked => {
-                                    root.update-restart();
-                                }
+                            horizontal-stretch: 1;
+                            Text {
+                                text: "DSP CORES";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-caption;
+                                font-weight: Theme.weight-bold;
+                                letter-spacing: 0.8px;
                             }
                         }
-                    }
-
-                    if root.update-status == "error": Text {
-                        text: root.update-message;
-                        color: Theme.danger;
-                        font-size: Theme.font-small;
-                        wrap: word-wrap;
+                        Stepper {
+                            width: 180px;
+                            text: root.dsp-cores == 0 ? "Auto (" + root.dsp-max-cores + ")"
+                                : root.dsp-cores == 1 ? "1 core" : root.dsp-cores + " cores";
+                            can-decrement: root.dsp-cores > 0;
+                            can-increment: root.dsp-cores < root.dsp-max-cores;
+                            decrement => {
+                                root.dsp-cores-changed(root.dsp-cores - 1);
+                            }
+                            increment => {
+                                root.dsp-cores-changed(root.dsp-cores + 1);
+                            }
+                        }
                     }
                 }
             }
 
-            // ---------------------------------------------- About
+            // --------------------------------------------- Hardware (own page)
+            // Set up once, so last; its own page keeps this one short
             Card {
+                hw-ta := TouchArea {
+                    clicked => {
+                        root.open-hardware();
+                    }
+                }
                 HorizontalLayout {
                     padding: Theme.space-lg;
-                    spacing: Theme.space-lg;
-                    LogoMark {
-                        size: 64px;
-                    }
+                    spacing: Theme.space-md;
                     VerticalLayout {
                         alignment: center;
-                        spacing: Theme.space-xs;
-                        HorizontalLayout {
-                            alignment: start;
-                            LogoText {
-                                font-size: 28px;
-                            }
+                        Icon {
+                            name: "footswitch";
+                            color: Theme.accent;
+                        }
+                    }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            text: "Hardware";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-title;
+                            font-weight: Theme.weight-semibold;
                         }
                         Text {
-                            text: "Open source guitar rig: LV2 effects, neural amps and impulse responses on a Raspberry Pi. Free software under the GPL 3.0 or later.";
+                            text: Features.gpio ? "Footswitches, tap tempo, rotary encoder and external encoders"
+                                : "Footswitches and tap tempo";
                             color: Theme.text-secondary;
                             font-size: Theme.font-small;
                             wrap: word-wrap;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            name: "chevron-right";
+                            color: hw-ta.pressed ? Theme.accent : Theme.text-secondary;
                         }
                     }
                 }

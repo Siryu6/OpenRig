@@ -146,7 +146,7 @@ chain and outputs 1 and 2 play its left and right sides, unless
 chain; for each output or pair: the main mix, one of four sends or an input
 passed through, level, balance, mute, solo, polarity, and how a stereo
 source plays on a single output). With a single playback port, both sides
-are summed on it. The outputs are set in Settings → Inputs and outputs →
+are summed on it. The outputs are set in ⋮ →
 Routing. In the rack, a Send block copies the signal at its place to a send
 and a Return block brings an input in; see [docs/ROUTING.md](docs/ROUTING.md).
 `in_1`, `out_1` and `out_2` keep their former names as aliases
@@ -236,7 +236,8 @@ src/
 ├── wifi.rs              Wi-Fi through NetworkManager (nmcli): scan, join, forget
 ├── wifi_ui.rs           Settings → Wi-Fi (worker thread running nmcli)
 ├── update.rs            Updates: latest GitHub release, app or system, download, request to the OS updater
-├── update_ui.rs         Settings → Updates (worker thread: check, download, install)
+├── update_ui.rs         ⋮ → Updates (worker thread: check, download, install)
+├── menu_ui.rs           The ⋮ menu: its items, from what the build and the system offer
 ├── store/               Plugin store: signed index, downloads, safe unpacking, receipts (feature store)
 ├── catalog_ui.rs        Store page (worker threads: index, pictures, install, removal)
 ├── monitor.rs           DSP meter, xruns, CPU / RAM / temperature / throttling

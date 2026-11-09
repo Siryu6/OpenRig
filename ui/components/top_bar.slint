@@ -65,6 +65,7 @@ export component TopBar inherits Rectangle {
     in property <string> back-label: "Rack";     // where the back button goes
     in property <bool> audio-running: false;
     in property <ResourceStatus> resources;
+    in property <bool> menu-badge: false;       // dot on ⋮: an update to install
 
     callback back-clicked();
     callback resources-clicked();
@@ -319,6 +320,17 @@ export component TopBar inherits Rectangle {
             variant: "ghost";
             clicked => {
                 root.menu-clicked();
+            }
+            // Something waits in the menu (an update to install)
+            if root.menu-badge: Rectangle {
+                x: parent.width - 18px;
+                y: 8px;
+                width: 10px;
+                height: 10px;
+                border-radius: 5px;
+                background: Theme.accent;
+                border-width: 2px;
+                border-color: Theme.panel;
             }
         }
     }
