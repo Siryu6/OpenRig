@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0](https://github.com/Siryu6/OpenRig/compare/v0.13.0...v0.14.0) - 2026-11-09
+
+### Added
+
+- *(looper)* click, multiply, half speed, waveform and saved loops ([#118](https://github.com/Siryu6/OpenRig/pull/118))
+- *(ui)* reorganize Settings, Routing and Updates in the ⋮ menu, Hardware page ([#117](https://github.com/Siryu6/OpenRig/pull/117))
+- *(remote)* full screen button in the web remote ([#114](https://github.com/Siryu6/OpenRig/pull/114))
+- *(ui)* add a Quit OpenRig menu entry outside the OS image ([#115](https://github.com/Siryu6/OpenRig/pull/115))
+
+### Fixed
+
+- *(os)* wait for the Wi-Fi card before giving up on the hotspot ([#110](https://github.com/Siryu6/OpenRig/pull/110))
+- *(os)* ship rtpmidid again by breaking its Kconfig dependency loop ([#107](https://github.com/Siryu6/OpenRig/pull/107)) ([#108](https://github.com/Siryu6/OpenRig/pull/108))
+- *(remote)* draw rounded gradient shapes flat in the remote view ([#105](https://github.com/Siryu6/OpenRig/pull/105))
+
+### Other
+
+- *(remote)* stream the editor at 30 fps and draw right after input ([#112](https://github.com/Siryu6/OpenRig/pull/112))
+
 ## [0.13.0](https://github.com/Siryu6/OpenRig/compare/v0.12.1...v0.13.0) - 2026-11-09
 
 ### Added
