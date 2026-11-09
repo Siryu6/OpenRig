@@ -58,6 +58,15 @@ pub fn setup(app: &App) {
         show(&app, &settings);
     });
     let (weak, s) = (app.as_weak(), settings.clone());
+    app.on_system_pick(move |key, index| {
+        let Some(app) = weak.upgrade() else { return };
+        let mut settings = s.borrow_mut();
+        let cards = settings.cards.clone();
+        pick(&mut settings.pending, &cards, &key, index);
+        app.set_system_message(SharedString::new());
+        show(&app, &settings);
+    });
+    let (weak, s) = (app.as_weak(), settings.clone());
     app.on_system_revert(move || {
         let Some(app) = weak.upgrade() else { return };
         let mut settings = s.borrow_mut();
@@ -186,35 +195,120 @@ fn step(config: &mut SystemConfig, cards: &[SoundCard], key: &str, delta: i32) {
     }
 }
 
-fn show(app: &App, s: &Settings) {
-    let config = &s.pending;
-    let row = |key: &str, label: &str, value: String, at: Option<usize>, len: usize| {
-        let at = at.unwrap_or(0);
-        SystemSetting {
-            key: key.into(),
-            label: label.into(),
-            value: value.into(),
-            can_decrement: at > 0,
-            can_increment: at + 1 < len,
-        }
+/// Set `key` of `config` to the choice at `index` of its list or segments
+fn pick(config: &mut SystemConfig, cards: &[SoundCard], key: &str, index: i32) {
+    let Ok(index) = usize::try_from(index) else {
+        return;
     };
-    let devices = devices(config, &s.cards);
-    let device_name = match config.audio_device.as_str() {
+    match key {
+        "audio_device" => {
+            if let Some(device) = devices(config, cards).get(index) {
+                config.audio_device = device.clone();
+            }
+        }
+        "display_rotation" => {
+            if let Some(rotation) = ROTATIONS.get(index) {
+                config.display_rotation = *rotation;
+            }
+        }
+        "wifi_country" => {
+            if let Some(country) = COUNTRIES.get(index) {
+                config.wifi_country = country.to_string();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Name of an interface: Auto, the card's, or its id when unplugged
+fn device_name(id: &str, cards: &[SoundCard]) -> String {
+    match id {
         "auto" => "Auto".to_string(),
-        id => s
-            .cards
+        id => cards
             .iter()
             .find(|c| c.id == id)
             .map_or_else(|| format!("{id} (not found)"), |c| c.name.clone()),
+    }
+}
+
+/// A Wi-Fi country as shown: its code and name, "Default" for none
+fn country_label(code: &str) -> String {
+    let name = match code {
+        "" => return "Default".to_string(),
+        "AT" => "Austria",
+        "AU" => "Australia",
+        "BE" => "Belgium",
+        "BR" => "Brazil",
+        "CA" => "Canada",
+        "CH" => "Switzerland",
+        "CN" => "China",
+        "CZ" => "Czechia",
+        "DE" => "Germany",
+        "DK" => "Denmark",
+        "ES" => "Spain",
+        "FI" => "Finland",
+        "FR" => "France",
+        "GB" => "United Kingdom",
+        "GR" => "Greece",
+        "HU" => "Hungary",
+        "IE" => "Ireland",
+        "IL" => "Israel",
+        "IN" => "India",
+        "IT" => "Italy",
+        "JP" => "Japan",
+        "KR" => "South Korea",
+        "LU" => "Luxembourg",
+        "MX" => "Mexico",
+        "NL" => "Netherlands",
+        "NO" => "Norway",
+        "NZ" => "New Zealand",
+        "PL" => "Poland",
+        "PT" => "Portugal",
+        "SE" => "Sweden",
+        "US" => "United States",
+        "ZA" => "South Africa",
+        code => return code.to_string(),
     };
+    format!("{code} · {name}")
+}
+
+fn show(app: &App, s: &Settings) {
+    let config = &s.pending;
+    let row =
+        |key: &str, label: &str, value: String, at: Option<usize>, len: usize| SystemSetting {
+            key: key.into(),
+            label: label.into(),
+            value: value.into(),
+            can_decrement: at.unwrap_or(0) > 0,
+            can_increment: at.unwrap_or(0) + 1 < len,
+            kind: "stepper".into(),
+            choices: ModelRc::default(),
+            selected: at.map_or(-1, |at| at as i32),
+        };
+    // Unordered choices: a list to pick from, or segments when they are few
+    let choose = |kind: &str, row: SystemSetting, choices: Vec<String>| SystemSetting {
+        kind: kind.into(),
+        choices: ModelRc::new(VecModel::from(
+            choices
+                .into_iter()
+                .map(SharedString::from)
+                .collect::<Vec<_>>(),
+        )),
+        ..row
+    };
+    let devices = devices(config, &s.cards);
     let rate = config.sample_rate as f32 / 1000.0;
     let rows = vec![
-        row(
-            "audio_device",
-            "INTERFACE",
-            device_name,
-            devices.iter().position(|d| *d == config.audio_device),
-            devices.len(),
+        choose(
+            "list",
+            row(
+                "audio_device",
+                "INTERFACE",
+                device_name(&config.audio_device, &s.cards),
+                devices.iter().position(|d| *d == config.audio_device),
+                devices.len(),
+            ),
+            devices.iter().map(|d| device_name(d, &s.cards)).collect(),
         ),
         row(
             "sample_rate",
@@ -237,23 +331,27 @@ fn show(app: &App, s: &Settings) {
             PERIOD_COUNTS.iter().position(|p| *p == config.periods),
             PERIOD_COUNTS.len(),
         ),
-        row(
-            "display_rotation",
-            "SCREEN ROTATION",
-            format!("{}°", config.display_rotation),
-            ROTATIONS.iter().position(|r| *r == config.display_rotation),
-            ROTATIONS.len(),
+        choose(
+            "segmented",
+            row(
+                "display_rotation",
+                "SCREEN ROTATION",
+                format!("{}°", config.display_rotation),
+                ROTATIONS.iter().position(|r| *r == config.display_rotation),
+                ROTATIONS.len(),
+            ),
+            ROTATIONS.iter().map(|r| format!("{r}°")).collect(),
         ),
-        row(
-            "wifi_country",
-            "WI-FI COUNTRY",
-            if config.wifi_country.is_empty() {
-                "Default".to_string()
-            } else {
-                config.wifi_country.clone()
-            },
-            COUNTRIES.iter().position(|c| *c == config.wifi_country),
-            COUNTRIES.len(),
+        choose(
+            "list",
+            row(
+                "wifi_country",
+                "WI-FI COUNTRY",
+                country_label(&config.wifi_country),
+                COUNTRIES.iter().position(|c| *c == config.wifi_country),
+                COUNTRIES.len(),
+            ),
+            COUNTRIES.iter().map(|c| country_label(c)).collect(),
         ),
     ];
     app.set_system_settings(ModelRc::new(VecModel::from(rows)));
@@ -293,5 +391,48 @@ mod tests {
         // A card set but unplugged stays offered
         config.audio_device = "pisound".into();
         assert_eq!(devices(&config, &cards), ["auto", "AudioBox", "pisound"]);
+    }
+
+    #[test]
+    fn picks_set_the_choice_at_the_index() {
+        let cards = vec![SoundCard {
+            id: "AudioBox".into(),
+            name: "AudioBox USB 96".into(),
+        }];
+        let mut config = SystemConfig::default();
+        pick(&mut config, &cards, "audio_device", 1);
+        assert_eq!(config.audio_device, "AudioBox");
+        pick(&mut config, &cards, "audio_device", 0);
+        assert_eq!(config.audio_device, "auto");
+        pick(&mut config, &cards, "display_rotation", 2);
+        assert_eq!(config.display_rotation, 180);
+        let fr = COUNTRIES.iter().position(|c| *c == "FR").unwrap();
+        pick(&mut config, &cards, "wifi_country", fr as i32);
+        assert_eq!(config.wifi_country, "FR");
+        // Out of the list: nothing changes
+        let before = config.clone();
+        pick(&mut config, &cards, "audio_device", 5);
+        pick(&mut config, &cards, "wifi_country", -1);
+        pick(&mut config, &cards, "display_rotation", 4);
+        pick(&mut config, &cards, "period", 0);
+        assert_eq!(config, before);
+    }
+
+    #[test]
+    fn labels_of_the_choices() {
+        let cards = vec![SoundCard {
+            id: "AudioBox".into(),
+            name: "AudioBox USB 96".into(),
+        }];
+        assert_eq!(device_name("auto", &cards), "Auto");
+        assert_eq!(device_name("AudioBox", &cards), "AudioBox USB 96");
+        assert_eq!(device_name("pisound", &cards), "pisound (not found)");
+        assert_eq!(country_label(""), "Default");
+        assert_eq!(country_label("FR"), "FR · France");
+        assert_eq!(country_label("XX"), "XX");
+        // Every country offered has a name
+        assert!(COUNTRIES[1..]
+            .iter()
+            .all(|c| country_label(c).contains(" · ")));
     }
 }

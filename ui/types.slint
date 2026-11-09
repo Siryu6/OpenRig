@@ -110,6 +110,7 @@ export struct MenuItem {
     label: string,
     icon: string,
     enabled: bool,
+    badge: bool,     // accent dot after the label (an update to install)
 }
 
 export enum LooperState {
@@ -391,7 +392,10 @@ export struct ScopeLive {
 export struct SystemSetting {
     key: string,            // "audio_device", "sample_rate"…
     label: string,          // "INTERFACE"
-    value: string,          // shown in the stepper
+    value: string,          // shown in the stepper or the list row
     can-decrement: bool,
     can-increment: bool,
+    kind: string,           // "stepper" (ordered values), "list" (opens a list), "segmented"
+    choices: [string],      // the list's or the segments' labels
+    selected: int,          // the current choice in `choices`, -1 if none
 }

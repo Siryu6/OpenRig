@@ -78,8 +78,8 @@ What OpenRig does, in more technical detail than the
   shows the tone picture.
 - **Chain with splits**: serial chain plus nested A/B, Mix and L/R splits;
   a split's type can be changed from the rack (its blocks are kept).
-- **Inputs and outputs**: every input and output of the interface (up to
-  16 each). One input feeds the effects; each output or stereo pair plays
+- **Inputs and outputs** (⋮ → Routing): every input and output of the
+  interface (up to 16 each). One input feeds the effects; each output or stereo pair plays
   the main mix, one of 4 sends, or an input passed straight through, with
   level, balance, mute, solo and polarity (kept for the rig in
   `routing.json`). Send and Return blocks, placed anywhere in the rack,
@@ -230,7 +230,7 @@ What OpenRig does, in more technical detail than the
   `PREEMPT_RT` kernel, read-only system, boot logo, the UI full screen
   without X11 / Wayland, signed A/B updates (RAUC) that roll back when the
   new system does not start. See [OS.md](OS.md).
-- **Updates** (feature `update`, default): Settings → Updates checks the
+- **Updates** (feature `update`, default): ⋮ → Updates checks the
   latest GitHub release and, on the OS image, installs it: the app alone
   when the system did not change, else the whole system. See
   [Updates](https://docs.openrig.eu/setup/updates/).

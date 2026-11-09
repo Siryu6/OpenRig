@@ -59,7 +59,7 @@ tone3000 = ["dep:ureq", "dep:qrcodegen", "dep:zune-jpeg", "dep:png"]
 midi = ["dep:midir"]
 # pedalboard-splash (Linux framebuffer)
 splash = ["dep:png"]
-# "Check for updates" in Settings: latest release on GitHub; on the
+# "Check for updates" in ⋮ → Updates: latest release on GitHub; on the
 # pedalboard OS, downloads it and hands it to the system installer
 update = ["dep:ureq", "dep:ring"]
 # Plugin store: downloads the signed catalog index and installs LV2 bundles

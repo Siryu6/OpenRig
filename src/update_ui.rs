@@ -1,4 +1,4 @@
-//! "Check for updates" in Settings. Checking, downloading and installing
+//! "Check for updates" in ⋮ → Updates. Checking, downloading and installing
 //! take from seconds to minutes, so one worker thread runs them in order and
 //! publishes the progress to the UI.
 

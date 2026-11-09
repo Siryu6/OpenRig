@@ -303,7 +303,7 @@ to the user: `chown -R pedalboard:pedalboard /data/pedalboard`.
 
 ## Updates
 
-Settings → Updates → **Check for updates** compares the app with the
+⋮ → Updates → **Check for updates** compares the app with the
 latest [release](https://github.com/Siryu6/OpenRig/releases) and offers
 what to install, over Wi-Fi or Ethernet:
 

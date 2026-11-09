@@ -18,6 +18,7 @@ import { CatalogView } from "pages/catalog_view.slint";
 import { SettingsView } from "pages/settings_view.slint";
 import { Tone3000View } from "pages/tone3000_view.slint";
 import { RoutingView } from "pages/routing_view.slint";
+import { HardwareView } from "pages/hardware_view.slint";
 import { Features } from "features.slint";
 import { RemoteControl } from "remote.slint";
 import { Encoder } from "encoder.slint";
@@ -28,12 +29,19 @@ import { ContextMenuOverlay } from "components/context_menu.slint";
 import { Button, Icon } from "components/controls.slint";
 import { ResourcePanel } from "components/resource_panel.slint";
 import { PowerDialog } from "components/power_dialog.slint";
+import { UpdateDialog } from "components/update_dialog.slint";
 import { NetMidiPrompt } from "components/netmidi_prompt.slint";
 import { PlotEvents } from "components/plot.slint";
 
 // Re-export the data types used by the Rust side
 export { ChoiceSearch, Encoder, Features, RemoteControl, PlotEvents, Rigs, RigFileInfo, RigItem, RigsOnline, OnlineRig, OnlineDep, TextEdit, TextEditing, Theme }
 export { PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, SavedLoopInfo, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot, SystemSetting }
+
+// A control the encoder stops on: its name, its row in a list
+struct EncoderStop {
+    what: string,
+    index: int,
+}
 
 export component App inherits Window {
     title: "OpenRig";
@@ -48,7 +56,8 @@ export component App inherits Window {
 
     // ---------------------------------------------------------------- state
     // 0 = rack, 1 = editor, 2 = browser, 3 = tuner, 4 = presets, 5 = looper, 6 = setlists,
-    // 7 = settings, 8 = TONE3000 library, 9 = live
+    // 7 = settings, 8 = TONE3000 library, 9 = live, 10 = routing, 11 = store,
+    // 12 = hardware (from the settings)
     // (Rust: TUNER_VIEW and LIVE_VIEW in main.rs)
     in-out property <int> current-view: 0;
     in-out property <int> selected-plugin: 0;       // index into positioned-nodes
@@ -82,7 +91,60 @@ export component App inherits Window {
     private property <int> page-slots: root.current-view == 4 ? root.presets.length
         : root.current-view == 9 ? root.live-tiles.length + 3
         : root.current-view == 5 ? 17
-        : root.current-view == 3 ? 2 : 0;
+        : root.current-view == 3 ? 2
+        : root.current-view == 7 ? root.hardware-start + 1
+        : root.current-view == 12 ? root.hw-i2c-start + (Features.gpio ? 1 : 0) + (Features.gpio && root.hardware-i2c ? 3 : 0) : 0;
+    // Settings → Audio & system: the list open (row, -1 none) and the
+    // choice the encoder is on
+    private property <int> system-picker: -1;
+    private property <int> system-picker-index: 0;
+    // Settings: the encoder stops on every control, card by card from the
+    // top; where each card's stops start
+    private property <bool> wifi-open-shown: root.wifi-status == "on" && root.wifi-open-index >= 0
+        && root.wifi-open-index < root.wifi-networks.length && root.wifi-networks[root.wifi-open-index].ssid == root.wifi-open-ssid;
+    private property <int> wifi-lead: root.wifi-status == "on" ? 2 : root.wifi-status == "off" ? 1 : 0;
+    private property <int> system-start: root.wifi-lead + (root.wifi-status == "on" ? root.wifi-networks.length : 0)
+        + (root.wifi-open-shown ? 2 : 0);
+    private property <int> display-start: root.system-start
+        + (root.system-available ? root.system-settings.length + (root.system-changed ? 2 : 0) : 0);
+    private property <int> midi-start: root.display-start + 1;
+    private property <int> netmidi-start: root.midi-start + (root.midi-available ? 2 : 0);
+    private property <int> netmidi-session-start: root.netmidi-start + 3;
+    private property <int> netmidi-device-start: root.netmidi-session-start
+        + (root.netmidi-enabled ? root.netmidi-session-stops.length : 0);
+    private property <int> remote-start: root.netmidi-available ? root.netmidi-device-start + root.netmidi-devices.length
+        : root.netmidi-start;
+    private property <int> remote-lead: RemoteControl.headless ? 0 : 1;
+    private property <int> t3k-start: root.remote-start + (!RemoteControl.available ? 0
+        : root.remote-lead + (RemoteControl.enabled ? (RemoteControl.hotspot != "" ? 3 : 0) + 2 : 0));
+    private property <int> dsp-start: root.t3k-start + (!root.t3k-available ? 0
+        : root.t3k-status == "signed-out" || root.t3k-status == "starting" ? 2
+        : root.t3k-status == "waiting" ? 1
+        : root.t3k-status == "connected" ? (root.t3k-confirm-disconnect ? 2 : 1) : 0);
+    private property <int> hardware-start: root.dsp-start + (root.dsp-max-cores > 1 ? 1 : 0);
+    // The control the encoder is on
+    private property <EncoderStop> settings-stop: root.settings-stop-at(root.page-focus);
+    // Settings: shared by the touch and the encoder, the Wi-Fi network
+    // showing its actions, the keyboards open with their text, and the
+    // TONE3000 disconnection to confirm
+    private property <string> wifi-open-ssid: "";
+    private property <int> wifi-open-index: -1;
+    private property <string> wifi-password-ssid: "";
+    private property <bool> netmidi-renaming: false;
+    private property <string> netmidi-draft: "";
+    private property <bool> t3k-editing-key: false;
+    private property <string> t3k-key-draft: "";
+    private property <bool> t3k-confirm-disconnect: false;
+    // A keyboard of the Settings is open: its text field has the focus
+    private property <bool> settings-typing: root.wifi-password-ssid != "" || root.netmidi-renaming
+        || root.t3k-editing-key || RemoteControl.editing;
+    // Settings → Hardware: where the stops after the footswitches start.
+    // The rotary encoder's own settings (on/off, pins, push button, steps)
+    // are left to the touch: changed with the encoder, they would cut it
+    // off
+    private property <int> hw-tap-start: 1 + (Features.gpio ? root.hardware-footswitch-pins.length : 0);
+    private property <int> hw-i2c-start: root.hw-tap-start + (root.footswitch-count >= 2 ? 1 : 0);
+    private property <EncoderStop> hardware-stop: root.hardware-stop-at(root.page-focus);
     private property <int> browser-selected-index: 0;
 
     // Split chain insertion mode: 0 = main, 1 = top branch, 2 = bottom branch
@@ -244,6 +306,10 @@ export component App inherits Window {
         temperature: -1, latency-ms: -1,
     };
     private property <bool> show-resources: false;
+    // A dialog over the page (the page switcher aside): the encoder's turns
+    // and presses do not reach the page under it, a long press closes it
+    private property <bool> dialog-open: root.show-context-menu || root.show-resources || root.power-dialog
+        || root.update-dialog || root.netmidi-prompt-address != "";
 
     // Wi-Fi (Settings)
     in-out property <string> wifi-status: "unsupported"; // "unsupported" | "no-device" | "off" | "on"
@@ -265,7 +331,8 @@ export component App inherits Window {
     in-out property <image> t3k-qr;
     in-out property <string> t3k-error: "";
 
-    // Updates (see SettingsView)
+    // Updates (⋮ → Updates, see UpdateDialog). update-current is set
+    // without the update feature too: the About dialog shows it
     in-out property <string> update-status: "idle";
     in-out property <string> update-current: "";
     in-out property <string> update-version: "";
@@ -273,8 +340,14 @@ export component App inherits Window {
     in-out property <string> update-size: "";
     in-out property <float> update-progress: 0;
     in-out property <string> update-message: "";
+    in-out property <bool> update-dialog: false;
+    // Dot on ⋮ and on its Updates item: an update to install, or installed
+    // and waiting for a restart
+    private property <bool> update-pending: Features.update
+        && (root.update-status == "ready" || root.update-status == "installed");
 
-    // Routing (view 10, opened from the settings)
+    // Routing (view 10, opened from ⋮; back goes where it was opened)
+    private property <int> routing-return-view: 0;
     in-out property <bool> routing-available: false;
     in-out property <string> routing-summary: "";
     in-out property <int> routing-inputs: 1;
@@ -406,6 +479,9 @@ export component App inherits Window {
     in property <[NetMidiDevice]> netmidi-devices: [];
     in property <bool> netmidi-allow-all: false;
     in property <string> netmidi-message: "";
+    // The session of each encoder stop on the connected ones: two for a
+    // waiting one (Allow, Block), one for an allowed one (Block)
+    in property <[int]> netmidi-session-stops: [];
     // A new device asks to play the pedal (address "": none)
     in property <string> netmidi-prompt-name: "";
     in property <string> netmidi-prompt-address: "";
@@ -426,6 +502,7 @@ export component App inherits Window {
     in property <bool> system-busy: false;
     in property <string> system-message: "";
     callback system-step(string, int);
+    callback system-pick(string, int);              // key, index in its choices
     callback system-apply();
     callback system-revert();
     callback midi-learn-toggled(bool);
@@ -483,6 +560,8 @@ export component App inherits Window {
     callback routing-toggle(int, string);            // "mute" | "solo" | "invert"
     callback power(string);                          // "poweroff" | "reboot" | "restart" (the app)
     callback quit-app();                             // without the OS image: save the session and quit
+    // Items of ⋮ (Rust: menu_ui): tone3000, update, power, update pending
+    pure callback main-menu(bool, bool, bool, bool) -> [MenuItem];
     in-out property <bool> power-dialog: false;
     private property <string> power-action: "";       // set once chosen
 
@@ -688,10 +767,290 @@ export component App inherits Window {
         }
     }
 
+    // The control of Settings at the encoder's stop i (index: its row in a
+    // list); see the starts above
+    pure function settings-stop-at(i: int) -> EncoderStop {
+        if (i < root.wifi-lead) {
+            return { what: root.wifi-lead == 2 && i == 0 ? "wifi-scan" : "wifi-toggle", index: 0 };
+        }
+        if (i < root.system-start) {
+            // The networks, the actions of the one open after it
+            let r = i - root.wifi-lead;
+            let open = root.wifi-open-shown ? root.wifi-open-index : root.wifi-networks.length;
+            if (r <= open) {
+                return { what: "wifi-network", index: r };
+            }
+            if (r <= open + 2) {
+                return { what: r == open + 1 ? "wifi-action" : "wifi-forget", index: open };
+            }
+            return { what: "wifi-network", index: r - 2 };
+        }
+        if (i < root.display-start) {
+            let r = i - root.system-start;
+            let n = root.system-settings.length;
+            return { what: r < n ? "system" : r == n ? "system-cancel" : "system-apply", index: r };
+        }
+        if (i < root.midi-start) {
+            return { what: "display-light", index: 0 };
+        }
+        if (i < root.netmidi-start) {
+            return { what: i == root.midi-start ? "midi-channel" : "midi-clock", index: 0 };
+        }
+        if (i < root.remote-start) {
+            let r = i - root.netmidi-start;
+            if (r < 3) {
+                return { what: r == 0 ? "netmidi-toggle" : r == 1 ? "netmidi-name" : "netmidi-new", index: 0 };
+            }
+            if (i < root.netmidi-device-start) {
+                // Allow and Block of a waiting session, Block of an allowed one
+                let s = i - root.netmidi-session-start;
+                let k = root.netmidi-session-stops[s];
+                let second = s > 0 && root.netmidi-session-stops[s - 1] == k;
+                return {
+                    what: !second && k < root.netmidi-sessions.length && root.netmidi-sessions[k].state == "waiting"
+                        ? "netmidi-allow" : "netmidi-block",
+                    index: k
+                };
+            }
+            return { what: "netmidi-remove", index: i - root.netmidi-device-start };
+        }
+        if (i < root.t3k-start) {
+            let r = i - root.remote-start - root.remote-lead;
+            let hotspot = RemoteControl.hotspot != "" ? 3 : 0;
+            if (r < 0) {
+                return { what: "remote-toggle", index: 0 };
+            }
+            if (r < hotspot) {
+                return { what: "remote-hotspot", index: r };
+            }
+            return { what: r == hotspot ? "remote-password" : "remote-sign-out", index: 0 };
+        }
+        if (i < root.dsp-start) {
+            let r = i - root.t3k-start;
+            return {
+                what: root.t3k-status == "waiting" ? "t3k-cancel"
+                    : root.t3k-status == "connected" ? (root.t3k-confirm-disconnect && r == 0 ? "t3k-keep" : "t3k-disconnect")
+                    : r == 0 ? "t3k-edit" : "t3k-connect",
+                index: 0
+            };
+        }
+        if (i < root.hardware-start) {
+            return { what: "dsp-cores", index: 0 };
+        }
+        return { what: i == root.hardware-start ? "hardware" : "", index: 0 };
+    }
+
+    // Closes the Wi-Fi network showing its actions, the encoder on its row
+    function close-wifi-network() {
+        if (root.wifi-open-shown && root.current-view == 7) {
+            root.page-focus = root.wifi-lead + root.wifi-open-index;
+        }
+        root.wifi-open-ssid = "";
+        root.wifi-open-index = -1;
+    }
+
+    // Encoder press on Settings: does what a tap does. A toggle or a button
+    // acts, a list row opens its list (a press there picks), a stepper or
+    // segments are adjusted by the turns until the next press, a text field
+    // opens its keyboard, a Wi-Fi network its actions
+    function settings-press() {
+        let s = root.settings-stop;
+        if (root.system-picker >= 0) {
+            if (!root.system-busy) {
+                root.system-pick(root.system-settings[root.system-picker].key, root.system-picker-index);
+                root.system-picker = -1;
+            }
+        } else if (root.adjusting) {
+            root.adjusting = false;
+        } else if (s.what == "wifi-scan") {
+            if (!root.wifi-scanning) {
+                root.wifi-refresh(true);
+            }
+        } else if (s.what == "wifi-toggle") {
+            root.wifi-set-enabled(root.wifi-status != "on");
+        } else if (s.what == "wifi-network") {
+            if (root.wifi-busy-ssid == "" && s.index < root.wifi-networks.length) {
+                let net = root.wifi-networks[s.index];
+                if (net.connected || net.saved) {
+                    if (root.wifi-open-shown && root.wifi-open-index == s.index) {
+                        root.close-wifi-network();
+                    } else {
+                        root.wifi-open-ssid = net.ssid;
+                        root.wifi-open-index = s.index;
+                    }
+                } else if (net.secured) {
+                    root.wifi-password-ssid = net.ssid;
+                } else {
+                    root.close-wifi-network();
+                    root.wifi-connect(net.ssid, "");
+                }
+            }
+        } else if (s.what == "wifi-action" || s.what == "wifi-forget") {
+            let net = root.wifi-networks[s.index];
+            root.close-wifi-network();
+            if (s.what == "wifi-forget") {
+                root.wifi-forget(net.ssid);
+            } else if (net.connected) {
+                root.wifi-disconnect();
+            } else {
+                root.wifi-connect(net.ssid, "");
+            }
+        } else if (s.what == "system" || s.what == "system-cancel" || s.what == "system-apply") {
+            if (root.system-busy) {
+                return;
+            }
+            if (s.what == "system-cancel") {
+                root.system-revert();
+            } else if (s.what == "system-apply") {
+                root.system-apply();
+            } else if (root.system-settings[s.index].kind == "list") {
+                root.system-picker-index = max(0, root.system-settings[s.index].selected);
+                root.system-picker = s.index;
+            } else {
+                root.adjusting = true;
+            }
+        } else if (s.what == "display-light") {
+            Theme.light = !Theme.light;
+            root.light-theme-changed(Theme.light);
+        } else if (s.what == "midi-clock") {
+            root.midi-clock-changed(!root.midi-clock);
+        } else if (s.what == "netmidi-toggle") {
+            root.netmidi-set-enabled(!root.netmidi-enabled);
+        } else if (s.what == "netmidi-name") {
+            if (!root.netmidi-busy) {
+                root.netmidi-draft = root.netmidi-name != "" ? root.netmidi-name : root.netmidi-hostname;
+                root.netmidi-renaming = true;
+            }
+        } else if (s.what == "netmidi-allow" || s.what == "netmidi-block") {
+            if (s.index < root.netmidi-sessions.length) {
+                let session = root.netmidi-sessions[s.index];
+                if (s.what == "netmidi-allow") {
+                    root.netmidi-allow(session.name, session.address);
+                } else {
+                    root.netmidi-block(session.name, session.address);
+                }
+            }
+        } else if (s.what == "netmidi-remove") {
+            root.netmidi-forget(root.netmidi-devices[s.index].name, root.netmidi-devices[s.index].address);
+        } else if (s.what == "remote-toggle") {
+            if (RemoteControl.enabled) {
+                RemoteControl.turn-off();
+            } else {
+                RemoteControl.draft = "";
+                RemoteControl.editing = true;
+            }
+        } else if (s.what == "remote-hotspot") {
+            RemoteControl.set-hotspot-mode(s.index == 0 ? "auto" : s.index == 1 ? "on" : "off");
+        } else if (s.what == "remote-password") {
+            RemoteControl.draft = "";
+            RemoteControl.editing = true;
+        } else if (s.what == "remote-sign-out") {
+            RemoteControl.sign-out-all();
+        } else if (s.what == "t3k-edit") {
+            root.t3k-key-draft = root.t3k-client-id;
+            root.t3k-editing-key = true;
+        } else if (s.what == "t3k-connect") {
+            if (root.t3k-status == "signed-out") {
+                root.t3k-connect(root.t3k-client-id);
+            }
+        } else if (s.what == "t3k-cancel") {
+            root.t3k-cancel();
+        } else if (s.what == "t3k-keep") {
+            root.t3k-confirm-disconnect = false;
+        } else if (s.what == "t3k-disconnect") {
+            if (root.t3k-confirm-disconnect) {
+                root.t3k-confirm-disconnect = false;
+                root.page-focus = root.t3k-start;
+                root.t3k-disconnect();
+            } else {
+                // On Cancel, the confirmation one stop further
+                root.t3k-confirm-disconnect = true;
+            }
+        } else if (s.what == "hardware") {
+            root.current-view = 12;
+        } else if (s.what != "") {
+            // Steppers and segments: sample rate, MIDI channel, new
+            // network MIDI devices, DSP cores
+            root.adjusting = true;
+        }
+    }
+
+    // A turn adjusting the control of Settings the encoder is on
+    function settings-adjust(d: int) {
+        let s = root.settings-stop;
+        if (s.what == "system") {
+            if (!root.system-busy) {
+                root.system-step(root.system-settings[s.index].key, d);
+            }
+        } else if (s.what == "midi-channel") {
+            let channel = max(0, min(16, root.midi-channel + d));
+            if (channel != root.midi-channel) {
+                root.midi-channel-changed(channel);
+            }
+        } else if (s.what == "netmidi-new") {
+            if (root.netmidi-allow-all != (d > 0)) {
+                root.netmidi-set-allow-all(d > 0);
+            }
+        } else if (s.what == "dsp-cores") {
+            let cores = max(0, min(root.dsp-max-cores, root.dsp-cores + d));
+            if (cores != root.dsp-cores) {
+                root.dsp-cores = cores;
+                root.dsp-cores-changed(cores);
+            }
+        }
+    }
+
+    // The control of Settings → Hardware at the encoder's stop i (index:
+    // the footswitch); not the encoder's own settings
+    pure function hardware-stop-at(i: int) -> EncoderStop {
+        if (i == 0) {
+            return { what: "footswitches", index: 0 };
+        }
+        if (i < root.hw-tap-start) {
+            return { what: "footswitch", index: i - 1 };
+        }
+        if (i < root.hw-i2c-start) {
+            return { what: "tap", index: 0 };
+        }
+        let r = i - root.hw-i2c-start;
+        return { what: r == 0 ? "i2c" : r == 1 ? "i2c-module" : r == 2 ? "i2c-steps" : "i2c-reverse", index: 0 };
+    }
+
+    // Encoder press on Settings → Hardware: a toggle switches, a stepper is
+    // adjusted by the turns until the next press. A change applies at once
+    function hardware-press() {
+        let s = root.hardware-stop;
+        if (root.adjusting) {
+            root.adjusting = false;
+        } else if (s.what == "tap") {
+            root.tap-switch-changed(!root.tap-switch);
+        } else if (s.what == "i2c") {
+            root.hardware-set-i2c(!root.hardware-i2c);
+        } else if (s.what == "i2c-reverse") {
+            root.hardware-step("i2c-reverse", 0, root.hardware-i2c-reverse ? -1 : 1);
+        } else {
+            root.adjusting = true;
+        }
+    }
+
     function open-pages() {
         root.pages-index = root.current-view == 4 ? 1 : root.current-view == 9 ? 2 : root.current-view == 3 ? 3
             : root.current-view == 5 ? 4 : root.current-view == 7 ? 5 : 0;
         root.pages-open = true;
+    }
+
+    function open-routing() {
+        if (root.current-view != 10) {
+            root.routing-return-view = root.current-view;
+        }
+        root.current-view = 10;
+    }
+
+    // Label of the back button leading to view v
+    function view-name(v: int) -> string {
+        return v == 1 ? root.selected-plugin-name : v == 2 ? "Effects" : v == 3 ? "Tuner"
+            : v == 4 ? "Presets" : v == 5 ? "Looper" : v == 6 ? "Setlists" : v == 7 ? "Settings"
+            : v == 8 ? "TONE3000" : v == 9 ? "Live" : v == 11 ? "Store" : v == 12 ? "Hardware" : "Rack";
     }
 
     function open-page(index: int) {
@@ -712,9 +1071,26 @@ export component App inherits Window {
         root.add-focused = false;
         root.arranging = false;
         root.page-focus = 0;
+        root.system-picker = -1;
+        // What Settings had open goes with it
+        root.wifi-open-ssid = "";
+        root.wifi-open-index = -1;
+        root.wifi-password-ssid = "";
+        root.netmidi-renaming = false;
+        root.t3k-editing-key = false;
+        root.t3k-confirm-disconnect = false;
         // Learning only makes sense in the block editor
         if (root.current-view != 1 && root.midi-learning) {
             root.midi-learn-toggled(false);
+        }
+    }
+
+    // A keyboard of the Settings closed: its text field had the focus and
+    // took it away with it, so turns and presses went nowhere until the
+    // page changed; it goes back to the encoder
+    changed settings-typing => {
+        if (!root.settings-typing) {
+            keys.focus();
         }
     }
 
@@ -730,14 +1106,17 @@ export component App inherits Window {
                 root.current-view == 7 ? "Settings" :
                 root.current-view == 8 ? "TONE3000" :
                 root.current-view == 10 ? "Routing" :
+                root.current-view == 12 ? "Hardware" :
                 root.current-view == 11 ? (root.catalog-open >= 0 ? "Plugin" : "Store") : "Add effect";
             preset-name: root.current-preset-name;
             scene-name: root.live-scene-name;
             tempo: root.tempo;
-            back-label: root.current-view == 10 ? "Settings" : root.current-view == 11 ? (root.catalog-open >= 0 ? "Store" : "Effects") : "Rack";
-            show-back-button: root.current-view == 1 || root.current-view == 2 || root.current-view == 7 || root.current-view == 8 || root.current-view == 10 || root.current-view == 11;
+            back-label: root.current-view == 10 ? root.view-name(root.routing-return-view)
+                : root.current-view == 12 ? "Settings" : root.current-view == 11 ? (root.catalog-open >= 0 ? "Store" : "Effects") : "Rack";
+            show-back-button: root.current-view == 1 || root.current-view == 2 || root.current-view == 7 || root.current-view == 8 || root.current-view == 10 || root.current-view == 11 || root.current-view == 12;
             audio-running: root.audio-running;
             resources: root.resources;
+            menu-badge: root.update-pending;
 
             resources-clicked => {
                 root.show-resources = true;
@@ -746,8 +1125,9 @@ export component App inherits Window {
                 if (root.current-view == 11 && root.catalog-open >= 0) {
                     root.catalog-open = -1;
                 } else {
-                    root.current-view = root.current-view == 8 ? root.t3k-return-view : root.current-view == 10 ? 7
-                        : root.current-view == 11 ? 2 : 0;
+                    root.current-view = root.current-view == 8 ? root.t3k-return-view
+                        : root.current-view == 10 ? root.routing-return-view
+                        : root.current-view == 12 ? 7 : root.current-view == 11 ? 2 : 0;
                 }
             }
             rack-clicked => {
@@ -766,29 +1146,8 @@ export component App inherits Window {
                 root.current-view = 9;
             }
             menu-clicked => {
-                if (Features.tone3000 && Features.power) {
-                    root.context-menu-items = [
-                        { id: "tone3000", label: "TONE3000", icon: "plug", enabled: true },
-                        { id: "settings", label: "Settings", icon: "settings", enabled: true },
-                        { id: "power", label: "Power off", icon: "power", enabled: true },
-                    ];
-                } else if (Features.tone3000) {
-                    root.context-menu-items = [
-                        { id: "tone3000", label: "TONE3000", icon: "plug", enabled: true },
-                        { id: "settings", label: "Settings", icon: "settings", enabled: true },
-                        { id: "quit", label: "Quit OpenRig", icon: "power", enabled: true },
-                    ];
-                } else if (Features.power) {
-                    root.context-menu-items = [
-                        { id: "settings", label: "Settings", icon: "settings", enabled: true },
-                        { id: "power", label: "Power off", icon: "power", enabled: true },
-                    ];
-                } else {
-                    root.context-menu-items = [
-                        { id: "settings", label: "Settings", icon: "settings", enabled: true },
-                        { id: "quit", label: "Quit OpenRig", icon: "power", enabled: true },
-                    ];
-                }
+                root.context-menu-items = root.main-menu(Features.tone3000, Features.update, Features.power,
+                    root.update-pending);
                 root.context-menu-x = root.width - 248px;
                 root.context-menu-y = Theme.top-bar-height + 4px;
                 root.show-context-menu = true;
@@ -1327,6 +1686,7 @@ export component App inherits Window {
 
             if root.current-view == 10: RoutingView {
                 available: root.routing-available;
+                summary: root.routing-summary;
                 inputs: root.routing-inputs;
                 input: root.routing-input;
                 outputs: root.routing-outputs;
@@ -1357,11 +1717,7 @@ export component App inherits Window {
                 }
             }
 
-            if root.current-view == 7: SettingsView {
-                routing-summary: root.routing-summary;
-                open-routing => {
-                    root.current-view = 10;
-                }
+            if root.current-view == 12: HardwareView {
                 footswitch-count: root.footswitch-count;
                 tap-switch: root.tap-switch;
                 tap-switch-changed(on) => {
@@ -1391,6 +1747,15 @@ export component App inherits Window {
                 }
                 hardware-set-encoder-button(on) => {
                     root.hardware-set-encoder-button(on);
+                }
+                encoder-what: root.hardware-stop.what;
+                encoder-index: root.hardware-stop.index;
+                encoder-adjusting: root.adjusting;
+            }
+
+            if root.current-view == 7: SettingsView {
+                open-hardware => {
+                    root.current-view = 12;
                 }
                 midi-available: root.midi-available;
                 midi-devices: root.midi-devices;
@@ -1449,6 +1814,22 @@ export component App inherits Window {
                 system-step(key, delta) => {
                     root.system-step(key, delta);
                 }
+                system-pick(key, index) => {
+                    root.system-pick(key, index);
+                }
+                encoder-what: root.settings-stop.what;
+                encoder-index: root.settings-stop.index;
+                encoder-adjusting: root.adjusting;
+                wifi-open-ssid <=> root.wifi-open-ssid;
+                wifi-open-index <=> root.wifi-open-index;
+                wifi-password-ssid <=> root.wifi-password-ssid;
+                netmidi-renaming <=> root.netmidi-renaming;
+                netmidi-draft <=> root.netmidi-draft;
+                editing-key <=> root.t3k-editing-key;
+                key-draft <=> root.t3k-key-draft;
+                confirm-disconnect <=> root.t3k-confirm-disconnect;
+                system-picker <=> root.system-picker;
+                system-picker-index <=> root.system-picker-index;
                 system-apply => {
                     root.system-apply();
                 }
@@ -1484,22 +1865,6 @@ export component App inherits Window {
                 t3k-url: root.t3k-url;
                 t3k-qr: root.t3k-qr;
                 t3k-error: root.t3k-error;
-                update-status: root.update-status;
-                update-current: root.update-current;
-                update-version: root.update-version;
-                update-kind: root.update-kind;
-                update-size: root.update-size;
-                update-progress: root.update-progress;
-                update-message: root.update-message;
-                update-check => {
-                    root.update-check();
-                }
-                update-install => {
-                    root.update-install();
-                }
-                update-restart => {
-                    root.update-restart();
-                }
 
                 t3k-connect(key) => {
                     root.t3k-connect(key);
@@ -1589,6 +1954,10 @@ export component App inherits Window {
                 root.target-split-index = -1;
             } else if (id == "tone3000") {
                 root.open-tone3000(-1);
+            } else if (id == "routing") {
+                root.open-routing();
+            } else if (id == "updates" || id == "about") {
+                root.update-dialog = true;
             } else if (id == "settings") {
                 root.current-view = 7;
             } else if (id == "power") {
@@ -1685,6 +2054,26 @@ export component App inherits Window {
         }
     }
 
+    UpdateDialog {
+        show <=> root.update-dialog;
+        status: root.update-status;
+        current: root.update-current;
+        version: root.update-version;
+        kind: root.update-kind;
+        size: root.update-size;
+        progress: root.update-progress;
+        message: root.update-message;
+        check => {
+            root.update-check();
+        }
+        install => {
+            root.update-install();
+        }
+        restart => {
+            root.update-restart();
+        }
+    }
+
     ResourcePanel {
         show: root.show-resources;
         status: root.resources;
@@ -1713,6 +2102,8 @@ export component App inherits Window {
                 let d = event.text == Key.LeftArrow || event.text == Key.UpArrow ? -1 : 1;
                 if (root.pages-open) {
                     root.pages-index = max(0, min(root.page-views.length - 1, root.pages-index + d));
+                } else if (root.dialog-open) {
+                    // Not behind it
                 } else if (root.current-view == 1 && root.adjusting && root.arranging) {
                     // Moves the picked parameter, the focus with it
                     root.arrange-parameter(root.selected-instance-id,
@@ -1729,6 +2120,14 @@ export component App inherits Window {
                         root.focused-parameter = floor(stop / 2);
                         root.arrange-stop = mod(stop, 2);
                     }
+                } else if (root.current-view == 7 && root.system-picker >= 0) {
+                    root.system-picker-index = max(0, min(root.system-settings[root.system-picker].choices.length - 1,
+                        root.system-picker-index + d));
+                } else if (root.current-view == 7 && root.adjusting) {
+                    root.settings-adjust(d);
+                } else if (root.current-view == 12 && root.adjusting) {
+                    let s = root.hardware-stop;
+                    root.hardware-step(s.what, s.index, d);
                 } else if (root.adjusting) {
                     root.set-page-value(round(root.page-value() * root.page-scale() + d) / root.page-scale());
                 } else if (root.page-slots > 0) {
@@ -1755,6 +2154,8 @@ export component App inherits Window {
             if (event.text == Key.Return) {
                 if (root.pages-open) {
                     root.open-page(root.pages-index);
+                } else if (root.dialog-open) {
+                    // Not behind it
                 } else if (root.current-view == 0 && root.add-focused) {
                     root.open-browser(0, -1);
                 } else if (root.current-view == 0) {
@@ -1792,6 +2193,10 @@ export component App inherits Window {
                     } else {
                         root.remove-armed = true;
                     }
+                } else if (root.current-view == 7) {
+                    root.settings-press();
+                } else if (root.current-view == 12) {
+                    root.hardware-press();
                 } else if (root.adjusting) {
                     root.adjusting = false;
                 } else if (root.page-slots > 0) {
@@ -1841,6 +2246,8 @@ export component App inherits Window {
                     root.netmidi-later();
                 } else if (root.power-dialog) {
                     root.power-dialog = false;
+                } else if (root.update-dialog) {
+                    root.update-dialog = false;
                 } else if (root.current-view == 1 && root.arranging) {
                     // Drops the picked parameter, else leaves Arrange
                     if (root.adjusting) {
@@ -1853,12 +2260,29 @@ export component App inherits Window {
                     root.set-parameter(root.selected-instance-id,
                         root.selected-parameters[root.focused-parameter].index, root.adjust-from);
                     root.adjusting = false;
+                } else if (root.current-view == 7 && root.system-picker >= 0) {
+                    root.system-picker = -1;
+                } else if ((root.current-view == 7 || root.current-view == 12) && root.adjusting) {
+                    // Audio & system: the steps stay pending, Cancel takes
+                    // them back; elsewhere they are applied as they come
+                    root.adjusting = false;
+                } else if (root.current-view == 7 && root.wifi-open-shown && (root.settings-stop.what == "wifi-action"
+                        || root.settings-stop.what == "wifi-forget"
+                        || (root.settings-stop.what == "wifi-network" && root.settings-stop.index == root.wifi-open-index))) {
+                    // Closes the network's actions
+                    root.close-wifi-network();
+                } else if (root.current-view == 7 && root.t3k-confirm-disconnect
+                        && (root.settings-stop.what == "t3k-keep" || root.settings-stop.what == "t3k-disconnect")) {
+                    root.t3k-confirm-disconnect = false;
+                    root.page-focus = root.t3k-start;
                 } else if (root.adjusting) {
                     root.set-page-value(root.adjust-from);
                     root.adjusting = false;
                 } else if (root.current-view == 8) {
                     root.current-view = root.t3k-return-view;
                 } else if (root.current-view == 10) {
+                    root.current-view = root.routing-return-view;
+                } else if (root.current-view == 12) {
                     root.current-view = 7;
                 } else if (root.current-view == 11) {
                     if (root.catalog-open >= 0) {

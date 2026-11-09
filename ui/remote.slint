@@ -38,11 +38,25 @@ component Line inherits Text {
 }
 
 export component RemoteCard inherits Card {
+    // The control the rotary encoder is on (Settings): "remote-toggle",
+    // "remote-hotspot" (index: auto, on, off), "remote-password",
+    // "remote-sign-out"; the row it is on, at y in the window, to keep in
+    // sight
+    in property <string> encoder-what: "";
+    in property <int> encoder-index: 0;
+    callback reveal(length, length);
+
     VerticalLayout {
         padding: Theme.space-lg;
         spacing: Theme.space-md;
 
         HorizontalLayout {
+            property <bool> focused: root.encoder-what == "remote-toggle";
+            changed focused => {
+                if (self.focused) {
+                    root.reveal(self.absolute-position.y, self.height);
+                }
+            }
             spacing: Theme.space-sm;
             VerticalLayout {
                 alignment: center;
@@ -64,6 +78,7 @@ export component RemoteCard inherits Card {
                 alignment: center;
                 Toggle {
                     checked: RemoteControl.enabled;
+                    focused: root.encoder-what == "remote-toggle";
                     toggled(on) => {
                         if on {
                             RemoteControl.draft = "";
@@ -101,6 +116,12 @@ export component RemoteCard inherits Card {
                     RemoteControl.clients + " devices connected";
             }
             if RemoteControl.hotspot != "": HorizontalLayout {
+                property <bool> focused: root.encoder-what == "remote-hotspot";
+                changed focused => {
+                    if (self.focused) {
+                        root.reveal(self.absolute-position.y, self.height);
+                    }
+                }
                 spacing: Theme.space-sm;
                 Line {
                     horizontal-stretch: 1;
@@ -110,9 +131,10 @@ export component RemoteCard inherits Card {
                         RemoteControl.hotspot == "waiting" ? "starts if no network is joined" :
                         RemoteControl.hotspot) + ". Password: the remote control password.";
                 }
-                for mode in ["auto", "on", "off"]: Button {
+                for mode[i] in ["auto", "on", "off"]: Button {
                     horizontal-stretch: 0;
                     text: mode;
+                    focused: root.encoder-what == "remote-hotspot" && root.encoder-index == i;
                     variant: RemoteControl.hotspot-mode == mode ? "primary" : "ghost";
                     clicked => {
                         RemoteControl.set-hotspot-mode(mode);
@@ -120,11 +142,18 @@ export component RemoteCard inherits Card {
                 }
             }
             HorizontalLayout {
+                property <bool> focused: root.encoder-what == "remote-password" || root.encoder-what == "remote-sign-out";
+                changed focused => {
+                    if (self.focused) {
+                        root.reveal(self.absolute-position.y, self.height);
+                    }
+                }
                 spacing: Theme.space-sm;
                 alignment: start;
                 Button {
                     text: "Change password";
                     icon: "lock";
+                    focused: root.encoder-what == "remote-password";
                     clicked => {
                         RemoteControl.draft = "";
                         RemoteControl.editing = true;
@@ -133,6 +162,7 @@ export component RemoteCard inherits Card {
                 Button {
                     text: "Sign out all devices";
                     variant: "ghost";
+                    focused: root.encoder-what == "remote-sign-out";
                     clicked => {
                         RemoteControl.sign-out-all();
                     }
