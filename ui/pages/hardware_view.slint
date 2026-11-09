@@ -170,6 +170,7 @@ export component HardwareView inherits Rectangle {
                     }
 
                     if Features.gpio: SettingRow {
+                        label: "ROTARY ENCODER";
                         Toggle {
                             checked: root.hardware-encoder;
                             toggled(on) => {
@@ -180,6 +181,7 @@ export component HardwareView inherits Rectangle {
                     if Features.gpio && root.hardware-encoder: VerticalLayout {
                         spacing: Theme.space-sm;
                         SettingRow {
+                            label: "A";
                             label-color: Theme.text-primary;
                             Stepper {
                                 width: 180px;
@@ -193,6 +195,7 @@ export component HardwareView inherits Rectangle {
                             }
                         }
                         SettingRow {
+                            label: "B";
                             label-color: Theme.text-primary;
                             Stepper {
                                 width: 180px;
@@ -206,6 +209,7 @@ export component HardwareView inherits Rectangle {
                             }
                         }
                         SettingRow {
+                            label: "PUSH BUTTON";
                             label-color: Theme.text-primary;
                             Toggle {
                                 checked: root.hardware-encoder-button >= 0;
@@ -225,6 +229,7 @@ export component HardwareView inherits Rectangle {
                             }
                         }
                         SettingRow {
+                            label: "STEPS PER DETENT";
                             label-color: Theme.text-primary;
                             Stepper {
                                 width: 180px;
