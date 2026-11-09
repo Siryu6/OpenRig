@@ -149,7 +149,9 @@ Limits:
   window drawn in memory by the software renderer, at the size the browser
   asks for (800 × 480 to 1920 × 1200; one window for all clients, the last
   resize wins). Nothing is drawn while no client shows the Editor; then at
-  most 20 frames per second, and only the areas that changed: small ones as
+  most about 30 frames per second, and only the areas that changed. After
+  a tap, drag or key, the frame showing its effect is sent as soon as the
+  UI has handled it instead of waiting for the next slot. Small areas go as
   PNG, larger ones as JPEG (quality 80). `PEDALBOARD_REMOTE_FRAMES=png` or
   `jpeg` forces one. A frame is a 14-byte header (format, position, window
   size) and the picture; pointer and key events come back as JSON.
