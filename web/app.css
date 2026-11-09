@@ -108,6 +108,23 @@ button.danger { color: var(--danger); }
   margin-right: 8px;
 }
 .conn.ok { background: var(--accent); }
+.tabs .fullscreen {
+  padding: 4px 10px;
+  margin-left: -4px;
+  display: flex;
+  align-items: center;
+}
+.fullscreen svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.fullscreen .fs-exit, .fullscreen.on .fs-enter { display: none; }
+.fullscreen.on .fs-exit { display: block; }
 
 .view { flex: 1; min-height: 0; overflow: auto; }
 

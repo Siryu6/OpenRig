@@ -147,7 +147,7 @@ function connect() {
 
 // ------------------------------------------------------------ views
 
-for (const b of document.querySelectorAll("#tabs button")) {
+for (const b of document.querySelectorAll("#tabs button[data-view]")) {
   b.addEventListener("click", () => setView(b.dataset.view));
 }
 
@@ -155,7 +155,7 @@ function setView(name) {
   if (name === "editor" && state && !state.editor) name = "live";
   view = name;
   localStorage.setItem("openrig.view", name);
-  for (const b of document.querySelectorAll("#tabs button")) {
+  for (const b of document.querySelectorAll("#tabs button[data-view]")) {
     b.classList.toggle("on", b.dataset.view === name);
   }
   $("view-editor").hidden = name !== "editor";
@@ -164,6 +164,52 @@ function setView(name) {
   if (name === "editor") startStream();
   else send({ type: "stream", on: false });
   if (name === "status") loadStatus();
+}
+
+// ------------------------------------------------------------ full screen
+
+// The page over the whole screen (no address bar): the Fullscreen API,
+// prefixed on older Safari (iPad). iPhone Safari has none: no button.
+const root = document.documentElement;
+const fsButton = $("fullscreen");
+
+function fullscreenElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+function updateFullscreen() {
+  const on = !!fullscreenElement();
+  fsButton.classList.toggle("on", on);
+  fsButton.title = on ? "Leave full screen" : "Full screen";
+  fsButton.setAttribute("aria-label", fsButton.title);
+}
+
+function toggleFullscreen() {
+  let done;
+  if (fullscreenElement()) {
+    done = document.exitFullscreen ? document.exitFullscreen() : document.webkitExitFullscreen();
+  } else if (root.requestFullscreen) {
+    done = root.requestFullscreen({ navigationUI: "hide" });
+  } else {
+    done = root.webkitRequestFullscreen();
+  }
+  // Refused (not from a tap, or blocked): the button stays as it is
+  if (done && done.catch) done.catch(() => {});
+}
+
+{
+  const supported =
+    (document.fullscreenEnabled || document.webkitFullscreenEnabled) &&
+    (root.requestFullscreen || root.webkitRequestFullscreen);
+  // Already full screen when started from the home screen
+  const app = window.matchMedia && window.matchMedia("(display-mode: fullscreen)").matches;
+  if (supported && !app) {
+    fsButton.hidden = false;
+    fsButton.addEventListener("click", toggleFullscreen);
+    document.addEventListener("fullscreenchange", updateFullscreen);
+    document.addEventListener("webkitfullscreenchange", updateFullscreen);
+    updateFullscreen();
+  }
 }
 
 // ------------------------------------------------------------ full editor

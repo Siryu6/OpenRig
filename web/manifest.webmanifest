@@ -2,7 +2,7 @@
   "name": "OpenRig",
   "short_name": "OpenRig",
   "start_url": "/",
-  "display": "standalone",
+  "display": "fullscreen",
   "background_color": "#16181d",
   "theme_color": "#16181d",
   "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
