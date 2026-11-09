@@ -138,11 +138,12 @@ export component App inherits Window {
     // A keyboard of the Settings is open: its text field has the focus
     private property <bool> settings-typing: root.wifi-password-ssid != "" || root.netmidi-renaming
         || root.t3k-editing-key || RemoteControl.editing;
-    // Settings → Hardware: where the stops after the footswitches start
+    // Settings → Hardware: where the stops after the footswitches start.
+    // The rotary encoder's own settings (on/off, pins, push button, steps)
+    // are left to the touch: changed with the encoder, they would cut it
+    // off
     private property <int> hw-tap-start: 1 + (Features.gpio ? root.hardware-footswitch-pins.length : 0);
-    private property <int> hw-encoder-start: root.hw-tap-start + (root.footswitch-count >= 2 ? 1 : 0);
-    private property <int> hw-i2c-start: root.hw-encoder-start + (Features.gpio ? 1 : 0)
-        + (Features.gpio && root.hardware-encoder ? (root.hardware-encoder-button >= 0 ? 5 : 4) : 0);
+    private property <int> hw-i2c-start: root.hw-tap-start + (root.footswitch-count >= 2 ? 1 : 0);
     private property <EncoderStop> hardware-stop: root.hardware-stop-at(root.page-focus);
     private property <int> browser-selected-index: 0;
 
@@ -968,7 +969,7 @@ export component App inherits Window {
     }
 
     // The control of Settings → Hardware at the encoder's stop i (index:
-    // the footswitch)
+    // the footswitch); not the encoder's own settings
     pure function hardware-stop-at(i: int) -> EncoderStop {
         if (i == 0) {
             return { what: "footswitches", index: 0 };
@@ -976,37 +977,21 @@ export component App inherits Window {
         if (i < root.hw-tap-start) {
             return { what: "footswitch", index: i - 1 };
         }
-        if (i < root.hw-encoder-start) {
-            return { what: "tap", index: 0 };
-        }
-        if (i == root.hw-encoder-start) {
-            return { what: "encoder", index: 0 };
-        }
         if (i < root.hw-i2c-start) {
-            let r = i - root.hw-encoder-start - 1;
-            return {
-                what: r == 0 ? "encoder-a" : r == 1 ? "encoder-b" : r == 2 ? "encoder-button-on"
-                    : r == 3 && root.hardware-encoder-button >= 0 ? "encoder-button" : "encoder-steps",
-                index: 0
-            };
+            return { what: "tap", index: 0 };
         }
         let r = i - root.hw-i2c-start;
         return { what: r == 0 ? "i2c" : r == 1 ? "i2c-module" : r == 2 ? "i2c-steps" : "i2c-reverse", index: 0 };
     }
 
     // Encoder press on Settings → Hardware: a toggle switches, a stepper is
-    // adjusted by the turns until the next press. As by touch, a change
-    // applies at once, the encoder's own pins too
+    // adjusted by the turns until the next press. A change applies at once
     function hardware-press() {
         let s = root.hardware-stop;
         if (root.adjusting) {
             root.adjusting = false;
         } else if (s.what == "tap") {
             root.tap-switch-changed(!root.tap-switch);
-        } else if (s.what == "encoder") {
-            root.hardware-set-encoder(!root.hardware-encoder);
-        } else if (s.what == "encoder-button-on") {
-            root.hardware-set-encoder-button(root.hardware-encoder-button < 0);
         } else if (s.what == "i2c") {
             root.hardware-set-i2c(!root.hardware-i2c);
         } else if (s.what == "i2c-reverse") {
