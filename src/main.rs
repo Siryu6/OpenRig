@@ -46,6 +46,7 @@ use tracing::{error, info, warn};
 use pedalboard::audio::{jack_client, AudioEngine, ChainNode, SplitType};
 use pedalboard::midi::MidiTarget;
 use pedalboard::monitor::{self, Level, SystemMonitor};
+use pedalboard::plugins::guard::{GuardBoard, Trip};
 use pedalboard::plugins::scanner;
 use pedalboard::state::param_layout::Layout;
 use pedalboard::state::{AppState, EffectChainState, ModelPack};
@@ -1457,6 +1458,11 @@ fn start_poll_timer(
                 show_chain_error(&app, message);
             }
 
+            // Plugins the guard switched off (too much CPU, invalid output)
+            for (instance_id, trip) in GuardBoard::global().take() {
+                show_switched_off(&app, &state, instance_id, trip);
+            }
+
             // Hide the status message after a while
             let shown = STATUS_SHOWN.with(Cell::get);
             if shown != last_status.get() {
@@ -1476,6 +1482,28 @@ fn start_poll_timer(
         },
     );
     timer
+}
+
+/// A plugin the audio thread switched off (`plugins::guard`): bypassed in
+/// the chain too, so the user sees it and can switch it back on
+fn show_switched_off(app: &App, state: &AppState, instance_id: usize, trip: Trip) {
+    let name = {
+        let chain = state.chain();
+        match chain.find(instance_id) {
+            Some(ChainNode::Plugin { uri, .. }) => block_name(state, &chain, instance_id, uri),
+            // Gone from the chain since
+            _ => return,
+        }
+    };
+    warn!(block = %name, reason = trip.reason(), "Plugin switched off by the guard");
+    // Already bypassed by the user (a tail still playing): nothing to tell
+    if state.set_block_enabled(instance_id, false).unwrap_or(false) {
+        show_bypass(app, instance_id as i32, true);
+        show_status(
+            app,
+            format!("{name} was switched off: {}", trip.reason()).into(),
+        );
+    }
 }
 
 /// After adding an effect: warn when the board was already busy, since the

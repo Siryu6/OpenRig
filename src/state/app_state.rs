@@ -1962,7 +1962,7 @@ impl AppState {
     }
 
     /// Turn a block on or off; returns whether it changed
-    fn set_block_enabled(&self, instance_id: usize, enabled: bool) -> Result<bool> {
+    pub fn set_block_enabled(&self, instance_id: usize, enabled: bool) -> Result<bool> {
         let current = self
             .effect_chain
             .locked()

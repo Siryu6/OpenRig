@@ -904,7 +904,14 @@ impl PluginInstance {
         self.quiet = 0;
     }
 
-    /// Bypass immediately, without crossfade (when building a chain)
+    /// True when bypassed
+    #[cfg(test)]
+    pub fn is_bypassed(&self) -> bool {
+        self.bypassed
+    }
+
+    /// Bypass immediately, without crossfade (when building a chain, or
+    /// when the guard switches the plugin off)
     pub fn set_bypass_immediate(&mut self, bypassed: bool) {
         self.bypassed = bypassed;
         self.wet = if bypassed { 0.0 } else { 1.0 };
