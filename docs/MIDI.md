@@ -19,7 +19,7 @@ HeadRush, a Quad Cortex, a Boss…) works as is.
 | Banks of 128 presets with CC0 | Quad Cortex, Boss GT-1000, Fractal |
 | CC1 / CC2 / CC3 for expression pedals | Helix / HX, Quad Cortex (learnable, not fixed) |
 | CC49–56 footswitches, CC64 tap, CC68 tuner, CC69 scenes, CC71 modes, CC72 presets | Line 6 Helix / HX (also HeadRush) |
-| CC60–63 looper | Line 6 Helix / HX |
+| CC60–63, CC66 looper | Line 6 Helix / HX |
 | MIDI clock (24 ppqn) drives the tempo | MIDI 1.0 specification |
 | CC learn on any parameter, saved with the preset | Helix controller assign, Quad Cortex, Kemper |
 | Omni or channel 1–16 | MIDI 1.0 specification |
@@ -37,6 +37,7 @@ HeadRush, a Quad Cortex, a Boss…) works as is.
 | CC61 | Looper: 0–63 stop, 64–127 play |
 | CC63 | Looper: undo (64–127) |
 | CC64 | Tap tempo (64–127) |
+| CC66 | Looper: 0–63 full speed, 64–127 half speed |
 | CC68 | Tuner on / off |
 | CC69 | Scene: 0–7 scene 1–8, 8 next, 9 previous (scenes in use, wrapping around) |
 | CC71 | Footswitch mode: 0 Stomp, 2 Setlist, 3 Scenes, 4 next, 5 previous (in the Live page order) |
@@ -173,5 +174,5 @@ as usual.
 - MIDI output (sending PC to other gear, MIDI thru), over the network
   too.
 - MIDI routing per block (all MIDI plugins get the same messages).
-- CC62, CC65–67 of the Helix map (looper half speed / reverse, snapshot
+- CC62, CC65 and CC67 of the Helix map (looper play once / reverse, snapshot
   modes), Start / Stop transport.
