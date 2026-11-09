@@ -56,13 +56,7 @@ export component HardwareView inherits Rectangle {
                         VerticalLayout {
                             horizontal-stretch: 1;
                             alignment: center;
-                            spacing: 2px;
-                            Text {
-                                text: "Hardware";
-                                color: Theme.text-primary;
-                                font-size: Theme.font-title;
-                                font-weight: Theme.weight-semibold;
-                            }
+                            // The top bar names the page: only what it is about
                             Text {
                                 text: Features.gpio ? "What is wired to the GPIO header: each input between its GPIO (BCM number) and ground. Changes apply at once."
                                     : "Footswitches played from the keys 1–8 of a keyboard. MIDI footswitches work whatever the number.";
