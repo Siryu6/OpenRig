@@ -27,11 +27,26 @@ export component HardwareView inherits Rectangle {
     callback hardware-step(string, int, int);
     callback hardware-set-encoder(bool);
     callback hardware-set-encoder-button(bool);
+    // The control the rotary encoder is on (see App.hardware-stop-at): the
+    // `what` of hardware-step, or "tap", "encoder", "encoder-button-on",
+    // "i2c"; the footswitch; whether the turns adjust it
+    in property <string> encoder-what: "";
+    in property <int> encoder-index: 0;
+    in property <bool> encoder-adjusting: false;
 
     width: 100%;
     height: 100%;
 
-    Flickable {
+    // Scrolls the page so that a row (y in the page, height h) is in sight
+    function reveal(y: length, h: length) {
+        if (y < -list.content-y) {
+            list.content-y = -y + Theme.space-md;
+        } else if (y + h > list.height - list.content-y) {
+            list.content-y = list.height - y - h - Theme.space-md;
+        }
+    }
+
+    list := Flickable {
         content-height: content.preferred-height;
 
         content := VerticalLayout {
@@ -68,10 +83,18 @@ export component HardwareView inherits Rectangle {
                     }
 
                     SettingRow {
+                        property <bool> focused: root.encoder-what == "footswitches";
+                        changed focused => {
+                            if (self.focused) {
+                                root.reveal(self.absolute-position.y - list.absolute-position.y - list.content-y, self.height);
+                            }
+                        }
                         label: "FOOTSWITCHES";
                         Stepper {
                             width: 180px;
                             text: root.footswitch-count == 0 ? "None" : root.footswitch-count;
+                            focused: root.encoder-what == "footswitches";
+                            adjusting: root.encoder-adjusting;
                             can-decrement: root.footswitch-count > 0;
                             can-increment: root.footswitch-count < 8;
                             decrement => {
@@ -87,6 +110,12 @@ export component HardwareView inherits Rectangle {
                     if Features.gpio: VerticalLayout {
                         spacing: Theme.space-sm;
                         for pin[i] in root.hardware-footswitch-pins: SettingRow {
+                            property <bool> focused: root.encoder-what == "footswitch" && root.encoder-index == i;
+                            changed focused => {
+                                if (self.focused) {
+                                    root.reveal(self.absolute-position.y - list.absolute-position.y - list.content-y, self.height);
+                                }
+                            }
                             label: "FS " + (i + 1);
                             label-color: Theme.text-primary;
                             VerticalLayout {
@@ -104,6 +133,8 @@ export component HardwareView inherits Rectangle {
                             Stepper {
                                 width: 180px;
                                 text: "GPIO " + pin;
+                                focused: root.encoder-what == "footswitch" && root.encoder-index == i;
+                                adjusting: root.encoder-adjusting;
                                 decrement => {
                                     root.hardware-step("footswitch", i, -1);
                                 }
@@ -115,9 +146,16 @@ export component HardwareView inherits Rectangle {
                     }
 
                     if root.footswitch-count >= 2: SettingRow {
+                        property <bool> focused: root.encoder-what == "tap";
+                        changed focused => {
+                            if (self.focused) {
+                                root.reveal(self.absolute-position.y - list.absolute-position.y - list.content-y, self.height);
+                            }
+                        }
                         label: "TAP TEMPO ON FS " + root.footswitch-count;
                         Toggle {
                             checked: root.tap-switch;
+                            focused: root.encoder-what == "tap";
                             toggled(on) => {
                                 root.tap-switch-changed(on);
                             }
@@ -131,9 +169,16 @@ export component HardwareView inherits Rectangle {
                     }
 
                     if Features.gpio: SettingRow {
+                        property <bool> focused: root.encoder-what == "encoder";
+                        changed focused => {
+                            if (self.focused) {
+                                root.reveal(self.absolute-position.y - list.absolute-position.y - list.content-y, self.height);
+                            }
+                        }
                         label: "ROTARY ENCODER";
                         Toggle {
                             checked: root.hardware-encoder;
+                            focused: root.encoder-what == "encoder";
                             toggled(on) => {
                                 root.hardware-set-encoder(on);
                             }
@@ -142,11 +187,19 @@ export component HardwareView inherits Rectangle {
                     if Features.gpio && root.hardware-encoder: VerticalLayout {
                         spacing: Theme.space-sm;
                         SettingRow {
+                            property <bool> focused: root.encoder-what == "encoder-a";
+                            changed focused => {
+                                if (self.focused) {
+                                    root.reveal(self.absolute-position.y - list.absolute-position.y - list.content-y, self.height);
+                                }
+                            }
                             label: "A";
                             label-color: Theme.text-primary;
                             Stepper {
                                 width: 180px;
                                 text: "GPIO " + root.hardware-encoder-a;
+                                focused: root.encoder-what == "encoder-a";
+                                adjusting: root.encoder-adjusting;
                                 decrement => {
                                     root.hardware-step("encoder-a", 0, -1);
                                 }
@@ -156,11 +209,19 @@ export component HardwareView inherits Rectangle {
                             }
                         }
                         SettingRow {
+                            property <bool> focused: root.encoder-what == "encoder-b";
+                            changed focused => {
+                                if (self.focused) {
+                                    root.reveal(self.absolute-position.y - list.absolute-position.y - list.content-y, self.height);
+                                }
+                            }
                             label: "B";
                             label-color: Theme.text-primary;
                             Stepper {
                                 width: 180px;
                                 text: "GPIO " + root.hardware-encoder-b;
+                                focused: root.encoder-what == "encoder-b";
+                                adjusting: root.encoder-adjusting;
                                 decrement => {
                                     root.hardware-step("encoder-b", 0, -1);
                                 }
@@ -170,10 +231,17 @@ export component HardwareView inherits Rectangle {
                             }
                         }
                         SettingRow {
+                            property <bool> focused: root.encoder-what == "encoder-button-on" || root.encoder-what == "encoder-button";
+                            changed focused => {
+                                if (self.focused) {
+                                    root.reveal(self.absolute-position.y - list.absolute-position.y - list.content-y, self.height);
+                                }
+                            }
                             label: "PUSH BUTTON";
                             label-color: Theme.text-primary;
                             Toggle {
                                 checked: root.hardware-encoder-button >= 0;
+                                focused: root.encoder-what == "encoder-button-on";
                                 toggled(on) => {
                                     root.hardware-set-encoder-button(on);
                                 }
@@ -181,6 +249,8 @@ export component HardwareView inherits Rectangle {
                             if root.hardware-encoder-button >= 0: Stepper {
                                 width: 180px;
                                 text: "GPIO " + root.hardware-encoder-button;
+                                focused: root.encoder-what == "encoder-button";
+                                adjusting: root.encoder-adjusting;
                                 decrement => {
                                     root.hardware-step("encoder-button", 0, -1);
                                 }
@@ -190,11 +260,19 @@ export component HardwareView inherits Rectangle {
                             }
                         }
                         SettingRow {
+                            property <bool> focused: root.encoder-what == "encoder-steps";
+                            changed focused => {
+                                if (self.focused) {
+                                    root.reveal(self.absolute-position.y - list.absolute-position.y - list.content-y, self.height);
+                                }
+                            }
                             label: "STEPS PER DETENT";
                             label-color: Theme.text-primary;
                             Stepper {
                                 width: 180px;
                                 text: root.hardware-encoder-steps;
+                                focused: root.encoder-what == "encoder-steps";
+                                adjusting: root.encoder-adjusting;
                                 can-decrement: root.hardware-encoder-steps > 1;
                                 can-increment: root.hardware-encoder-steps < 4;
                                 decrement => {
@@ -214,9 +292,16 @@ export component HardwareView inherits Rectangle {
                     }
 
                     if Features.gpio: SettingRow {
+                        property <bool> focused: root.encoder-what == "i2c";
+                        changed focused => {
+                            if (self.focused) {
+                                root.reveal(self.absolute-position.y - list.absolute-position.y - list.content-y, self.height);
+                            }
+                        }
                         label: "EXTERNAL ENCODERS (I2C)";
                         Toggle {
                             checked: root.hardware-i2c;
+                            focused: root.encoder-what == "i2c";
                             toggled(on) => {
                                 root.hardware-set-i2c(on);
                             }
@@ -225,11 +310,19 @@ export component HardwareView inherits Rectangle {
                     if Features.gpio && root.hardware-i2c: VerticalLayout {
                         spacing: Theme.space-sm;
                         SettingRow {
+                            property <bool> focused: root.encoder-what == "i2c-module";
+                            changed focused => {
+                                if (self.focused) {
+                                    root.reveal(self.absolute-position.y - list.absolute-position.y - list.content-y, self.height);
+                                }
+                            }
                             label: "BOARD";
                             label-color: Theme.text-primary;
                             Stepper {
                                 width: 220px;
                                 text: root.hardware-i2c-module;
+                                focused: root.encoder-what == "i2c-module";
+                                adjusting: root.encoder-adjusting;
                                 decrement => {
                                     root.hardware-step("i2c-module", 0, -1);
                                 }
@@ -239,11 +332,19 @@ export component HardwareView inherits Rectangle {
                             }
                         }
                         SettingRow {
+                            property <bool> focused: root.encoder-what == "i2c-steps";
+                            changed focused => {
+                                if (self.focused) {
+                                    root.reveal(self.absolute-position.y - list.absolute-position.y - list.content-y, self.height);
+                                }
+                            }
                             label: "STEPS PER DETENT";
                             label-color: Theme.text-primary;
                             Stepper {
                                 width: 180px;
                                 text: root.hardware-i2c-steps;
+                                focused: root.encoder-what == "i2c-steps";
+                                adjusting: root.encoder-adjusting;
                                 can-decrement: root.hardware-i2c-steps > 1;
                                 can-increment: root.hardware-i2c-steps < 4;
                                 decrement => {
@@ -255,10 +356,17 @@ export component HardwareView inherits Rectangle {
                             }
                         }
                         SettingRow {
+                            property <bool> focused: root.encoder-what == "i2c-reverse";
+                            changed focused => {
+                                if (self.focused) {
+                                    root.reveal(self.absolute-position.y - list.absolute-position.y - list.content-y, self.height);
+                                }
+                            }
                             label: "REVERSE";
                             label-color: Theme.text-primary;
                             Toggle {
                                 checked: root.hardware-i2c-reverse;
+                                focused: root.encoder-what == "i2c-reverse";
                                 toggled(on) => {
                                     root.hardware-step("i2c-reverse", 0, on ? 1 : -1);
                                 }

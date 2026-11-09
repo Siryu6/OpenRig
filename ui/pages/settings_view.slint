@@ -107,11 +107,8 @@ export component SettingsView inherits Rectangle {
     callback system-pick(string, int);              // key, index in its choices
     callback system-apply();
     callback system-revert();
-    // Encoder on Audio & system: its rows, then Cancel and Apply (when
-    // changed); the row it adjusts, and the list open (row index, -1 none)
-    // with the choice it is on
-    in property <int> system-focus: -1;
-    in property <bool> system-adjusting: false;
+    // The list of an Audio & system row open (row index, -1 none) with the
+    // choice the encoder is on
     in-out property <int> system-picker: -1;
     in-out property <int> system-picker-index: 0;
 
@@ -129,15 +126,21 @@ export component SettingsView inherits Rectangle {
     callback t3k-cancel();
     callback t3k-disconnect();
 
+    // The control the rotary encoder is on (see App.settings-stop-at): its
+    // name, its row in a list, and whether the turns adjust it
+    in property <string> encoder-what: "";
+    in property <int> encoder-index: 0;
+    in property <bool> encoder-adjusting: false;
 
-
-    private property <bool> editing-key: false;
-    private property <string> key-draft: "";
-    private property <bool> confirm-disconnect: false;
-    private property <string> wifi-open-ssid: "";    // row showing its actions
-    private property <bool> netmidi-renaming: false;
-    private property <string> netmidi-draft: "";
-    private property <string> wifi-password-ssid: "";
+    // Opened by a tap or by the encoder
+    in-out property <bool> editing-key: false;
+    in-out property <string> key-draft: "";
+    in-out property <bool> confirm-disconnect: false;
+    in-out property <string> wifi-open-ssid: "";     // row showing its actions
+    in-out property <int> wifi-open-index: -1;       // its index
+    in-out property <bool> netmidi-renaming: false;
+    in-out property <string> netmidi-draft: "";
+    in-out property <string> wifi-password-ssid: "";
     private property <string> wifi-password: "";
 
     init => {
@@ -154,6 +157,11 @@ export component SettingsView inherits Rectangle {
         } else if (y + h > settings-list.height - settings-list.content-y) {
             settings-list.content-y = settings-list.height - y - h - Theme.space-md;
         }
+    }
+
+    // The same for a row at y in the window: the encoder's, kept in sight
+    function reveal-at(y: length, h: length) {
+        root.reveal(y - settings-list.absolute-position.y - settings-list.content-y, h);
     }
 
     settings-list := Flickable {
@@ -175,6 +183,12 @@ export component SettingsView inherits Rectangle {
                     spacing: Theme.space-md;
 
                     HorizontalLayout {
+                        property <bool> focused: root.encoder-what == "wifi-scan" || root.encoder-what == "wifi-toggle";
+                        changed focused => {
+                            if (self.focused) {
+                                root.reveal-at(self.absolute-position.y, self.height);
+                            }
+                        }
                         spacing: Theme.space-sm;
                         VerticalLayout {
                             alignment: center;
@@ -197,6 +211,7 @@ export component SettingsView inherits Rectangle {
                             text: root.wifi-scanning ? "Scanning…" : "Scan";
                             variant: "ghost";
                             enabled: !root.wifi-scanning;
+                            focused: root.encoder-what == "wifi-scan";
                             clicked => {
                                 root.wifi-refresh(true);
                             }
@@ -205,6 +220,7 @@ export component SettingsView inherits Rectangle {
                             alignment: center;
                             Toggle {
                                 checked: root.wifi-status == "on";
+                                focused: root.encoder-what == "wifi-toggle";
                                 toggled(on) => {
                                     root.wifi-set-enabled(on);
                                 }
@@ -255,9 +271,17 @@ export component SettingsView inherits Rectangle {
 
                     if root.wifi-status == "on": VerticalLayout {
                         spacing: 4px;
-                        for net in root.wifi-networks: Rectangle {
+                        for net[i] in root.wifi-networks: Rectangle {
                             private property <bool> busy: root.wifi-busy-ssid == net.ssid;
-                            private property <bool> open: root.wifi-open-ssid == net.ssid;
+                            private property <bool> open: root.wifi-open-ssid == net.ssid && root.wifi-open-index == i;
+                            // The row or its actions
+                            property <bool> focused: (root.encoder-what == "wifi-network" || root.encoder-what == "wifi-action"
+                                || root.encoder-what == "wifi-forget") && root.encoder-index == i;
+                            changed focused => {
+                                if (self.focused) {
+                                    root.reveal-at(self.absolute-position.y, self.height);
+                                }
+                            }
                             height: Theme.touch-target + 8px;
                             border-radius: Theme.radius-md;
                             background: row-ta.pressed ? Theme.surface-hover : net.connected ? Theme.accent-soft : Theme.surface-raised;
@@ -269,6 +293,7 @@ export component SettingsView inherits Rectangle {
                                 clicked => {
                                     if (net.connected || net.saved) {
                                         root.wifi-open-ssid = open ? "" : net.ssid;
+                                        root.wifi-open-index = open ? -1 : i;
                                     } else if (net.secured) {
                                         root.wifi-password = "";
                                         root.wifi-password-ssid = net.ssid;
@@ -278,6 +303,8 @@ export component SettingsView inherits Rectangle {
                                     }
                                 }
                             }
+
+                            if root.encoder-what == "wifi-network" && root.encoder-index == i: FocusRing { }
 
                             HorizontalLayout {
                                 padding-left: Theme.space-md;
@@ -318,6 +345,7 @@ export component SettingsView inherits Rectangle {
                                     Button {
                                         text: "Connect";
                                         variant: "primary";
+                                        focused: root.encoder-what == "wifi-action" && root.encoder-index == i;
                                         clicked => {
                                             root.wifi-open-ssid = "";
                                             root.wifi-connect(net.ssid, "");
@@ -328,6 +356,7 @@ export component SettingsView inherits Rectangle {
                                     alignment: center;
                                     Button {
                                         text: "Disconnect";
+                                        focused: root.encoder-what == "wifi-action" && root.encoder-index == i;
                                         clicked => {
                                             root.wifi-open-ssid = "";
                                             root.wifi-disconnect();
@@ -339,6 +368,7 @@ export component SettingsView inherits Rectangle {
                                     Button {
                                         text: "Forget";
                                         variant: "danger";
+                                        focused: root.encoder-what == "wifi-forget" && root.encoder-index == i;
                                         clicked => {
                                             root.wifi-open-ssid = "";
                                             root.wifi-forget(net.ssid);
@@ -395,7 +425,7 @@ export component SettingsView inherits Rectangle {
                     for setting[i] in root.system-settings: SettingRow {
                         label: setting.label;
                         // Keeps the encoder's row in sight
-                        property <bool> focused: i == root.system-focus;
+                        property <bool> focused: root.encoder-what == "system" && root.encoder-index == i;
                         changed focused => {
                             if (self.focused) {
                                 root.reveal(self.absolute-position.y - settings-list.absolute-position.y - settings-list.content-y, self.height);
@@ -438,14 +468,14 @@ export component SettingsView inherits Rectangle {
                                     root.system-picker = i;
                                 }
                             }
-                            if i == root.system-focus: FocusRing { }
+                            if root.encoder-what == "system" && root.encoder-index == i: FocusRing { }
                         }
                         if setting.kind == "segmented": Segmented {
                             width: 220px;
                             options: setting.choices;
                             current-index: setting.selected;
-                            focused: i == root.system-focus;
-                            adjusting: root.system-adjusting;
+                            focused: root.encoder-what == "system" && root.encoder-index == i;
+                            adjusting: root.encoder-adjusting;
                             activated(k) => {
                                 if (!root.system-busy) {
                                     root.system-pick(setting.key, k);
@@ -455,8 +485,8 @@ export component SettingsView inherits Rectangle {
                         if setting.kind == "stepper": Stepper {
                             width: 220px;
                             text: setting.value;
-                            focused: i == root.system-focus;
-                            adjusting: root.system-adjusting;
+                            focused: root.encoder-what == "system" && root.encoder-index == i;
+                            adjusting: root.encoder-adjusting;
                             can-decrement: setting.can-decrement && !root.system-busy;
                             can-increment: setting.can-increment && !root.system-busy;
                             decrement => {
@@ -476,12 +506,18 @@ export component SettingsView inherits Rectangle {
                     }
 
                     if root.system-changed: HorizontalLayout {
+                        property <bool> focused: root.encoder-what == "system-cancel" || root.encoder-what == "system-apply";
+                        changed focused => {
+                            if (self.focused) {
+                                root.reveal-at(self.absolute-position.y, self.height);
+                            }
+                        }
                         spacing: Theme.space-md;
                         alignment: end;
                         Button {
                             width: 140px;
                             text: "Cancel";
-                            focused: root.system-focus == root.system-settings.length;
+                            focused: root.encoder-what == "system-cancel";
                             enabled: !root.system-busy;
                             clicked => {
                                 root.system-revert();
@@ -491,7 +527,7 @@ export component SettingsView inherits Rectangle {
                             width: 140px;
                             text: "Apply";
                             variant: "primary";
-                            focused: root.system-focus == root.system-settings.length + 1;
+                            focused: root.encoder-what == "system-apply";
                             enabled: !root.system-busy;
                             clicked => {
                                 root.system-apply();
@@ -536,6 +572,12 @@ export component SettingsView inherits Rectangle {
                     }
 
                     HorizontalLayout {
+                        property <bool> focused: root.encoder-what == "display-light";
+                        changed focused => {
+                            if (self.focused) {
+                                root.reveal-at(self.absolute-position.y, self.height);
+                            }
+                        }
                         spacing: Theme.space-md;
                         VerticalLayout {
                             alignment: center;
@@ -550,6 +592,7 @@ export component SettingsView inherits Rectangle {
                         }
                         Toggle {
                             checked: Theme.light;
+                            focused: root.encoder-what == "display-light";
                             toggled(on) => {
                                 Theme.light = on;
                                 root.light-theme-changed(on);
@@ -607,6 +650,12 @@ export component SettingsView inherits Rectangle {
                     }
 
                     if root.midi-available: HorizontalLayout {
+                        property <bool> focused: root.encoder-what == "midi-channel";
+                        changed focused => {
+                            if (self.focused) {
+                                root.reveal-at(self.absolute-position.y, self.height);
+                            }
+                        }
                         spacing: Theme.space-md;
                         VerticalLayout {
                             alignment: center;
@@ -622,6 +671,8 @@ export component SettingsView inherits Rectangle {
                         Stepper {
                             width: 180px;
                             text: root.midi-channel == 0 ? "Omni" : "Ch " + root.midi-channel;
+                            focused: root.encoder-what == "midi-channel";
+                            adjusting: root.encoder-adjusting;
                             can-decrement: root.midi-channel > 0;
                             can-increment: root.midi-channel < 16;
                             decrement => {
@@ -634,6 +685,12 @@ export component SettingsView inherits Rectangle {
                     }
 
                     if root.midi-available: HorizontalLayout {
+                        property <bool> focused: root.encoder-what == "midi-clock";
+                        changed focused => {
+                            if (self.focused) {
+                                root.reveal-at(self.absolute-position.y, self.height);
+                            }
+                        }
                         spacing: Theme.space-md;
                         VerticalLayout {
                             alignment: center;
@@ -648,6 +705,7 @@ export component SettingsView inherits Rectangle {
                         }
                         Toggle {
                             checked: root.midi-clock;
+                            focused: root.encoder-what == "midi-clock";
                             toggled(on) => {
                                 root.midi-clock-changed(on);
                             }
@@ -670,6 +728,12 @@ export component SettingsView inherits Rectangle {
                     spacing: Theme.space-md;
 
                     HorizontalLayout {
+                        property <bool> focused: root.encoder-what == "netmidi-toggle";
+                        changed focused => {
+                            if (self.focused) {
+                                root.reveal-at(self.absolute-position.y, self.height);
+                            }
+                        }
                         spacing: Theme.space-md;
                         VerticalLayout {
                             alignment: center;
@@ -702,6 +766,7 @@ export component SettingsView inherits Rectangle {
                             alignment: center;
                             Toggle {
                                 checked: root.netmidi-enabled;
+                                focused: root.encoder-what == "netmidi-toggle";
                                 toggled(on) => {
                                     root.netmidi-set-enabled(on);
                                 }
@@ -710,6 +775,12 @@ export component SettingsView inherits Rectangle {
                     }
 
                     if root.netmidi-available: HorizontalLayout {
+                        property <bool> focused: root.encoder-what == "netmidi-name";
+                        changed focused => {
+                            if (self.focused) {
+                                root.reveal-at(self.absolute-position.y, self.height);
+                            }
+                        }
                         spacing: Theme.space-md;
                         VerticalLayout {
                             alignment: center;
@@ -726,6 +797,7 @@ export component SettingsView inherits Rectangle {
                             width: 240px;
                             text: root.netmidi-name != "" ? root.netmidi-name : root.netmidi-hostname;
                             enabled: !root.netmidi-busy;
+                            focused: root.encoder-what == "netmidi-name";
                             clicked => {
                                 root.netmidi-draft = root.netmidi-name != "" ? root.netmidi-name : root.netmidi-hostname;
                                 root.netmidi-renaming = true;
@@ -734,6 +806,12 @@ export component SettingsView inherits Rectangle {
                     }
 
                     if root.netmidi-available: VerticalLayout {
+                        property <bool> focused: root.encoder-what == "netmidi-new";
+                        changed focused => {
+                            if (self.focused) {
+                                root.reveal-at(self.absolute-position.y, self.height);
+                            }
+                        }
                         spacing: Theme.space-sm;
                         Text {
                             text: "NEW DEVICES";
@@ -745,6 +823,8 @@ export component SettingsView inherits Rectangle {
                         Segmented {
                             options: ["Ask for new devices", "Allow anyone on the network"];
                             current-index: root.netmidi-allow-all ? 1 : 0;
+                            focused: root.encoder-what == "netmidi-new";
+                            adjusting: root.encoder-adjusting;
                             activated(i) => {
                                 root.netmidi-set-allow-all(i == 1);
                             }
@@ -759,7 +839,14 @@ export component SettingsView inherits Rectangle {
                             font-size: root.netmidi-sessions.length == 0 ? Theme.font-small : Theme.font-caption;
                             font-weight: root.netmidi-sessions.length == 0 ? Theme.weight-medium : Theme.weight-bold;
                         }
-                        for session in root.netmidi-sessions: Rectangle {
+                        for session[k] in root.netmidi-sessions: Rectangle {
+                            property <bool> focused: (root.encoder-what == "netmidi-allow" || root.encoder-what == "netmidi-block") && root.encoder-index == k;
+                            changed focused => {
+                                if (self.focused) {
+                                    root.reveal-at(self.absolute-position.y, self.height);
+                                }
+                            }
+
                             height: Theme.touch-target + 8px;
                             border-radius: Theme.radius-md;
                             background: session.state == "allowed" ? Theme.accent-soft : Theme.surface-raised;
@@ -792,6 +879,7 @@ export component SettingsView inherits Rectangle {
                                     Button {
                                         text: "Allow";
                                         variant: "primary";
+                                        focused: root.encoder-what == "netmidi-allow" && root.encoder-index == k;
                                         clicked => {
                                             root.netmidi-allow(session.name, session.address);
                                         }
@@ -802,6 +890,7 @@ export component SettingsView inherits Rectangle {
                                     Button {
                                         text: "Block";
                                         variant: "danger";
+                                        focused: root.encoder-what == "netmidi-block" && root.encoder-index == k;
                                         clicked => {
                                             root.netmidi-block(session.name, session.address);
                                         }
@@ -820,7 +909,14 @@ export component SettingsView inherits Rectangle {
                             font-weight: Theme.weight-bold;
                             letter-spacing: 0.8px;
                         }
-                        for device in root.netmidi-devices: HorizontalLayout {
+                        for device[k] in root.netmidi-devices: HorizontalLayout {
+                            property <bool> focused: root.encoder-what == "netmidi-remove" && root.encoder-index == k;
+                            changed focused => {
+                                if (self.focused) {
+                                    root.reveal-at(self.absolute-position.y, self.height);
+                                }
+                            }
+
                             spacing: Theme.space-md;
                             VerticalLayout {
                                 horizontal-stretch: 1;
@@ -840,6 +936,7 @@ export component SettingsView inherits Rectangle {
                             Button {
                                 text: "Remove";
                                 variant: "ghost";
+                                focused: root.encoder-what == "netmidi-remove" && root.encoder-index == k;
                                 clicked => {
                                     root.netmidi-forget(device.name, device.address);
                                 }
@@ -864,7 +961,13 @@ export component SettingsView inherits Rectangle {
             }
 
             // ---------------------------------------------------- Remote control
-            if RemoteControl.available: RemoteCard { }
+            if RemoteControl.available: RemoteCard {
+                encoder-what: root.encoder-what;
+                encoder-index: root.encoder-index;
+                reveal(y, h) => {
+                    root.reveal-at(y, h);
+                }
+            }
 
             // ---------------------------------------------- TONE3000 Connect
             Card {
@@ -921,6 +1024,12 @@ export component SettingsView inherits Rectangle {
                             wrap: word-wrap;
                         }
                         HorizontalLayout {
+                            property <bool> focused: root.encoder-what == "t3k-edit" || root.encoder-what == "t3k-connect";
+                            changed focused => {
+                                if (self.focused) {
+                                    root.reveal-at(self.absolute-position.y, self.height);
+                                }
+                            }
                             spacing: Theme.space-md;
                             Rectangle {
                                 horizontal-stretch: 1;
@@ -954,6 +1063,7 @@ export component SettingsView inherits Rectangle {
                                 icon: "edit";
                                 horizontal-stretch: 0;
                                 text: "Edit";
+                                focused: root.encoder-what == "t3k-edit";
                                 clicked => {
                                     root.key-draft = root.t3k-client-id;
                                     root.editing-key = true;
@@ -964,6 +1074,7 @@ export component SettingsView inherits Rectangle {
                                 horizontal-stretch: 0;
                                 variant: "primary";
                                 enabled: root.t3k-status == "signed-out";
+                                focused: root.encoder-what == "t3k-connect";
                                 clicked => {
                                     root.t3k-connect(root.t3k-client-id);
                                 }
@@ -1020,6 +1131,12 @@ export component SettingsView inherits Rectangle {
                                 letter-spacing: 3px;
                             }
                             HorizontalLayout {
+                                property <bool> focused: root.encoder-what == "t3k-cancel";
+                                changed focused => {
+                                    if (self.focused) {
+                                        root.reveal-at(self.absolute-position.y, self.height);
+                                    }
+                                }
                                 spacing: Theme.space-md;
                                 Text {
                                     horizontal-stretch: 1;
@@ -1031,6 +1148,7 @@ export component SettingsView inherits Rectangle {
                                 Button {
                                     text: "Cancel";
                                     variant: "ghost";
+                                    focused: root.encoder-what == "t3k-cancel";
                                     clicked => {
                                         root.t3k-cancel();
                                     }
@@ -1041,6 +1159,12 @@ export component SettingsView inherits Rectangle {
 
                     // --- Connected
                     if root.t3k-available && root.t3k-status == "connected": HorizontalLayout {
+                        property <bool> focused: root.encoder-what == "t3k-keep" || root.encoder-what == "t3k-disconnect";
+                        changed focused => {
+                            if (self.focused) {
+                                root.reveal-at(self.absolute-position.y, self.height);
+                            }
+                        }
                         spacing: Theme.space-md;
                         VerticalLayout {
                             horizontal-stretch: 1;
@@ -1061,12 +1185,14 @@ export component SettingsView inherits Rectangle {
                         if !root.confirm-disconnect: Button {
                             text: "Disconnect";
                             variant: "danger";
+                            focused: root.encoder-what == "t3k-disconnect";
                             clicked => {
                                 root.confirm-disconnect = true;
                             }
                         }
                         if root.confirm-disconnect: Button {
                             text: "Cancel";
+                            focused: root.encoder-what == "t3k-keep";
                             clicked => {
                                 root.confirm-disconnect = false;
                             }
@@ -1074,6 +1200,7 @@ export component SettingsView inherits Rectangle {
                         if root.confirm-disconnect: Button {
                             text: "Disconnect";
                             variant: "solid-danger";
+                            focused: root.encoder-what == "t3k-disconnect";
                             clicked => {
                                 root.confirm-disconnect = false;
                                 root.t3k-disconnect();
@@ -1146,6 +1273,12 @@ export component SettingsView inherits Rectangle {
                     }
 
                     HorizontalLayout {
+                        property <bool> focused: root.encoder-what == "dsp-cores";
+                        changed focused => {
+                            if (self.focused) {
+                                root.reveal-at(self.absolute-position.y, self.height);
+                            }
+                        }
                         spacing: Theme.space-md;
                         VerticalLayout {
                             alignment: center;
@@ -1162,6 +1295,8 @@ export component SettingsView inherits Rectangle {
                             width: 180px;
                             text: root.dsp-cores == 0 ? "Auto (" + root.dsp-max-cores + ")"
                                 : root.dsp-cores == 1 ? "1 core" : root.dsp-cores + " cores";
+                            focused: root.encoder-what == "dsp-cores";
+                            adjusting: root.encoder-adjusting;
                             can-decrement: root.dsp-cores > 0;
                             can-increment: root.dsp-cores < root.dsp-max-cores;
                             decrement => {
@@ -1178,6 +1313,12 @@ export component SettingsView inherits Rectangle {
             // --------------------------------------------- Hardware (own page)
             // Set up once, so last; its own page keeps this one short
             Card {
+                property <bool> focused: root.encoder-what == "hardware";
+                changed focused => {
+                    if (self.focused) {
+                        root.reveal-at(self.absolute-position.y, self.height);
+                    }
+                }
                 hw-ta := TouchArea {
                     clicked => {
                         root.open-hardware();
@@ -1219,6 +1360,9 @@ export component SettingsView inherits Rectangle {
                         }
                     }
                 }
+                if root.encoder-what == "hardware": FocusRing {
+                    radius: Theme.radius-lg;
+                }
             }
         }
     }
@@ -1228,41 +1372,54 @@ export component SettingsView inherits Rectangle {
         background: Theme.scrim;
         TouchArea { }
 
-        VerticalLayout {
-            Rectangle {
-                vertical-stretch: 1;
-                background: Theme.panel;
-                VerticalLayout {
-                    alignment: center;
-                    padding-left: Theme.space-lg;
-                    spacing: 2px;
-                    Text {
-                        text: "TONE3000 publishable key";
-                        color: Theme.text-primary;
-                        font-size: Theme.font-headline;
-                        font-weight: Theme.weight-bold;
-                    }
-                    Text {
-                        text: "Optional: empty for OpenRig's. Starts with t3k_pub_. A USB keyboard works too (paste with Ctrl+V).";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-small;
-                    }
+        // Its text field has the focus: a long press of the encoder
+        // (Escape) reaches here and cancels
+        FocusScope {
+            focus-on-click: false;
+            key-pressed(event) => {
+                if (event.text == Key.Escape) {
+                    root.editing-key = false;
+                    return accept;
                 }
+                return reject;
             }
-            VirtualKeyboard {
-                current-text: root.key-draft;
-                placeholder: "t3k_pub_…";
-                code: true;
-                submit-label: "Connect";
-                text-changed(t) => {
-                    root.key-draft = t;
+
+            VerticalLayout {
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: Theme.panel;
+                    VerticalLayout {
+                        alignment: center;
+                        padding-left: Theme.space-lg;
+                        spacing: 2px;
+                        Text {
+                            text: "TONE3000 publishable key";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-headline;
+                            font-weight: Theme.weight-bold;
+                        }
+                        Text {
+                            text: "Optional: empty for OpenRig's. Starts with t3k_pub_. A USB keyboard works too (paste with Ctrl+V).";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                        }
+                    }
                 }
-                submit => {
-                    root.editing-key = false;
-                    root.t3k-connect(root.key-draft);
-                }
-                cancel => {
-                    root.editing-key = false;
+                VirtualKeyboard {
+                    current-text: root.key-draft;
+                    placeholder: "t3k_pub_…";
+                    code: true;
+                    submit-label: "Connect";
+                    text-changed(t) => {
+                        root.key-draft = t;
+                    }
+                    submit => {
+                        root.editing-key = false;
+                        root.t3k-connect(root.key-draft);
+                    }
+                    cancel => {
+                        root.editing-key = false;
+                    }
                 }
             }
         }
@@ -1273,40 +1430,53 @@ export component SettingsView inherits Rectangle {
         background: Theme.scrim;
         TouchArea { }
 
-        VerticalLayout {
-            Rectangle {
-                vertical-stretch: 1;
-                background: Theme.panel;
-                VerticalLayout {
-                    alignment: center;
-                    padding-left: Theme.space-lg;
-                    spacing: 2px;
-                    Text {
-                        text: "Network MIDI session name";
-                        color: Theme.text-primary;
-                        font-size: Theme.font-headline;
-                        font-weight: Theme.weight-bold;
-                    }
-                    Text {
-                        text: "Up to 32 letters, digits, spaces, dots, dashes or underscores. Empty: " + root.netmidi-hostname + ".";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-small;
-                    }
+        // Its text field has the focus: a long press of the encoder
+        // (Escape) reaches here and cancels
+        FocusScope {
+            focus-on-click: false;
+            key-pressed(event) => {
+                if (event.text == Key.Escape) {
+                    root.netmidi-renaming = false;
+                    return accept;
                 }
+                return reject;
             }
-            VirtualKeyboard {
-                current-text: root.netmidi-draft;
-                placeholder: root.netmidi-hostname;
-                submit-label: "Save";
-                text-changed(t) => {
-                    root.netmidi-draft = t;
+
+            VerticalLayout {
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: Theme.panel;
+                    VerticalLayout {
+                        alignment: center;
+                        padding-left: Theme.space-lg;
+                        spacing: 2px;
+                        Text {
+                            text: "Network MIDI session name";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-headline;
+                            font-weight: Theme.weight-bold;
+                        }
+                        Text {
+                            text: "Up to 32 letters, digits, spaces, dots, dashes or underscores. Empty: " + root.netmidi-hostname + ".";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                        }
+                    }
                 }
-                submit => {
-                    root.netmidi-renaming = false;
-                    root.netmidi-rename(root.netmidi-draft);
-                }
-                cancel => {
-                    root.netmidi-renaming = false;
+                VirtualKeyboard {
+                    current-text: root.netmidi-draft;
+                    placeholder: root.netmidi-hostname;
+                    submit-label: "Save";
+                    text-changed(t) => {
+                        root.netmidi-draft = t;
+                    }
+                    submit => {
+                        root.netmidi-renaming = false;
+                        root.netmidi-rename(root.netmidi-draft);
+                    }
+                    cancel => {
+                        root.netmidi-renaming = false;
+                    }
                 }
             }
         }
@@ -1317,44 +1487,58 @@ export component SettingsView inherits Rectangle {
         background: Theme.scrim;
         TouchArea { }
 
-        VerticalLayout {
-            Rectangle {
-                vertical-stretch: 1;
-                background: Theme.panel;
-                VerticalLayout {
-                    alignment: center;
-                    padding-left: Theme.space-lg;
-                    spacing: 2px;
-                    Text {
-                        text: "Password for " + root.wifi-password-ssid;
-                        color: Theme.text-primary;
-                        font-size: Theme.font-headline;
-                        font-weight: Theme.weight-bold;
-                        overflow: elide;
-                    }
-                    Text {
-                        text: "Tap #+= for symbols. A USB keyboard works too.";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-small;
-                    }
+        // Its text field has the focus: a long press of the encoder
+        // (Escape) reaches here and cancels
+        FocusScope {
+            focus-on-click: false;
+            key-pressed(event) => {
+                if (event.text == Key.Escape) {
+                    root.wifi-password = "";
+                    root.wifi-password-ssid = "";
+                    return accept;
                 }
+                return reject;
             }
-            VirtualKeyboard {
-                current-text: root.wifi-password;
-                placeholder: "Password";
-                submit-label: "Join";
-                secret: true;
-                text-changed(t) => {
-                    root.wifi-password = t;
+
+            VerticalLayout {
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: Theme.panel;
+                    VerticalLayout {
+                        alignment: center;
+                        padding-left: Theme.space-lg;
+                        spacing: 2px;
+                        Text {
+                            text: "Password for " + root.wifi-password-ssid;
+                            color: Theme.text-primary;
+                            font-size: Theme.font-headline;
+                            font-weight: Theme.weight-bold;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: "Tap #+= for symbols. A USB keyboard works too.";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                        }
+                    }
                 }
-                submit => {
-                    root.wifi-connect(root.wifi-password-ssid, root.wifi-password);
-                    root.wifi-password = "";
-                    root.wifi-password-ssid = "";
-                }
-                cancel => {
-                    root.wifi-password = "";
-                    root.wifi-password-ssid = "";
+                VirtualKeyboard {
+                    current-text: root.wifi-password;
+                    placeholder: "Password";
+                    submit-label: "Join";
+                    secret: true;
+                    text-changed(t) => {
+                        root.wifi-password = t;
+                    }
+                    submit => {
+                        root.wifi-connect(root.wifi-password-ssid, root.wifi-password);
+                        root.wifi-password = "";
+                        root.wifi-password-ssid = "";
+                    }
+                    cancel => {
+                        root.wifi-password = "";
+                        root.wifi-password-ssid = "";
+                    }
                 }
             }
         }
@@ -1365,45 +1549,59 @@ export component SettingsView inherits Rectangle {
         background: Theme.scrim;
         TouchArea { }
 
-        VerticalLayout {
-            Rectangle {
-                vertical-stretch: 1;
-                background: Theme.panel;
-                VerticalLayout {
-                    alignment: center;
-                    padding-left: Theme.space-lg;
-                    spacing: 2px;
-                    Text {
-                        text: "Remote control password";
-                        color: Theme.text-primary;
-                        font-size: Theme.font-headline;
-                        font-weight: Theme.weight-bold;
-                        overflow: elide;
-                    }
-                    Text {
-                        text: "8 to 63 characters, also the password of the pedal's hotspot. Devices signed in sign in again.";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-small;
-                        overflow: elide;
-                    }
+        // Its text field has the focus: a long press of the encoder
+        // (Escape) reaches here and cancels
+        FocusScope {
+            focus-on-click: false;
+            key-pressed(event) => {
+                if (event.text == Key.Escape) {
+                    RemoteControl.draft = "";
+                    RemoteControl.editing = false;
+                    return accept;
                 }
+                return reject;
             }
-            VirtualKeyboard {
-                current-text: RemoteControl.draft;
-                placeholder: "Password";
-                submit-label: "Save";
-                secret: true;
-                text-changed(t) => {
-                    RemoteControl.draft = t;
+
+            VerticalLayout {
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: Theme.panel;
+                    VerticalLayout {
+                        alignment: center;
+                        padding-left: Theme.space-lg;
+                        spacing: 2px;
+                        Text {
+                            text: "Remote control password";
+                            color: Theme.text-primary;
+                            font-size: Theme.font-headline;
+                            font-weight: Theme.weight-bold;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: "8 to 63 characters, also the password of the pedal's hotspot. Devices signed in sign in again.";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-small;
+                            overflow: elide;
+                        }
+                    }
                 }
-                submit => {
-                    RemoteControl.set-password(RemoteControl.draft);
-                    RemoteControl.draft = "";
-                    RemoteControl.editing = false;
-                }
-                cancel => {
-                    RemoteControl.draft = "";
-                    RemoteControl.editing = false;
+                VirtualKeyboard {
+                    current-text: RemoteControl.draft;
+                    placeholder: "Password";
+                    submit-label: "Save";
+                    secret: true;
+                    text-changed(t) => {
+                        RemoteControl.draft = t;
+                    }
+                    submit => {
+                        RemoteControl.set-password(RemoteControl.draft);
+                        RemoteControl.draft = "";
+                        RemoteControl.editing = false;
+                    }
+                    cancel => {
+                        RemoteControl.draft = "";
+                        RemoteControl.editing = false;
+                    }
                 }
             }
         }
