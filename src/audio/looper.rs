@@ -603,8 +603,12 @@ impl Looper {
 
     /// A new overdub layer over the whole loop, from the spare one; with all
     /// layers used, the last one keeps accumulating. On the audio thread: no
-    /// allocation (`overdub` unfolded the last layer already).
+    /// allocation (`overdub` unfolded the last layer already). Overdubs are
+    /// recorded at full speed, even when half speed was asked for during a
+    /// count-in or a recording.
     fn push_overdub_layer(&mut self) {
+        self.half_speed = false;
+        self.fraction = 0.0;
         if self.layers.len() < self.max_layers {
             if let Some(frames) = self.spare.take() {
                 self.layers.push(Layer {
@@ -1638,6 +1642,42 @@ mod tests {
         // A new recording is at full speed
         looper.record();
         assert!(!looper.half_speed());
+    }
+
+    #[test]
+    fn half_speed_asked_before_an_overdub_starts_is_dropped() {
+        let mut looper = timed(LooperSettings {
+            count_in: true,
+            click_level: 0.0,
+            ..LooperSettings::default()
+        });
+        looper.record();
+        feed(&mut looper, std::iter::repeat_n(0.0, 2001));
+        feed(&mut looper, std::iter::repeat_n(0.5, 1999));
+        looper.stop();
+
+        // During the count-in of an overdub
+        looper.overdub();
+        looper.set_half_speed(true);
+        feed(&mut looper, std::iter::repeat_n(0.0, 2001));
+        assert_eq!(looper.state(), LooperState::Overdubbing);
+        assert!(!looper.half_speed());
+        feed(&mut looper, std::iter::repeat_n(0.0, 999));
+        assert_eq!(looper.position_seconds(), 1.0);
+
+        // During a recording that goes on into an overdub
+        looper.set_settings(LooperSettings {
+            click_level: 0.0,
+            ..LooperSettings::default()
+        });
+        looper.record();
+        feed(&mut looper, std::iter::repeat_n(0.5, 100));
+        looper.set_half_speed(true);
+        looper.overdub();
+        assert_eq!(looper.state(), LooperState::Overdubbing);
+        assert!(!looper.half_speed());
+        feed(&mut looper, std::iter::repeat_n(0.0, 50));
+        assert_eq!(looper.position_seconds(), 0.05);
     }
 
     #[test]
