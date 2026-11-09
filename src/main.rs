@@ -6,6 +6,8 @@ mod eq_ui;
 #[cfg(feature = "gpio")]
 mod gpio;
 mod hardware_ui;
+#[cfg(feature = "headless")]
+mod headless;
 mod level_history;
 mod live_ui;
 #[cfg(feature = "midi")]
@@ -14,6 +16,8 @@ mod midi_ui;
 #[cfg(feature = "midi")]
 mod network_midi_ui;
 mod plugin_view;
+#[cfg(feature = "remote")]
+mod remote_ui;
 #[cfg(feature = "rigs-online")]
 mod rigs_online_ui;
 mod rigs_ui;
@@ -1091,6 +1095,8 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
             let Some(applied) = report(&app, state.set_parameter(target, index, value)) else {
                 return;
             };
+            #[cfg(feature = "remote")]
+            remote_ui::touched(instance_id, index as i32);
             // Keep the editor model in sync (the value may have been clamped).
             // The row is updated in place so the control being dragged stays.
             if app.get_selected_instance_id() == instance_id {
@@ -1354,6 +1360,14 @@ fn show_looper_settings(app: &App, state: &AppState) {
     app.set_looper_click_level(settings.click_level);
 }
 
+/// A client of the web remote has its tuner open
+fn remote_tuner() -> bool {
+    #[cfg(feature = "remote")]
+    return remote_ui::tuner_wanted();
+    #[cfg(not(feature = "remote"))]
+    false
+}
+
 /// Periodic UI updates: looper, tuner, audio errors, status timeout
 fn start_poll_timer(
     app: &App,
@@ -1424,7 +1438,7 @@ fn start_poll_timer(
             // Tuner: only analyse audio while the tuner page is shown
             // (locked only on a change: the audio thread skips the tuner, and
             // its mute, for a cycle when the lock is taken)
-            let tuner_visible = app.get_current_view() == TUNER_VIEW;
+            let tuner_visible = app.get_current_view() == TUNER_VIEW || remote_tuner();
             if tuner_shown.replace(tuner_visible) != tuner_visible {
                 state.tuner.locked().set_active(tuner_visible);
             }
@@ -1456,6 +1470,10 @@ fn start_poll_timer(
                     });
                 }
             }
+
+            // Tuner and meters to the web remote, when it runs
+            #[cfg(feature = "remote")]
+            remote_ui::poll(&app, &meters);
 
             // Errors from the chain builder
             if let Some(message) = state.poll_audio_error() {
@@ -1681,10 +1699,73 @@ fn install_panic_hook() {
     }));
 }
 
+/// Whether the UI runs without a screen, streamed to the web remote (see
+/// pedalboard::remote::display). Without the remote set up, the app runs
+/// on the display as it always did.
+fn headless_mode() -> bool {
+    #[cfg(all(feature = "remote", feature = "headless"))]
+    {
+        use pedalboard::remote::display;
+        let mode = display::Mode::from_env();
+        let kms = std::env::var("SLINT_BACKEND").is_ok_and(|b| b.starts_with("linuxkms"));
+        let remote_on = || {
+            pedalboard::remote::auth::PasswordStore::open(&pedalboard::state::data_dir()).is_set()
+        };
+        // The password is only looked at when it matters
+        let remote_on = mode == display::Mode::Auto && kms && remote_on();
+        let decision = display::decide(mode, kms, remote_on, || {
+            display::devices_waiting(display::TOUCH_WAIT)
+        });
+        if decision.headless {
+            info!(reason = %decision.reason, "No touchscreen: the UI is for the web remote");
+        } else if mode != display::Mode::Auto || remote_on {
+            info!(reason = %decision.reason, "UI on the display");
+        }
+        decision.headless
+    }
+    #[cfg(not(all(feature = "remote", feature = "headless")))]
+    false
+}
+
+/// `pedalboard remote-setup <pedalboard.txt> <data dir> <connections dir>
+/// [--check]`: consume the secrets of pedalboard.txt (see
+/// pedalboard::remote::bootcfg). Exit status: 0 done or nothing to do,
+/// 2 with --check when there is something to do, 1 on error.
+#[cfg(feature = "remote")]
+fn remote_setup() -> Result<()> {
+    use pedalboard::remote::bootcfg;
+    let args: Vec<String> = std::env::args().skip(2).collect();
+    let check = args.iter().any(|a| a == "--check");
+    let paths: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
+    let [config, data, connections] = paths[..] else {
+        anyhow::bail!("usage: pedalboard remote-setup <pedalboard.txt> <data dir> <connections dir> [--check]");
+    };
+    let paths = bootcfg::Paths {
+        config: std::path::Path::new(config),
+        data_dir: std::path::Path::new(data),
+        connections: std::path::Path::new(connections),
+    };
+    let todo = bootcfg::run(&paths, !check)?;
+    if check && todo {
+        std::process::exit(2);
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
+    // Run by the boot scripts, as root: the secrets of pedalboard.txt
+    #[cfg(feature = "remote")]
+    if std::env::args().nth(1).as_deref() == Some("remote-setup") {
+        return remote_setup();
+    }
     init_logs();
     install_panic_hook();
     info!(version = env!("CARGO_PKG_VERSION"), "OpenRig starting");
+    #[cfg_attr(
+        not(any(feature = "headless", feature = "remote")),
+        allow(unused_variables)
+    )]
+    let headless = headless_mode();
 
     let state = Arc::new(AppState::new()?);
     let demo = state.lv2_host.is_demo();
@@ -1732,6 +1813,10 @@ fn main() -> Result<()> {
     }
     state.apply_dsp_cores();
 
+    #[cfg(feature = "headless")]
+    if headless {
+        headless::install().map_err(|e| anyhow::anyhow!("Headless UI: {e}"))?;
+    }
     let app = App::new()?;
     set_available_plugins(&app, &state);
     app.set_audio_running(engine.is_some());
@@ -1775,6 +1860,8 @@ fn main() -> Result<()> {
     #[cfg(not(feature = "midi"))]
     let network_midi = None;
     midi_ui::setup(&app, &state, network_midi);
+    #[cfg(feature = "remote")]
+    remote_ui::setup(&app, &state, headless);
     let _routing_meters = routing_ui::setup(&app, &state, engine.as_deref());
     let _block_sound = block_sound::start(&app, &state);
     refresh_all(&app, &state);

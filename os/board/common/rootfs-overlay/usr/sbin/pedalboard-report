@@ -162,6 +162,16 @@ cat /data/pedalboard/network-midi.json 2>/dev/null || echo "(none)"
 echo
 grep -E ' (network-midi|rtpmidid|avahi-daemon)(\[[0-9]+\])?: ' /var/log/messages 2>/dev/null | tail -60
 
+# No secrets here either: the password is only kept as a hash
+section "Remote control"
+echo "app: $(cat /run/pedalboard/app/remote 2>/dev/null || echo "(no status: app not running?)")"
+echo "hotspot: $(cat /run/pedalboard/remote/hotspot 2>/dev/null || echo "(no status)")"
+[ -e /data/pedalboard/remote.json ] && echo "password: set" || echo "password: not set"
+if command -v nmcli >/dev/null 2>&1; then
+	nmcli -f NAME,TYPE,DEVICE,ACTIVE connection show 2>&1 | grep -E '^NAME|OpenRig-hotspot'
+fi
+grep -E ' (pedalboard-hotspot|dnsmasq-dhcp|dnsmasq)(\[[0-9]+\])?: ' /var/log/messages 2>/dev/null | tail -30
+
 section "JACK and app log"
 grep -E ' (jackd|pedalboard|pedalboard-update|S00storage)(\[[0-9]+\])?: ' /var/log/messages 2>/dev/null | tail -200
 

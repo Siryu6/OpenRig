@@ -40,6 +40,8 @@ valid() {
 	display_rotation=0 | display_rotation=90 | display_rotation=180 | display_rotation=270) ;;
 	wifi_country=) ;;
 	wifi_country=[A-Z][A-Z]) ;;
+	remote_hotspot=auto | remote_hotspot=on | remote_hotspot=off) ;;
+	display=auto | display=screen | display=remote) ;;
 	*) return 1 ;;
 	esac
 }
@@ -147,8 +149,12 @@ while :; do
 		# Started again by init on the new settings; the app quits when
 		# its server stops and starts again too
 		killall jackd 2>/dev/null
-	elif changed display_rotation; then
+	elif changed display_rotation || changed display; then
 		status "$id" "done" display
+	elif changed remote_hotspot; then
+		status "$id" "done" none
+		# Started again by init on the new setting
+		kill "$(cat /run/pedalboard/remote/hotspot.pid 2>/dev/null)" 2>/dev/null
 	else
 		status "$id" "done" none
 	fi

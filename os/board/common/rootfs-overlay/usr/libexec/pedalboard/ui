@@ -14,6 +14,10 @@ esac
 case "$keyboard_layout" in
 "" | *[!a-z0-9_,-]*) keyboard_layout=us ;;
 esac
+case "$display" in
+auto | screen | remote) ;;
+*) display=auto ;;
+esac
 
 # At boot, give a starting JACK server a few seconds to accept clients
 n=0
@@ -32,6 +36,11 @@ power=/run/pedalboard/power
 install -d -o pedalboard -g pedalboard -m 700 "$power"
 rm -f "$power/request"
 
+# Remote control: its status for pedalboard-report (written by the app),
+# and the hotspot's (written by the hotspot script)
+install -d -m 755 /run/pedalboard/remote
+rm -f /run/pedalboard/app/remote
+
 # The system's app, or an app update (tried once, see pedalboard-update):
 # kept once it has run 30 s. The app writes its alive file again every
 # second: removed at 25 s, it is back at 30 s unless the app hangs.
@@ -44,11 +53,15 @@ app=$(/usr/sbin/pedalboard-update app-start)
 keeper=$!
 
 # util-linux, not the BusyBox applets of the same name (fewer options).
-# The exit status goes through a file: a pipe gives logger's.
+# The exit status goes through a file: a pipe gives logger's. The app may
+# open port 80 for the remote control (net_bind_service, nothing else).
+# The environment is set before setpriv (what its --reset-env gives, plus
+# the app's): BusyBox is setuid, so an env run after setpriv would drop the
+# capability.
 {
-	/usr/bin/prlimit --rtprio=95 --memlock=unlimited \
-		/usr/bin/setpriv --reuid=pedalboard --regid=pedalboard --init-groups --reset-env \
-		env PEDALBOARD_DATA_DIR=/data/pedalboard \
+	env -i ${TERM:+TERM="$TERM"} HOME=/data/pedalboard USER=pedalboard LOGNAME=pedalboard \
+		SHELL=/bin/sh PATH=/usr/local/bin:/bin:/usr/bin \
+		PEDALBOARD_DATA_DIR=/data/pedalboard \
 		LV2_PATH=/data/pedalboard/lv2:/usr/lib/lv2 \
 		PEDALBOARD_EXIT_ON_AUDIO_CHANGE=1 \
 		PEDALBOARD_POWER_REQUEST="$power/request" \
@@ -60,6 +73,11 @@ keeper=$!
 		SLINT_BACKEND=linuxkms \
 		SLINT_KMS_ROTATION="$display_rotation" \
 		XKB_DEFAULT_LAYOUT="$keyboard_layout" \
+		PEDALBOARD_DISPLAY="$display" \
+		PEDALBOARD_REMOTE_STATUS=/run/pedalboard/app/remote \
+		/usr/bin/prlimit --rtprio=95 --memlock=unlimited \
+		/usr/bin/setpriv --reuid=pedalboard --regid=pedalboard --init-groups \
+		--inh-caps=+net_bind_service --ambient-caps=+net_bind_service \
 		"$app" 2>&1
 	echo $? >/run/pedalboard/ui-status
 } | logger -t pedalboard
