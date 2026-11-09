@@ -364,11 +364,13 @@ impl Looper {
     }
 
     /// (left, right) of the loop at the playhead, between two frames at
-    /// half speed, after the level. Notes the peak for the overview.
-    fn loop_frame(&mut self) -> (f32, f32) {
+    /// half speed, after the level. Notes the peak for the overview, with
+    /// `overdub` (what is being added to the loop there) so that an overdub
+    /// shows as it is played rather than on the next pass.
+    fn loop_frame(&mut self, overdub: (f32, f32)) -> (f32, f32) {
         let (mut l, mut r) = self.mix(self.playhead);
         if self.fraction == 0.0 {
-            self.note_peak(l, r);
+            self.note_peak(l + overdub.0, r + overdub.1);
         } else {
             let next = if self.playhead + 1 < self.loop_length {
                 self.playhead + 1
@@ -543,14 +545,14 @@ impl Looper {
                     self.playhead += 1;
                 }
                 LooperState::Playing => {
-                    let (loop_l, loop_r) = self.loop_frame();
+                    let (loop_l, loop_r) = self.loop_frame((0.0, 0.0));
                     *l += loop_l;
                     *r += loop_r;
                     self.advance();
                 }
                 LooperState::Overdubbing => {
                     // Always at full speed (see `overdub`)
-                    let (loop_l, loop_r) = self.loop_frame();
+                    let (loop_l, loop_r) = self.loop_frame((*l * OVERDUB_GAIN, *r * OVERDUB_GAIN));
                     let at = 2 * self.playhead;
                     if let Some([left, right]) = self
                         .layers
@@ -1628,13 +1630,14 @@ mod tests {
         feed(&mut looper, std::iter::repeat_n(0.0, 3000));
         assert_eq!(looper.status().wave_version, version);
         assert_eq!(looper.waveform()[10], 0.5);
-        // An overdub shows on the next pass
+        // An overdub shows as it is played
         looper.overdub();
         feed(&mut looper, std::iter::repeat_n(0.5, 3000));
+        assert!((looper.waveform()[10] - (0.5 + 0.5 * OVERDUB_GAIN)).abs() < 1e-6);
         looper.play();
         feed(&mut looper, std::iter::repeat_n(0.0, 3000));
         assert!((looper.waveform()[10] - (0.5 + 0.5 * OVERDUB_GAIN)).abs() < 1e-6);
-        // Undone: shows on the next pass too. Multiplied: twice across
+        // Undone: shows on the next pass. Multiplied: twice across
         looper.undo();
         feed(&mut looper, std::iter::repeat_n(0.0, 3000));
         assert_eq!(looper.waveform()[10], 0.5);
