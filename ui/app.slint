@@ -295,6 +295,10 @@ export component App inherits Window {
         temperature: -1, latency-ms: -1,
     };
     private property <bool> show-resources: false;
+    // A dialog over the page (the page switcher aside): the encoder's turns
+    // and presses do not reach the page under it, a long press closes it
+    private property <bool> dialog-open: root.show-context-menu || root.show-resources || root.power-dialog
+        || root.update-dialog || root.netmidi-prompt-address != "";
 
     // Wi-Fi (Settings)
     in-out property <string> wifi-status: "unsupported"; // "unsupported" | "no-device" | "off" | "on"
@@ -2052,6 +2056,8 @@ export component App inherits Window {
                 let d = event.text == Key.LeftArrow || event.text == Key.UpArrow ? -1 : 1;
                 if (root.pages-open) {
                     root.pages-index = max(0, min(root.page-views.length - 1, root.pages-index + d));
+                } else if (root.dialog-open) {
+                    // Not behind it
                 } else if (root.current-view == 1 && root.adjusting && root.arranging) {
                     // Moves the picked parameter, the focus with it
                     root.arrange-parameter(root.selected-instance-id,
@@ -2102,6 +2108,8 @@ export component App inherits Window {
             if (event.text == Key.Return) {
                 if (root.pages-open) {
                     root.open-page(root.pages-index);
+                } else if (root.dialog-open) {
+                    // Not behind it
                 } else if (root.current-view == 0 && root.add-focused) {
                     root.open-browser(0, -1);
                 } else if (root.current-view == 0) {
