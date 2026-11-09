@@ -450,7 +450,8 @@ export component LooperView inherits Rectangle {
                 icon: "undo";
                 focused: root.focused == 4;
                 text: "Undo";
-                enabled: root.layer-count > 0;
+                // Nothing played yet during a count-in
+                enabled: root.layer-count > 0 && root.state != LooperState.CountIn;
                 clicked => {
                     root.undo-clicked();
                 }

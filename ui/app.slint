@@ -655,7 +655,10 @@ export component App inherits Window {
             } else if (i == 3) {
                 root.looper-stop();
             } else if (i == 4) {
-                root.looper-undo();
+                // Disabled during a count-in, as on the page
+                if (root.looper-state != LooperState.CountIn) {
+                    root.looper-undo();
+                }
             } else if (i == 5) {
                 root.looper-clear();
             } else if (i == 6) {

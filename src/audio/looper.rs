@@ -784,8 +784,13 @@ impl Looper {
         }
     }
 
-    /// Remove the last overdub layer
+    /// Remove the last overdub layer. Nothing during a count-in: nothing
+    /// has been played yet, and the layers there were made before it (Stop
+    /// cancels a count-in, as on a Boss RC)
     pub fn undo(&mut self) {
+        if self.state == LooperState::CountIn {
+            return;
+        }
         if self.state == LooperState::Overdubbing {
             self.state = LooperState::Playing;
         }
@@ -1531,6 +1536,37 @@ mod tests {
         looper.play();
         looper.overdub();
         assert_eq!(looper.state(), LooperState::Overdubbing);
+    }
+
+    #[test]
+    fn undo_does_nothing_during_a_count_in() {
+        let mut looper = timed(LooperSettings {
+            count_in: true,
+            click_level: 0.0,
+            ..LooperSettings::default()
+        });
+        // Before a first recording: nothing to undo, the count-in goes on
+        looper.record();
+        looper.undo();
+        assert_eq!(looper.state(), LooperState::CountIn);
+        feed(&mut looper, std::iter::repeat_n(0.0, 2001));
+        assert_eq!(looper.state(), LooperState::Recording);
+        feed(&mut looper, std::iter::repeat_n(0.5, 1999));
+        looper.play();
+        looper.overdub();
+        feed(&mut looper, std::iter::repeat_n(0.25, 2000));
+        looper.stop();
+        assert_eq!(looper.overdub_count(), 1);
+
+        // Before an overdub from a stop: the overdub already made stays
+        looper.overdub();
+        assert_eq!(looper.state(), LooperState::CountIn);
+        looper.undo();
+        assert_eq!(looper.state(), LooperState::CountIn);
+        assert_eq!(looper.overdub_count(), 1);
+        feed(&mut looper, std::iter::repeat_n(0.0, 2001));
+        assert_eq!(looper.state(), LooperState::Overdubbing);
+        assert_eq!(looper.overdub_count(), 2);
     }
 
     #[test]
