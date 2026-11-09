@@ -31,6 +31,20 @@ defconfig=$(sed -n 's/^BR2_DEFCONFIG="\(.*\)"/\1/p' "$BR2_CONFIG")
 board=$(basename "$defconfig" _defconfig)
 board=${board#pedalboard_}
 
+# Kconfig drops an option of the defconfig with only a warning when its
+# dependencies cannot be met (a recursive dependency left rtpmidid out of
+# v0.13.0): fail the build when a package the pedalboard runs is missing.
+# One "option file" per line.
+while read -r option file; do
+	grep -qx "$option=y" "$defconfig" || continue
+	if ! grep -qx "$option=y" "$BR2_CONFIG" || [ ! -e "$TARGET$file" ]; then
+		echo "post-build: $option is in $(basename "$defconfig") but $file is not in the image" >&2
+		exit 1
+	fi
+done <<PACKAGES
+BR2_PACKAGE_RTPMIDID /usr/bin/rtpmidid
+PACKAGES
+
 # Fingerprint of the system without the app: Buildroot's version, the
 # board's configuration and the pedalboard tree (scripts, overlays, kernel
 # fragments, packages, the libraries the app's package selects) except the
