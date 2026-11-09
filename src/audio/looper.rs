@@ -133,6 +133,17 @@ pub struct LoopAudio {
     pub bars: usize,
 }
 
+/// Why the loop could not be copied (see [`Looper::snapshot`])
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SnapshotError {
+    /// No loop, or the first one is still being recorded
+    NoLoop,
+    /// An overdub is being played
+    Overdubbing,
+    /// The loop kept changing while it was copied
+    Changed,
+}
+
 /// Samples in a beat at `bpm` (at least one)
 pub fn beat_samples(sample_rate: f32, bpm: f32) -> usize {
     let bpm = crate::state::tempo::clamp_bpm(bpm);
@@ -300,7 +311,9 @@ pub struct Looper {
     record_wave: [f32; RECORD_POINTS],
     /// Bumped when the overview changes
     wave_version: u64,
-    /// Bumped when the loop is replaced or erased
+    /// Bumped whenever the loop's content changes, but by the frames of an
+    /// overdub being played: a recording, a clear, a load, a multiply, a new
+    /// overdub, an undo (a save copying the loop checks it)
     loop_id: u64,
 }
 
@@ -609,6 +622,7 @@ impl Looper {
     fn push_overdub_layer(&mut self) {
         self.half_speed = false;
         self.fraction = 0.0;
+        self.loop_id += 1;
         if self.layers.len() < self.max_layers {
             if let Some(frames) = self.spare.take() {
                 self.layers.push(Layer {
@@ -800,6 +814,7 @@ impl Looper {
         }
         if self.layers.len() > 1 {
             self.garbage.extend(self.layers.pop());
+            self.loop_id += 1;
         }
     }
 
@@ -841,6 +856,7 @@ impl Looper {
             self.state = LooperState::Playing;
         }
         self.loop_length = length;
+        self.loop_id += 1;
         // The overview repeats too
         let tiled: Vec<f32> = (0..times).flat_map(|_| self.wave).collect();
         regroup(&tiled, &mut self.wave);
@@ -993,9 +1009,26 @@ impl Looper {
 
     /// The loop as audio (layers summed, before the level), to save it.
     /// Copied a few thousand frames per lock, so the audio thread is not
-    /// held up. None without a loop, while recording, or when the loop
-    /// changes meanwhile.
-    pub fn snapshot(looper: &Mutex<Looper>) -> Option<LoopAudio> {
+    /// held up; copied again (a few times at most) when the loop changes
+    /// meanwhile, so the copy is always of one state of the loop. Not while
+    /// an overdub is being played: the loop changes as it goes.
+    pub fn snapshot(looper: &Mutex<Looper>) -> Result<LoopAudio, SnapshotError> {
+        const TRIES: usize = 3;
+        for _ in 1..TRIES {
+            match Self::snapshot_once(looper, |_| {}) {
+                Err(SnapshotError::Changed) => {}
+                result => return result,
+            }
+        }
+        Self::snapshot_once(looper, |_| {})
+    }
+
+    /// One copy of the loop; `between(n)` runs after chunk `n` is copied,
+    /// outside the lock (for the tests)
+    fn snapshot_once(
+        looper: &Mutex<Looper>,
+        mut between: impl FnMut(usize),
+    ) -> Result<LoopAudio, SnapshotError> {
         const CHUNK: usize = 4096;
         let lock = || looper.lock().unwrap_or_else(|e| e.into_inner());
         let (length, sample_rate, bpm, beats_per_bar, bars, id) = {
@@ -1003,7 +1036,10 @@ impl Looper {
             if l.loop_length == 0
                 || matches!(l.state, LooperState::Recording | LooperState::CountIn)
             {
-                return None;
+                return Err(SnapshotError::NoLoop);
+            }
+            if l.state == LooperState::Overdubbing {
+                return Err(SnapshotError::Overdubbing);
             }
             (
                 l.loop_length,
@@ -1017,16 +1053,21 @@ impl Looper {
         let mut frames = vec![0.0f32; 2 * length];
         for (n, chunk) in frames.chunks_mut(2 * CHUNK).enumerate() {
             let l = lock();
-            // A new recording, a clear, a multiply or a load
+            if l.state == LooperState::Overdubbing {
+                return Err(SnapshotError::Overdubbing);
+            }
+            // A new recording or overdub, an undo, a clear, a multiply, a load
             if l.loop_length != length || l.loop_id != id {
-                return None;
+                return Err(SnapshotError::Changed);
             }
             for (i, frame) in chunk.as_chunks_mut::<2>().0.iter_mut().enumerate() {
                 let (left, right) = l.mix(n * CHUNK + i);
                 *frame = [left, right];
             }
+            drop(l);
+            between(n);
         }
-        Some(LoopAudio {
+        Ok(LoopAudio {
             frames,
             sample_rate: sample_rate as u32,
             bpm,
@@ -1729,15 +1770,65 @@ mod tests {
     }
 
     #[test]
+    fn a_save_copies_one_state_of_the_loop() {
+        // 10000 frames: three chunks
+        let looper = Mutex::new(Looper::new(1000.0));
+        Looper::control(&looper, |l| l.record());
+        feed(&mut looper.locked(), std::iter::repeat_n(0.5, 10000));
+        Looper::control(&looper, |l| {
+            l.play();
+            l.overdub();
+        });
+        feed(&mut looper.locked(), std::iter::repeat_n(0.25, 10000));
+
+        // Not during an overdub, nor when it starts during the copy
+        assert_eq!(Looper::snapshot(&looper), Err(SnapshotError::Overdubbing));
+        Looper::control(&looper, |l| l.play());
+        let overdub = |n| {
+            if n == 0 {
+                Looper::control(&looper, |l| l.overdub());
+            }
+        };
+        assert_eq!(
+            Looper::snapshot_once(&looper, overdub),
+            Err(SnapshotError::Overdubbing)
+        );
+        // (that overdub, empty, undone)
+        Looper::control(&looper, |l| l.undo());
+        let both = 0.5 + 0.25 * OVERDUB_GAIN;
+        assert!(Looper::snapshot(&looper)
+            .unwrap()
+            .frames
+            .iter()
+            .all(|&s| (s - both).abs() < 1e-6));
+
+        // An undo during the copy: the copy is made again, without the
+        // overdub
+        let undo = |n| {
+            if n == 0 {
+                Looper::control(&looper, |l| l.undo());
+            }
+        };
+        assert_eq!(
+            Looper::snapshot_once(&looper, undo),
+            Err(SnapshotError::Changed)
+        );
+        let audio = Looper::snapshot(&looper).unwrap();
+        assert_eq!(audio.frames.len(), 2 * 10000);
+        assert!(audio.frames.iter().all(|&s| s == 0.5));
+    }
+
+    #[test]
     fn a_saved_loop_loads_back_on_its_bars() {
         let looper = Mutex::new(timed(quantized()));
-        assert!(Looper::snapshot(&looper).is_none());
+        assert_eq!(Looper::snapshot(&looper), Err(SnapshotError::NoLoop));
         Looper::control(&looper, |l| {
             l.set_level(0.5);
             l.record();
         });
         feed(&mut looper.locked(), (0..3990).map(|i| i as f32 / 4000.0));
-        assert!(Looper::snapshot(&looper).is_none()); // still recording
+        // Still recording
+        assert_eq!(Looper::snapshot(&looper), Err(SnapshotError::NoLoop));
         Looper::control(&looper, |l| l.play());
         feed(&mut looper.locked(), std::iter::repeat_n(0.0, 11));
         let audio = Looper::snapshot(&looper).unwrap();

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use slint::{ComponentHandle, Model, VecModel};
 
 use pedalboard::audio::loop_files;
-use pedalboard::audio::looper::{Looper, LooperState as Engine};
+use pedalboard::audio::looper::{Looper, LooperState as Engine, SnapshotError};
 use pedalboard::state::AppState;
 use pedalboard::sync::MutexExt;
 
@@ -114,8 +114,16 @@ fn save(app: &App, state: &Arc<AppState>, name: String) {
         .name("loop-save".into())
         .spawn(move || {
             let result = match Looper::snapshot(&state.looper) {
-                None => Err("Nothing to save: record a loop first".to_string()),
-                Some(audio) => {
+                Err(SnapshotError::NoLoop) => {
+                    Err("Nothing to save: record a loop first".to_string())
+                }
+                Err(SnapshotError::Overdubbing) => {
+                    Err("Loop not saved: finish the overdub first".to_string())
+                }
+                Err(SnapshotError::Changed) => {
+                    Err("Loop not saved: it kept changing, save it again".to_string())
+                }
+                Ok(audio) => {
                     loop_files::save(&state.loops_dir(), &name, &audio, chrono::Local::now())
                         .map(|saved| saved.name)
                         .map_err(|e| format!("Loop not saved: {e:#}"))
