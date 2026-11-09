@@ -85,7 +85,12 @@ export component App inherits Window {
     private property <int> page-slots: root.current-view == 4 ? root.presets.length
         : root.current-view == 9 ? root.live-tiles.length + 3
         : root.current-view == 5 ? 12
-        : root.current-view == 3 ? 2 : 0;
+        : root.current-view == 3 ? 2
+        : root.current-view == 7 && root.system-available ? root.system-settings.length + (root.system-changed ? 2 : 0) : 0;
+    // Settings → Audio & system: the list open (row, -1 none) and the
+    // choice the encoder is on
+    private property <int> system-picker: -1;
+    private property <int> system-picker-index: 0;
     private property <int> browser-selected-index: 0;
 
     // Split chain insertion mode: 0 = main, 1 = top branch, 2 = bottom branch
@@ -426,6 +431,7 @@ export component App inherits Window {
     in property <bool> system-busy: false;
     in property <string> system-message: "";
     callback system-step(string, int);
+    callback system-pick(string, int);              // key, index in its choices
     callback system-apply();
     callback system-revert();
     callback midi-learn-toggled(bool);
@@ -668,6 +674,32 @@ export component App inherits Window {
         }
     }
 
+    // Encoder press on Settings → Audio & system: a list row opens its
+    // list (a press there picks), a stepper or the segments are adjusted
+    // by the turns until the next press, then Cancel and Apply
+    function system-press() {
+        let i = root.page-focus;
+        let n = root.system-settings.length;
+        if (root.system-busy) {
+            return;
+        }
+        if (root.system-picker >= 0) {
+            root.system-pick(root.system-settings[root.system-picker].key, root.system-picker-index);
+            root.system-picker = -1;
+        } else if (root.adjusting) {
+            root.adjusting = false;
+        } else if (i < n && root.system-settings[i].kind == "list") {
+            root.system-picker-index = max(0, root.system-settings[i].selected);
+            root.system-picker = i;
+        } else if (i < n) {
+            root.adjusting = true;
+        } else if (root.system-changed && i == n) {
+            root.system-revert();
+        } else if (root.system-changed && i == n + 1) {
+            root.system-apply();
+        }
+    }
+
     function open-pages() {
         root.pages-index = root.current-view == 4 ? 1 : root.current-view == 9 ? 2 : root.current-view == 3 ? 3
             : root.current-view == 5 ? 4 : root.current-view == 7 ? 5 : 0;
@@ -706,6 +738,7 @@ export component App inherits Window {
         root.add-focused = false;
         root.arranging = false;
         root.page-focus = 0;
+        root.system-picker = -1;
         // Learning only makes sense in the block editor
         if (root.current-view != 1 && root.midi-learning) {
             root.midi-learn-toggled(false);
@@ -1400,6 +1433,13 @@ export component App inherits Window {
                 system-step(key, delta) => {
                     root.system-step(key, delta);
                 }
+                system-pick(key, index) => {
+                    root.system-pick(key, index);
+                }
+                system-focus: root.system-available ? root.page-focus : -1;
+                system-adjusting: root.adjusting;
+                system-picker <=> root.system-picker;
+                system-picker-index <=> root.system-picker-index;
                 system-apply => {
                     root.system-apply();
                 }
@@ -1688,6 +1728,13 @@ export component App inherits Window {
                         root.focused-parameter = floor(stop / 2);
                         root.arrange-stop = mod(stop, 2);
                     }
+                } else if (root.current-view == 7 && root.system-picker >= 0) {
+                    root.system-picker-index = max(0, min(root.system-settings[root.system-picker].choices.length - 1,
+                        root.system-picker-index + d));
+                } else if (root.current-view == 7 && root.adjusting) {
+                    if (root.page-focus < root.system-settings.length && !root.system-busy) {
+                        root.system-step(root.system-settings[root.page-focus].key, d);
+                    }
                 } else if (root.adjusting) {
                     root.set-page-value(round(root.page-value() * root.page-scale() + d) / root.page-scale());
                 } else if (root.page-slots > 0) {
@@ -1751,6 +1798,8 @@ export component App inherits Window {
                     } else {
                         root.remove-armed = true;
                     }
+                } else if (root.current-view == 7) {
+                    root.system-press();
                 } else if (root.adjusting) {
                     root.adjusting = false;
                 } else if (root.page-slots > 0) {
@@ -1813,6 +1862,11 @@ export component App inherits Window {
                     // Back to the value before
                     root.set-parameter(root.selected-instance-id,
                         root.selected-parameters[root.focused-parameter].index, root.adjust-from);
+                    root.adjusting = false;
+                } else if (root.current-view == 7 && root.system-picker >= 0) {
+                    root.system-picker = -1;
+                } else if (root.current-view == 7 && root.adjusting) {
+                    // The steps stay pending: Cancel takes them back
                     root.adjusting = false;
                 } else if (root.adjusting) {
                     root.set-page-value(root.adjust-from);

@@ -1,5 +1,5 @@
 import { Theme } from "../theme.slint";
-import { Button, Card, Icon, SectionHeader, Segmented, Stepper, Toggle } from "../components/controls.slint";
+import { Button, Card, FocusRing, Icon, SectionHeader, Segmented, Stepper, Toggle } from "../components/controls.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 import { NetMidiDevice, SystemSetting, WifiNetwork } from "../types.slint";
 import { Tone3000Logo } from "../components/tone3000_brand.slint";
@@ -104,8 +104,16 @@ export component SettingsView inherits Rectangle {
     in property <bool> system-busy: false;
     in property <string> system-message: "";
     callback system-step(string, int);
+    callback system-pick(string, int);              // key, index in its choices
     callback system-apply();
     callback system-revert();
+    // Encoder on Audio & system: its rows, then Cancel and Apply (when
+    // changed); the row it adjusts, and the list open (row index, -1 none)
+    // with the choice it is on
+    in property <int> system-focus: -1;
+    in property <bool> system-adjusting: false;
+    in-out property <int> system-picker: -1;
+    in-out property <int> system-picker-index: 0;
 
     // TONE3000 Connect
     in property <bool> t3k-available: true;          // built with the tone3000 feature
@@ -139,7 +147,16 @@ export component SettingsView inherits Rectangle {
     width: 100%;
     height: 100%;
 
-    Flickable {
+    // Scrolls the page so that a row (y in the page, height h) is in sight
+    function reveal(y: length, h: length) {
+        if (y < -settings-list.content-y) {
+            settings-list.content-y = -y + Theme.space-md;
+        } else if (y + h > settings-list.height - settings-list.content-y) {
+            settings-list.content-y = settings-list.height - y - h - Theme.space-md;
+        }
+    }
+
+    settings-list := Flickable {
         content-height: content.preferred-height;
 
         content := VerticalLayout {
@@ -375,11 +392,71 @@ export component SettingsView inherits Rectangle {
                         }
                     }
 
-                    for setting in root.system-settings: SettingRow {
+                    for setting[i] in root.system-settings: SettingRow {
                         label: setting.label;
-                        Stepper {
+                        // Keeps the encoder's row in sight
+                        property <bool> focused: i == root.system-focus;
+                        changed focused => {
+                            if (self.focused) {
+                                root.reveal(self.absolute-position.y - settings-list.absolute-position.y - settings-list.content-y, self.height);
+                            }
+                        }
+                        if setting.kind == "list": Rectangle {
+                            width: 220px;
+                            min-height: Theme.touch-target;
+                            border-radius: Theme.radius-md;
+                            background: list-ta.pressed ? Theme.surface-hover : Theme.surface-raised;
+                            border-width: Theme.border-width;
+                            border-color: Theme.border;
+                            opacity: root.system-busy ? 0.4 : 1.0;
+                            HorizontalLayout {
+                                padding-left: Theme.space-md;
+                                padding-right: Theme.space-sm;
+                                spacing: Theme.space-sm;
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: setting.value;
+                                    color: Theme.text-primary;
+                                    font-size: Theme.font-body;
+                                    font-weight: Theme.weight-semibold;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    Icon {
+                                        name: "chevron-right";
+                                        size: 16px;
+                                        color: Theme.text-secondary;
+                                    }
+                                }
+                            }
+                            list-ta := TouchArea {
+                                enabled: !root.system-busy;
+                                clicked => {
+                                    root.system-picker-index = max(0, setting.selected);
+                                    root.system-picker = i;
+                                }
+                            }
+                            if i == root.system-focus: FocusRing { }
+                        }
+                        if setting.kind == "segmented": Segmented {
+                            width: 220px;
+                            options: setting.choices;
+                            current-index: setting.selected;
+                            focused: i == root.system-focus;
+                            adjusting: root.system-adjusting;
+                            activated(k) => {
+                                if (!root.system-busy) {
+                                    root.system-pick(setting.key, k);
+                                }
+                            }
+                        }
+                        if setting.kind == "stepper": Stepper {
                             width: 220px;
                             text: setting.value;
+                            focused: i == root.system-focus;
+                            adjusting: root.system-adjusting;
                             can-decrement: setting.can-decrement && !root.system-busy;
                             can-increment: setting.can-increment && !root.system-busy;
                             decrement => {
@@ -404,6 +481,7 @@ export component SettingsView inherits Rectangle {
                         Button {
                             width: 140px;
                             text: "Cancel";
+                            focused: root.system-focus == root.system-settings.length;
                             enabled: !root.system-busy;
                             clicked => {
                                 root.system-revert();
@@ -413,6 +491,7 @@ export component SettingsView inherits Rectangle {
                             width: 140px;
                             text: "Apply";
                             variant: "primary";
+                            focused: root.system-focus == root.system-settings.length + 1;
                             enabled: !root.system-busy;
                             clicked => {
                                 root.system-apply();
@@ -1325,6 +1404,113 @@ export component SettingsView inherits Rectangle {
                 cancel => {
                     RemoteControl.draft = "";
                     RemoteControl.editing = false;
+                }
+            }
+        }
+    }
+
+    // ---------------- List of an Audio & system choice ----------------
+    // Like the block editor's list of options; the encoder turns through it
+    if root.system-picker >= 0 && root.system-picker < root.system-settings.length: sheet := Rectangle {
+        property <SystemSetting> setting: root.system-settings[root.system-picker];
+        background: Theme.scrim;
+
+        TouchArea {
+            clicked => {
+                root.system-picker = -1;
+            }
+        }
+
+        Card {
+            x: (parent.width - self.width) / 2;
+            y: Theme.space-lg;
+            width: 400px;
+            height: parent.height - 2 * Theme.space-lg;
+            background: Theme.surface-raised;
+
+            TouchArea { }
+
+            VerticalLayout {
+                padding: Theme.space-lg;
+                spacing: Theme.space-md;
+
+                HorizontalLayout {
+                    Text {
+                        horizontal-stretch: 1;
+                        text: sheet.setting.label;
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-caption;
+                        font-weight: Theme.weight-bold;
+                        letter-spacing: 0.8px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    Button {
+                        icon: "close";
+                        variant: "ghost";
+                        clicked => {
+                            root.system-picker = -1;
+                        }
+                    }
+                }
+
+                Flickable {
+                    vertical-stretch: 1;
+                    content-height: sheet.setting.choices.length * 52px;
+                    interactive: self.content-height > self.height;
+                    // Keeps the encoder's choice in sight, the current one when opening
+                    property <int> at: root.system-picker-index;
+                    function reveal() {
+                        let y = self.at * 52px;
+                        if (y < -self.content-y) {
+                            self.content-y = -y;
+                        } else if (y + 48px > self.height - self.content-y) {
+                            self.content-y = self.height - y - 48px;
+                        }
+                    }
+                    changed at => {
+                        self.reveal();
+                    }
+                    changed height => {
+                        self.reveal();
+                    }
+
+                    for label[k] in sheet.setting.choices: opt-row := Rectangle {
+                        property <bool> current: k == sheet.setting.selected;
+                        y: k * 52px;
+                        height: 48px;
+                        border-radius: Theme.radius-md;
+                        background: opt-ta.pressed ? Theme.surface-hover : self.current ? Theme.accent-soft : transparent;
+                        border-width: k == root.system-picker-index ? 2px : 0px;
+                        border-color: Theme.accent;
+
+                        HorizontalLayout {
+                            padding-left: Theme.space-md;
+                            padding-right: Theme.space-md;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: label;
+                                color: opt-row.current ? Theme.accent : Theme.text-primary;
+                                font-size: Theme.font-body;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            if opt-row.current: VerticalLayout {
+                                alignment: center;
+                                Icon {
+                                    name: "check";
+                                    color: Theme.accent;
+                                }
+                            }
+                        }
+
+                        opt-ta := TouchArea {
+                            clicked => {
+                                root.system-pick(sheet.setting.key, k);
+                                root.system-picker = -1;
+                            }
+                        }
+                    }
                 }
             }
         }
