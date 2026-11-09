@@ -1068,6 +1068,11 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
             let _ = slint::quit_event_loop();
         });
     });
+    // Without the OS image: quit from the menu; quitting saves the session
+    app.on_quit_app(|| {
+        info!("Quitting from the menu");
+        let _ = slint::quit_event_loop();
+    });
     on!(app, state, on_t3k_add_model, |app, state, uri, file| {
         let added = state.add_plugin(&uri).and_then(|id| {
             state.set_plugin_file(id, Some(file.to_string()))?;

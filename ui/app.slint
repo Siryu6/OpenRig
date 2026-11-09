@@ -466,6 +466,7 @@ export component App inherits Window {
     callback routing-set-fold(int, int);             // 0 = L+R, 1 = L, 2 = R
     callback routing-toggle(int, string);            // "mute" | "solo" | "invert"
     callback power(string);                          // "poweroff" | "reboot" | "restart" (the app)
+    callback quit-app();                             // without the OS image: save the session and quit
     in-out property <bool> power-dialog: false;
     private property <string> power-action: "";       // set once chosen
 
@@ -743,6 +744,7 @@ export component App inherits Window {
                     root.context-menu-items = [
                         { id: "tone3000", label: "TONE3000", icon: "plug", enabled: true },
                         { id: "settings", label: "Settings", icon: "settings", enabled: true },
+                        { id: "quit", label: "Quit OpenRig", icon: "power", enabled: true },
                     ];
                 } else if (Features.power) {
                     root.context-menu-items = [
@@ -752,6 +754,7 @@ export component App inherits Window {
                 } else {
                     root.context-menu-items = [
                         { id: "settings", label: "Settings", icon: "settings", enabled: true },
+                        { id: "quit", label: "Quit OpenRig", icon: "power", enabled: true },
                     ];
                 }
                 root.context-menu-x = root.width - 248px;
@@ -1530,6 +1533,8 @@ export component App inherits Window {
             } else if (id == "power") {
                 root.power-action = "";
                 root.power-dialog = true;
+            } else if (id == "quit") {
+                root.quit-app();
             }
         }
         close-menu => {
