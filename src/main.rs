@@ -1860,6 +1860,8 @@ fn main() -> Result<()> {
     #[cfg(not(feature = "midi"))]
     let network_midi = None;
     midi_ui::setup(&app, &state, network_midi);
+    // Drawn in memory for the remote: rounded gradients drawn flat
+    app.global::<Features>().set_flat(headless);
     #[cfg(feature = "remote")]
     remote_ui::setup(&app, &state, headless);
     let _routing_meters = routing_ui::setup(&app, &state, engine.as_deref());

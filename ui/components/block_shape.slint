@@ -1,3 +1,4 @@
+import { Features } from "../features.slint";
 import { Theme } from "../theme.slint";
 import { T3kMark } from "tone3000_brand.slint";
 
@@ -73,7 +74,7 @@ export component BlockShape {
 
     Rectangle {
         border-radius: root.radius;
-        background: @linear-gradient(180deg, root.face.brighter(0.15) 0%, root.face.darker(0.25) 100%);
+        background: Features.flat ? root.face : @linear-gradient(180deg, root.face.brighter(0.15) 0%, root.face.darker(0.25) 100%);
         border-width: 2px;
         border-color: root.trim;
         clip: true;

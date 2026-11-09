@@ -1,3 +1,4 @@
+import { Features } from "../features.slint";
 import { Theme } from "../theme.slint";
 import { Icon } from "icon.slint";
 
@@ -504,7 +505,8 @@ export component Knob inherits Rectangle {
         width: parent.width * 0.52;
         height: parent.height * 0.52;
         border-radius: self.width / 2;
-        background: ta.pressed ? @linear-gradient(180deg, #34383f 0%, #1e2126 100%)
+        background: Features.flat ? (ta.pressed ? #292c32 : #30343b)
+            : ta.pressed ? @linear-gradient(180deg, #34383f 0%, #1e2126 100%)
             : @linear-gradient(180deg, #41464f 0%, #1f2227 100%);
         border-width: 1px;
         border-color: #00000099;
