@@ -349,6 +349,22 @@ fn state_name(decision: Decision) -> &'static str {
     }
 }
 
+/// The session of each stop of the rotary encoder on the connected ones,
+/// one per button: Allow and Block for a waiting one, Block for an
+/// allowed one
+fn encoder_stops(sessions: &[NetMidiDevice]) -> Vec<i32> {
+    let mut stops = Vec::new();
+    for (i, session) in (0..).zip(sessions) {
+        let buttons = match session.state.as_str() {
+            "waiting" => 2,
+            "allowed" => 1,
+            _ => 0,
+        };
+        stops.extend(std::iter::repeat_n(i, buttons));
+    }
+    stops
+}
+
 fn address(session: &Session) -> String {
     session.ip.map_or_else(|| "?".into(), |ip| ip.to_string())
 }
@@ -473,6 +489,7 @@ fn refresh(app: &App) {
     app.set_netmidi_hostname(hostname.into());
     app.set_netmidi_summary(summary.into());
     if !same(&app.get_netmidi_sessions(), &sessions) {
+        app.set_netmidi_session_stops(model(encoder_stops(&sessions)));
         app.set_netmidi_sessions(model(sessions));
     }
     if !same(&app.get_netmidi_devices(), &devices) {
@@ -521,5 +538,28 @@ fn write_status(n: &mut NetMidi, summary: &str, sessions: &[(Session, Decision)]
             );
         }
         n.written = text;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encoder_stops_on_the_buttons_of_the_sessions() {
+        let session = |state: &str| NetMidiDevice {
+            name: "Mac".into(),
+            address: "192.168.1.20".into(),
+            state: state.into(),
+        };
+        let sessions = [
+            session("allowed"),
+            session("outside"),
+            session("waiting"),
+            session("blocked"),
+            session("allowed"),
+        ];
+        assert_eq!(encoder_stops(&sessions), [0, 2, 2, 4]);
+        assert!(encoder_stops(&[]).is_empty());
     }
 }

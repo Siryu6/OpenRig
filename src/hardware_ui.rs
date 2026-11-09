@@ -324,4 +324,90 @@ mod tests {
         assert_eq!((i2c.steps, i2c.reverse), (2, false));
         assert!(h.validate().is_ok());
     }
+
+    /// The rotary encoder never reaches its own settings on the Hardware
+    /// page: changing its pins or switching it off would cut it off
+    #[cfg(feature = "headless")]
+    #[test]
+    fn the_encoder_leaves_its_own_settings_alone() {
+        use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
+        use slint::platform::{Key, Platform, WindowAdapter, WindowEvent};
+
+        struct Test(Rc<MinimalSoftwareWindow>);
+        impl Platform for Test {
+            fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
+                Ok(self.0.clone())
+            }
+        }
+        let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+        window.set_size(slint::PhysicalSize::new(800, 480));
+        slint::platform::set_platform(Box::new(Test(window.clone()))).unwrap();
+        let app = App::new().unwrap();
+        app.global::<Features>().set_gpio(true);
+        app.set_footswitch_count(2);
+        app.set_hardware_footswitch_pins(crate::model(vec![17, 27]));
+        app.set_hardware_encoder(true);
+        app.set_hardware_i2c(true);
+        let calls = Rc::new(RefCell::new(Vec::<String>::new()));
+        let c = calls.clone();
+        app.on_hardware_step(move |what, _, _| c.borrow_mut().push(what.into()));
+        let c = calls.clone();
+        app.on_hardware_set_encoder(move |_| c.borrow_mut().push("set-encoder".into()));
+        let c = calls.clone();
+        app.on_hardware_set_encoder_button(move |_| {
+            c.borrow_mut().push("set-encoder-button".into())
+        });
+        let c = calls.clone();
+        app.on_tap_switch_changed(move |_| c.borrow_mut().push("tap".into()));
+        let c = calls.clone();
+        app.on_hardware_set_i2c(move |_| c.borrow_mut().push("i2c".into()));
+        app.show().unwrap();
+
+        let key = |k: Key| {
+            let text: slint::SharedString = k.into();
+            window.dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+            window.dispatch_event(WindowEvent::KeyReleased { text });
+        };
+        // Runs the changed callbacks (the focus back to the start on a
+        // new page)
+        let settle = || {
+            slint::platform::update_timers_and_animations();
+            window.request_redraw();
+            window.draw_if_needed(|r| {
+                let mut px = vec![slint::Rgb8Pixel::default(); 800 * 480];
+                r.render(&mut px, 800);
+            });
+        };
+        // Every stop, past the last: a press, a turn (adjusting it when it
+        // is a stepper), a press again
+        for stop in 0..12 {
+            app.set_current_view(0);
+            settle();
+            app.set_current_view(12);
+            settle();
+            for _ in 0..stop {
+                key(Key::RightArrow);
+            }
+            key(Key::Return);
+            key(Key::RightArrow);
+            key(Key::Return);
+        }
+        let calls = calls.borrow();
+        assert!(calls.iter().all(|c| !c.contains("encoder")), "{calls:?}");
+        // The rest of the page is reached
+        for what in [
+            "footswitches",
+            "footswitch",
+            "tap",
+            "i2c",
+            "i2c-module",
+            "i2c-steps",
+            "i2c-reverse",
+        ] {
+            assert!(
+                calls.iter().any(|c| c == what),
+                "{what} not reached: {calls:?}"
+            );
+        }
+    }
 }

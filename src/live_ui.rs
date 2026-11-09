@@ -351,6 +351,7 @@ pub fn refresh(app: &App, state: &AppState) {
                 label: crate::block_name(state, &chain, *instance_id, uri).into(),
                 icon: "footswitch".into(),
                 enabled: true,
+                badge: false,
             }),
             _ => None,
         })

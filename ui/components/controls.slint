@@ -578,6 +578,7 @@ export component Knob inherits Rectangle {
 // ---------------------------------------------------------------------------
 export component Segmented inherits Rectangle {
     in property <bool> focused: false;
+    in property <bool> adjusting: false;          // the encoder moves it
     in property <[string]> options;
     in property <int> current-index: 0;
     in property <length> font-size: Theme.font-small;
@@ -628,6 +629,7 @@ export component Segmented inherits Rectangle {
 
     if root.focused: FocusRing {
         radius: root.border-radius;
+        strong: root.adjusting;
     }
 }
 

@@ -303,7 +303,7 @@ fn show(
     }
 }
 
-/// One line for the settings card
+/// One line at the top of the Routing view
 fn summary(routing: &Routing, inputs: usize, outputs: usize) -> String {
     let plural = |n: usize, what: &str| format!("{n} {what}{}", if n == 1 { "" } else { "s" });
     let mut used: Vec<usize> = routing

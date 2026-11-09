@@ -10,6 +10,7 @@ mod hardware_ui;
 mod headless;
 mod level_history;
 mod live_ui;
+mod menu_ui;
 #[cfg(feature = "midi")]
 mod midi_io;
 mod midi_ui;
@@ -1852,6 +1853,7 @@ fn main() -> Result<()> {
     #[cfg(feature = "tone3000")]
     tone3000_ui::setup(&app, &state);
     wifi_ui::setup(&app);
+    menu_ui::setup(&app);
     #[cfg(feature = "update")]
     update_ui::setup(&app);
     #[cfg(feature = "store")]
