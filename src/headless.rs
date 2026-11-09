@@ -6,7 +6,9 @@
 //! keeps its picture and reports the areas that changed), and an event
 //! loop running Slint's timers and the closures of other threads. Nothing
 //! is drawn while no client shows the full editor; then at most
-//! `FRAME_MS` apart, and only what changed.
+//! `FRAME_MS` apart, and only what changed. Input from the client cuts
+//! the wait short: the frame showing its effect leaves as soon as the UI
+//! has handled it (no closer than `INPUT_FRAME_MS` to the last one).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -23,8 +25,12 @@ use pedalboard::remote::frames::{self, Encoding, Rect};
 use pedalboard::remote::protocol::{Command, PointerKind};
 use pedalboard::remote::Remote;
 
-/// Frames at most every FRAME_MS (20 per second)
-const FRAME_MS: u64 = 50;
+/// Frames at most every FRAME_MS (about 30 per second): animations and
+/// changes nobody asked for
+const FRAME_MS: u64 = 33;
+/// After input, the next frame waits only this long since the last one
+/// (moves come at most once per browser frame, so about 60 per second)
+const INPUT_FRAME_MS: u64 = 16;
 /// Window size until a client asks for one
 pub const DEFAULT_SIZE: (u32, u32) = (1024, 600);
 
@@ -59,6 +65,8 @@ thread_local! {
     static STREAM: RefCell<Option<Arc<Remote>>> = const { RefCell::new(None) };
     /// The pointer is down (a press not released yet)
     static PRESSED: Cell<bool> = const { Cell::new(false) };
+    /// Input arrived since the last frame: draw its effect without waiting
+    static INPUT: Cell<bool> = const { Cell::new(false) };
 }
 
 struct HeadlessPlatform {
@@ -152,9 +160,11 @@ impl Screen {
         }
         let since = self.last.elapsed();
         let period = Duration::from_millis(FRAME_MS);
-        if since < period {
-            return Some(period - since);
+        let gap = frame_gap(INPUT.with(Cell::get));
+        if since < gap {
+            return Some(gap - since);
         }
+        INPUT.with(|i| i.set(false));
         let keyframe = remote.take_keyframe();
         if keyframe {
             self.window.request_redraw();
@@ -225,6 +235,11 @@ impl Screen {
         }
         Some(period)
     }
+}
+
+/// Shortest time between two frames: shorter when input waits to be seen
+fn frame_gap(input: bool) -> Duration {
+    Duration::from_millis(if input { INPUT_FRAME_MS } else { FRAME_MS })
 }
 
 /// Make the app headless: call before the UI is created
@@ -301,4 +316,20 @@ pub fn input(command: Command) {
         }
     };
     window.dispatch_event(event);
+    // The loop draws right after this (it runs frame() once the events
+    // waiting are handled): show the result without the full period
+    INPUT.with(|i| i.set(true));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn input_shortens_the_wait_for_the_next_frame() {
+        assert_eq!(frame_gap(false), Duration::from_millis(FRAME_MS));
+        assert!(frame_gap(true) < frame_gap(false));
+        // Still a cap: never a frame per event
+        assert!(frame_gap(true) >= Duration::from_millis(8));
+    }
 }
