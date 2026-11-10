@@ -3,7 +3,7 @@ import { ParameterInfo, ModelChoice, FileSlot, ColorChoice, EqView, PlotHandle, 
 import { EqGraph } from "../components/eq_graph.slint";
 import { DynamicsGraph } from "../components/dynamics_graph.slint";
 import { ScopeGraph } from "../components/scope_graph.slint";
-import { Button, Badge, Card, EmptyState, Icon, Knob, Stepper, Toggle } from "../components/controls.slint";
+import { Button, Badge, Card, EmptyState, FocusHighlight, Icon, Knob, Stepper, Toggle } from "../components/controls.slint";
 import { Features } from "../features.slint";
 import { T3kMark, T3kPicture } from "../components/tone3000_brand.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
@@ -672,15 +672,6 @@ export component PluginEditor {
                         border-width: root.midi-learn-target == -1 ? 2px : 1px;
                         border-color: root.midi-learn-target == -1 ? Theme.accent : Theme.accent.with-alpha(0.35);
                     }
-                    if root.bypass-focused: Rectangle {
-                        x: -3px;
-                        y: -3px;
-                        width: parent.width + 6px;
-                        height: parent.height + 6px;
-                        border-radius: Theme.radius-md + 3px;
-                        border-width: 2px;
-                        border-color: Theme.accent;
-                    }
                     if root.bypass-midi != "": MidiTag {
                         x: parent.width - self.width - 4px;
                         y: 3px;
@@ -1108,12 +1099,15 @@ export component PluginEditor {
                     border-radius: Theme.radius-lg;
                     background: Theme.surface;
                     // Learning: only the control being learned is highlighted
-                    border-color: root.midi-learning ? (root.midi-learn-target == p.index ? Theme.accent : Theme.border)
-                        : i == root.focused-param ? Theme.accent : Theme.border;
-                    // Adjusting with the encoder: a thicker frame
-                    border-width: (root.midi-learning && root.midi-learn-target == p.index)
-                        || (root.adjusting && i == root.focused-param) ? 3px : 1px;
+                    border-color: root.midi-learning && root.midi-learn-target == p.index ? Theme.accent : Theme.border;
+                    border-width: root.midi-learning && root.midi-learn-target == p.index ? 3px : 1px;
                     opacity: root.bypassed ? 0.6 : 1.0;
+
+                    // The encoder's parameter (stronger while it adjusts it)
+                    if i == root.focused-param && !root.midi-learning: FocusHighlight {
+                        radius: Theme.radius-lg;
+                        strong: root.adjusting;
+                    }
 
                     // Name
                     Text {

@@ -4,4 +4,7 @@ import { ParameterInfo } from "types.slint";
 export global Encoder {
     // A parameter's value `steps` detents away from its current one
     pure callback step(ParameterInfo, int) -> float;
+    // The encoder (or the arrow keys) was used lately: the focus highlight
+    // shows only then, not to a player who only touches the screen
+    in-out property <bool> active: false;
 }

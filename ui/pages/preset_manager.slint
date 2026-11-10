@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
 import { PresetInfo } from "../types.slint";
-import { Badge, Button, EmptyState, SectionHeader, Segmented } from "../components/controls.slint";
+import { Badge, Button, EmptyState, FocusHighlight, SectionHeader, Segmented } from "../components/controls.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 import { Rigs, RigsPanel } from "rigs_view.slint";
 
@@ -130,8 +130,12 @@ export component PresetManager inherits Rectangle {
                     height: 64px;
                     border-radius: Theme.radius-lg;
                     background: self.confirming ? Theme.danger-soft : row-ta.pressed ? Theme.surface-hover : Theme.panel;
-                    border-width: i == root.focused ? 2px : 1px;
-                    border-color: self.confirming ? Theme.danger : self.is-current || i == root.focused ? Theme.accent : Theme.border;
+                    border-width: 1px;
+                    border-color: self.confirming ? Theme.danger : self.is-current ? Theme.accent : Theme.border;
+
+                    if i == root.focused: FocusHighlight {
+                        radius: Theme.radius-lg;
+                    }
 
                     row-ta := TouchArea {
                         enabled: !row.confirming;

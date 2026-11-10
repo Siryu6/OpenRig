@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
 import { LiveTile, MenuItem } from "../types.slint";
-import { Button, Card, Display, EmptyState, FocusRing, Icon, Segmented } from "../components/controls.slint";
+import { Button, Card, Display, EmptyState, FocusHighlight, Icon, Segmented } from "../components/controls.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 
 export { LiveTile }
@@ -119,7 +119,7 @@ component SwitchTile inherits Rectangle {
         }
     }
 
-    if root.focused: FocusRing {
+    if root.focused: FocusHighlight {
         radius: Theme.radius-lg;
     }
 }
@@ -219,7 +219,7 @@ export component LiveView inherits Rectangle {
 
             Display {
                 width: 220px;
-                if root.focused == root.tiles.length: FocusRing {
+                if root.focused == root.tiles.length: FocusHighlight {
                     radius: Theme.radius-lg;
                     strong: root.adjusting;
                 }
@@ -335,7 +335,7 @@ export component LiveView inherits Rectangle {
                         horizontal-alignment: center;
                     }
                 }
-                if root.focused == root.tiles.length + 1: FocusRing {
+                if root.focused == root.tiles.length + 1: FocusHighlight {
                     radius: Theme.radius-lg;
                 }
                 tap-ta := TouchArea {

@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
 import { LooperState, SavedLoopInfo } from "../types.slint";
-import { Badge, Button, Display, EmptyState, FocusRing, Icon, SectionHeader, Slider, Stepper } from "../components/controls.slint";
+import { Badge, Button, Display, EmptyState, FocusHighlight, Icon, SectionHeader, Slider, Stepper } from "../components/controls.slint";
 import { Plot } from "../components/plot.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 
@@ -73,7 +73,7 @@ component TransportButton inherits Rectangle {
         }
     }
 
-    if root.focused: FocusRing {
+    if root.focused: FocusHighlight {
         radius: Theme.radius-lg;
     }
 }
@@ -165,7 +165,7 @@ component TapKey inherits Rectangle {
             }
         }
     }
-    if root.focused: FocusRing { }
+    if root.focused: FocusHighlight { }
 }
 
 // Waveform of the loop (peaks 0..1 from its start to its end, mirrored
