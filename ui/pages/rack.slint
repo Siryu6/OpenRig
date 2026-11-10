@@ -429,33 +429,6 @@ export component PluginRack {
                         }
                     }
 
-                    // Dragged block, following the finger
-                    // Dragged block, above the finger so the drop slot stays visible
-                    if root.drag-index >= 0 && !root.dragged.is-split: BlockShape {
-                        x: (root.dragged.x + root.cell-width / 2 + root.origin-x) * 1px + root.drag-dx - self.width / 2;
-                        y: (root.dragged.y + canvas-area.origin-y) * 1px + root.drag-dy - self.height / 2 - (root.drag-moved ? 44px : 0);
-                        opacity: 0.9;
-                        kind: root.dragged.kind;
-                        name: root.dragged.name;
-                        tint: root.dragged.tint;
-                        tinted: root.dragged.tinted;
-                        bypassed: root.dragged.bypassed;
-                        t3k: root.dragged.t3k;
-                        picture: root.dragged.picture;
-                        has-picture: root.dragged.has-picture;
-                        selected: true;
-                    }
-                    if root.drag-index >= 0 && root.dragged.is-split: Rectangle {
-                        x: (root.dragged.x + root.cell-width / 2 + root.origin-x) * 1px + root.drag-dx - self.width / 2;
-                        y: (root.dragged.y + canvas-area.origin-y) * 1px + root.drag-dy - self.height / 2 - (root.drag-moved ? 44px : 0);
-                        width: root.split-d;
-                        height: root.split-d;
-                        border-radius: Theme.radius-lg;
-                        background: Theme.surface-hover;
-                        border-width: 2px;
-                        border-color: Theme.accent;
-                    }
-
                     // Empty chain hint
                     if root.positioned-nodes.length == 0: VerticalLayout {
                         x: (root.origin-x + 76) * 1px;
@@ -1155,5 +1128,35 @@ export component PluginRack {
                 }
             }
         }
+    }
+
+    // ---------------- Dragged block ----------------
+    // Last child of the page, so it is drawn above everything: the bottom
+    // panels, the trash, the top buttons. It is outside the canvas (which
+    // clips) and follows the finger in page coordinates. It sits above the
+    // finger so the drop slot under it stays visible.
+    if root.drag-index >= 0 && !root.dragged.is-split: BlockShape {
+        x: (root.dragged.x + root.cell-width / 2 + root.origin-x) * 1px + flick.content-x + root.drag-dx - self.width / 2;
+        y: (root.dragged.y + canvas-area.origin-y) * 1px + flick.content-y + root.drag-dy - self.height / 2 - (root.drag-moved ? 44px : 0);
+        opacity: 0.9;
+        kind: root.dragged.kind;
+        name: root.dragged.name;
+        tint: root.dragged.tint;
+        tinted: root.dragged.tinted;
+        bypassed: root.dragged.bypassed;
+        t3k: root.dragged.t3k;
+        picture: root.dragged.picture;
+        has-picture: root.dragged.has-picture;
+        selected: true;
+    }
+    if root.drag-index >= 0 && root.dragged.is-split: Rectangle {
+        x: (root.dragged.x + root.cell-width / 2 + root.origin-x) * 1px + flick.content-x + root.drag-dx - self.width / 2;
+        y: (root.dragged.y + canvas-area.origin-y) * 1px + flick.content-y + root.drag-dy - self.height / 2 - (root.drag-moved ? 44px : 0);
+        width: root.split-d;
+        height: root.split-d;
+        border-radius: Theme.radius-lg;
+        background: Theme.surface-hover;
+        border-width: 2px;
+        border-color: Theme.accent;
     }
 }
