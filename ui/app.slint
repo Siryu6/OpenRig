@@ -86,6 +86,22 @@ export component App inherits Window {
     private property <bool> pages-open: false;
     private property <int> pages-index: 0;
     private property <[int]> page-views: [0, 4, 9, 3, 5, 7];
+    // The encoder's focus is only highlighted while the encoder is in use
+    // (Encoder.active): from its first turn or press, until it rests a
+    // while. On the pages where the focus is otherwise hidden, that first
+    // turn or press only shows it
+    private property <bool> focus-hidden: !Encoder.active && (root.page-slots > 0 || root.current-view == 1);
+    function encoder-used() {
+        Encoder.active = true;
+        encoder-rest.restart();
+    }
+    encoder-rest := Timer {
+        interval: 20s;
+        running: Encoder.active && !root.adjusting && !root.arranging && !root.pages-open;
+        triggered => {
+            Encoder.active = false;
+        }
+    }
     // Focus on the presets, Live, looper and tuner pages
     private property <int> page-focus: 0;
     private property <int> page-slots: root.current-view == 4 ? root.presets.length
@@ -2104,6 +2120,8 @@ export component App inherits Window {
                     root.pages-index = max(0, min(root.page-views.length - 1, root.pages-index + d));
                 } else if (root.dialog-open) {
                     // Not behind it
+                } else if (root.focus-hidden) {
+                    // Shows where the focus is
                 } else if (root.current-view == 1 && root.adjusting && root.arranging) {
                     // Moves the picked parameter, the focus with it
                     root.arrange-parameter(root.selected-instance-id,
@@ -2148,6 +2166,7 @@ export component App inherits Window {
                 } else if (root.current-view == 2) {
                     root.browser-selected-index = max(0, min(root.available-plugins.length - 1, root.browser-selected-index + d));
                 }
+                root.encoder-used();
                 return accept;
             }
             // Press
@@ -2156,6 +2175,8 @@ export component App inherits Window {
                     root.open-page(root.pages-index);
                 } else if (root.dialog-open) {
                     // Not behind it
+                } else if (root.focus-hidden) {
+                    // Shows the focus before acting on it
                 } else if (root.current-view == 0 && root.add-focused) {
                     root.open-browser(0, -1);
                 } else if (root.current-view == 0) {
@@ -2206,6 +2227,7 @@ export component App inherits Window {
                         root.add-plugin(root.available-plugins[root.browser-selected-index].uri);
                     }
                 }
+                root.encoder-used();
                 return accept;
             }
             // Footswitches 1-8 and tap tempo, from a computer keyboard
@@ -2297,6 +2319,7 @@ export component App inherits Window {
                 } else {
                     root.open-pages();
                 }
+                root.encoder-used();
                 return accept;
             }
             return reject;

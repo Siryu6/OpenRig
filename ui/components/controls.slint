@@ -1,25 +1,23 @@
 import { Features } from "../features.slint";
 import { Theme } from "../theme.slint";
+import { Encoder } from "../encoder.slint";
 import { Icon } from "icon.slint";
 
 export { Icon }
 
 // ---------------------------------------------------------------------------
-// Encoder focus: a frame around its parent (thicker while the encoder
-// adjusts it)
+// Encoder focus: an accent tint over its parent, in the parent's own shape
+// (give its corner radius), with a lit edge; a stronger tint and edge while
+// the encoder adjusts it. Shown only once the encoder is in use.
 // ---------------------------------------------------------------------------
-export component FocusRing inherits Rectangle {
+export component FocusHighlight inherits Rectangle {
     in property <length> radius: Theme.radius-md;
     in property <bool> strong: false;
-    Rectangle {
-        x: -3px;
-        y: -3px;
-        width: parent.width + 6px;
-        height: parent.height + 6px;
-        border-radius: root.radius + 3px;
-        border-width: root.strong ? 3px : 2px;
-        border-color: Theme.accent;
-    }
+    visible: Encoder.active;
+    border-radius: root.radius;
+    background: Theme.accent.with-alpha(root.strong ? 0.22 : 0.12);
+    border-width: root.strong ? 2px : 1px;
+    border-color: Theme.accent.with-alpha(root.strong ? 1.0 : 0.75);
 }
 
 // ---------------------------------------------------------------------------
@@ -138,7 +136,7 @@ export component Button inherits Rectangle {
         }
     }
 
-    if root.focused: FocusRing {
+    if root.focused: FocusHighlight {
         radius: root.border-radius;
     }
 }
@@ -319,8 +317,11 @@ export component Toggle inherits Rectangle {
         }
     }
 
-    if root.focused: FocusRing {
-        radius: Theme.touch-target / 2;
+    // On the switch itself, not the taller touch area around it
+    if root.focused: FocusHighlight {
+        y: track.y;
+        height: track.height;
+        radius: track.border-radius;
     }
 }
 
@@ -409,7 +410,7 @@ export component Slider inherits Rectangle {
         }
     }
 
-    if root.focused: FocusRing {
+    if root.focused: FocusHighlight {
         radius: Theme.radius-md;
         strong: root.adjusting;
     }
@@ -429,6 +430,8 @@ export component Knob inherits Rectangle {
     in property <float> maximum: 1.0;
     in property <bool> integer: false;
     in property <bool> focused: false;
+    // The encoder is on it, and in use
+    private property <bool> lit: root.focused && Encoder.active;
     in property <bool> enabled: true;
     in property <length> size: 76px;
     in property <color> accent: Theme.accent;      // value arc (the block's colour)
@@ -479,7 +482,7 @@ export component Knob inherits Rectangle {
         height: 100%;
         viewbox-width: 100;
         viewbox-height: 100;
-        stroke: root.focused || ta.pressed ? root.accent.brighter(0.25) : root.accent;
+        stroke: root.lit || ta.pressed ? root.accent.brighter(0.25) : root.accent;
         stroke-width: 6px;
         fill: transparent;
         commands: "M 18.89 81.11 A 44 44 0 " + (270 * root.norm > 180 ? "1" : "0") + " 1 "
@@ -495,7 +498,7 @@ export component Knob inherits Rectangle {
         border-radius: self.width / 2;
         background: #0c0d10;
         border-width: 1px;
-        border-color: root.focused ? root.accent : #30343c;
+        border-color: root.lit ? root.accent : #30343c;
     }
 
     // Cap: lit from above
@@ -627,7 +630,7 @@ export component Segmented inherits Rectangle {
         }
     }
 
-    if root.focused: FocusRing {
+    if root.focused: FocusHighlight {
         radius: root.border-radius;
         strong: root.adjusting;
     }
@@ -680,7 +683,7 @@ export component Stepper inherits Rectangle {
         }
     }
 
-    if root.focused: FocusRing {
+    if root.focused: FocusHighlight {
         radius: root.border-radius;
         strong: root.adjusting;
     }

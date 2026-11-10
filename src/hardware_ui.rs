@@ -362,6 +362,8 @@ mod tests {
         let c = calls.clone();
         app.on_hardware_set_i2c(move |_| c.borrow_mut().push("i2c".into()));
         app.show().unwrap();
+        // In use: no first turn or press spent showing the focus
+        app.global::<crate::Encoder>().set_active(true);
 
         let key = |k: Key| {
             let text: slint::SharedString = k.into();

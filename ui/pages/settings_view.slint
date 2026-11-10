@@ -1,5 +1,5 @@
 import { Theme } from "../theme.slint";
-import { Button, Card, FocusRing, Icon, SectionHeader, Segmented, Stepper, Toggle } from "../components/controls.slint";
+import { Button, Card, FocusHighlight, Icon, SectionHeader, Segmented, Stepper, Toggle } from "../components/controls.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 import { NetMidiDevice, SystemSetting, WifiNetwork } from "../types.slint";
 import { Tone3000Logo } from "../components/tone3000_brand.slint";
@@ -304,7 +304,7 @@ export component SettingsView inherits Rectangle {
                                 }
                             }
 
-                            if root.encoder-what == "wifi-network" && root.encoder-index == i: FocusRing { }
+                            if root.encoder-what == "wifi-network" && root.encoder-index == i: FocusHighlight { }
 
                             HorizontalLayout {
                                 padding-left: Theme.space-md;
@@ -468,7 +468,7 @@ export component SettingsView inherits Rectangle {
                                     root.system-picker = i;
                                 }
                             }
-                            if root.encoder-what == "system" && root.encoder-index == i: FocusRing { }
+                            if root.encoder-what == "system" && root.encoder-index == i: FocusHighlight { }
                         }
                         if setting.kind == "segmented": Segmented {
                             width: 220px;
@@ -1360,7 +1360,7 @@ export component SettingsView inherits Rectangle {
                         }
                     }
                 }
-                if root.encoder-what == "hardware": FocusRing {
+                if root.encoder-what == "hardware": FocusHighlight {
                     radius: Theme.radius-lg;
                 }
             }
