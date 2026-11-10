@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.2](https://github.com/Siryu6/OpenRig/compare/v0.14.1...v0.14.2) - 2026-11-10
+
+### Fixed
+
+- *(rack)* draw the dragged block above the bottom panels and the trash ([#126](https://github.com/Siryu6/OpenRig/pull/126))
+- *(ui)* show the encoder focus only while the encoder is in use ([#124](https://github.com/Siryu6/OpenRig/pull/124))
+
 ## [0.14.1](https://github.com/Siryu6/OpenRig/compare/v0.14.0...v0.14.1) - 2026-11-09
 
 ### Fixed
