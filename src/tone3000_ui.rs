@@ -24,6 +24,8 @@ use crate::{model, spawn, App, Features, T3kModel, T3kTone};
 
 /// View index of the settings page
 const SETTINGS_VIEW: i32 = 7;
+/// View index of the library page
+const LIBRARY_VIEW: i32 = 8;
 /// Tab index of the search results, after the lists
 const SEARCH_TAB: usize = List::ALL.len();
 
@@ -389,7 +391,8 @@ fn fail(weak: &slint::Weak<App>, shared: &Arc<Shared>, error: AuthError) {
                 error!(error = format_args!("{e:#}"), "TONE3000 sign-out not saved");
             }
             apply(&app, &settings);
-            if app.get_current_view() > SETTINGS_VIEW {
+            // Only the library needs the account: other pages stay
+            if app.get_current_view() == LIBRARY_VIEW {
                 app.set_current_view(SETTINGS_VIEW);
             }
         }
