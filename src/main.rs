@@ -44,6 +44,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
+use pedalboard::audio::latency::frames_to_ms;
 use pedalboard::audio::{jack_client, AudioEngine, ChainNode, SplitType};
 use pedalboard::midi::MidiTarget;
 use pedalboard::monitor::{self, Level, SystemMonitor};
@@ -1605,6 +1606,11 @@ fn start_monitor_timer(app: &App, engine: Option<Rc<AudioEngine>>) -> slint::Tim
                 _ => -1.0,
             };
             app.set_selected_cpu(load);
+            let rate = engine.as_ref().map_or(48_000.0, |e| e.sample_rate());
+            let block_latency = id(selected)
+                .and_then(|i| pedalboard::audio::latency::BlockLatency::global().get(i))
+                .map_or(0.0, |frames| frames_to_ms(frames as usize, rate));
+            app.set_selected_latency_ms(block_latency);
             last_block = spent.map(|s| (selected, s, now));
 
             if level > last_level {
@@ -1628,9 +1634,14 @@ fn start_monitor_timer(app: &App, engine: Option<Rc<AudioEngine>>) -> slint::Tim
                 memory_used_mb: stats.memory_used_mb.unwrap_or(0) as i32,
                 memory_total_mb: stats.memory_total_mb.unwrap_or(0) as i32,
                 xruns: xruns as i32,
-                latency_ms: engine
-                    .as_ref()
-                    .map_or(-1.0, |e| e.buffer_size() as f32 / e.sample_rate() * 1000.0),
+                latency_ms: engine.as_ref().map_or(-1.0, |e| {
+                    // Before JACK has a path to report: one period
+                    let frames = e.round_trip_latency().unwrap_or(e.buffer_size() as u32);
+                    frames_to_ms(frames as usize, e.sample_rate())
+                }),
+                effects_latency_ms: engine.as_ref().map_or(0.0, |e| {
+                    frames_to_ms(e.effects_latency() as usize, e.sample_rate())
+                }),
                 buffer_info: engine
                     .as_ref()
                     .map(|e| format!("{} @ {:.1} kHz", e.buffer_size(), e.sample_rate() / 1000.0))

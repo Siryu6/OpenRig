@@ -215,7 +215,9 @@ export component ResourcePanel inherits Rectangle {
                 Fact {
                     label: "LATENCY";
                     value: root.status.latency-ms < 0 ? "n/a"
-                        : round(root.status.latency-ms * 10) / 10 + " ms";
+                        : round(root.status.latency-ms * 10) / 10 + " ms"
+                            + (root.status.effects-latency-ms > 0.05
+                                ? " · fx " + round(root.status.effects-latency-ms * 10) / 10 : "");
                 }
                 Fact {
                     label: "BUFFER";
