@@ -60,7 +60,9 @@ them from **EQ** or **LIMIT** on an output card.
 - The limiter works on sample peaks. A converter can still make peaks a
   little higher between samples, so −1 dB leaves room for them.
 - While the limiter is on, the output is 1 ms late. Outputs without a
-  limiter are not delayed, so two outputs can be 1 ms apart.
+  limiter are not delayed, so two outputs can be 1 ms apart. JACK knows
+  each output's latency (see [Latency](#latency)), so a recorder can
+  realign them.
 - The **GR** meter under each output shows how much the limiter takes off.
 - Turning the EQ, a band or the limiter on or off fades over 10 ms.
 
@@ -135,6 +137,40 @@ another output or bring another instrument in. A return on an input the
 interface does not have plays silence (scaled by its mix), so a preset made
 on a larger interface still loads.
 
+## Latency
+
+Some blocks are late: an LV2 plugin reports how many frames on its
+`lv2:reportsLatency` control output (a lookahead compressor, a pitch
+shifter, a linear-phase EQ), and the limiter looks 1 ms ahead. The value is
+read after every period, so a plugin can change it at any time.
+
+Wherever two paths meet again, the earlier one is delayed to match:
+
+- **Splits.** The branches of a Mix or L/R split arrive together, so a
+  wet/dry mix has no comb filtering. An A/B split is as late as its latest
+  branch, whichever is selected, so switching never shifts the timing.
+- **Bypass.** A late block that is bypassed keeps its latency: its dry
+  signal is delayed by as much. Bypassing does not move the sound in time,
+  and the bypass crossfade does not comb.
+- **Returns.** A Return delays its input by the latency of the chain before
+  it, so the input meets the signal at its place. After a Send on the same
+  path (an effect loop), only the latency since that Send is added.
+- **Sends** are not delayed. Each bus has a latency range, reported to
+  JACK with the output that plays it.
+
+Each delay line holds up to 100 ms and is allocated when the chain is
+built; a chain without late blocks has none. A change of delay crossfades
+from the old to the new delay over 10 ms, so it never clicks. Presets made
+before need no change.
+
+The latency is reported to JACK (`jack_port_set_latency_range`, in the
+latency callback): each output adds its effects, send or limiter to the
+latency of the input it comes from, and the effects input reports the
+outputs it feeds. A change is passed on within 250 ms. The DSP panel shows
+the latency from input to output, JACK periods included, and what the
+effects add (`6.3 ms · fx 1.0`); the block editor shows a block's latency
+when it has some.
+
 ## Code
 
 - `src/audio/routing.rs`: `Routing`, `Strip`, and `OutputRouter` (the
@@ -145,5 +181,8 @@ on a larger interface still loads.
   `RETURN_URI`, their parameters).
 - `src/plugins/chain.rs`: `ChainIo`, and `RouteProc` that runs those
   blocks.
-- `src/audio/jack_client.rs`: the ports and the callback.
+- `src/audio/latency.rs`: `DelayLine`, and the latency reports
+  (`LatencyReport`, `BlockLatency`).
+- `src/audio/jack_client.rs`: the ports, the callback and the JACK
+  latency callback.
 - `src/routing_ui.rs` and `ui/pages/routing_view.slint`: the Routing page.
