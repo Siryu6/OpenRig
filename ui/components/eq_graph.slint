@@ -13,6 +13,10 @@ export component EqGraph inherits Rectangle {
     in property <Spectrum> spectrum;
     in property <color> accent: Theme.accent;
     in property <bool> bypassed: false;
+    // The plot that sets the proportions of the block views (PlotEvents.resized);
+    // another one reports its size with plot-sized
+    in property <bool> wide: true;
+    callback plot-sized(length, length);
 
     private property <color> line: root.eq.enabled && !root.bypassed ? root.accent : Theme.text-muted;
 
@@ -26,8 +30,11 @@ export component EqGraph inherits Rectangle {
         y: 12px;
         width: parent.width - 52px;
         height: parent.height - 34px;
-        wide: true;
+        wide: root.wide;
         rows: [];
+        sized(w, h) => {
+            root.plot-sized(w, h);
+        }
 
         // Gain grid, 6 dB apart
         for db in [18, 12, 6, 0, -6, -12, -18]: Rectangle {

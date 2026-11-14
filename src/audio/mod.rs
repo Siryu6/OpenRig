@@ -4,6 +4,7 @@ pub mod engine;
 pub mod jack_client;
 pub mod loop_files;
 pub mod looper;
+pub mod master;
 pub mod routing;
 pub mod spectrum;
 pub mod split_chain;

@@ -253,6 +253,33 @@ export struct RoutingOutput {
     mute: bool,
     solo: bool,
     invert: bool,
+    eq-on: bool,        // its global EQ is on
+    limiter-on: bool,   // its limiter is on
+}
+
+// The EQ or limiter of an output being edited (Routing view)
+export struct RoutingMaster {
+    shown: bool,
+    port: int,              // first output of the strip
+    title: string,          // "OUT 1–2"
+    tab: int,               // 0 = EQ, 1 = limiter
+    eq-on: bool,
+    band: int,              // band selected, 0 = low cut … 5 = high cut
+    band-on: bool,
+    has-gain: bool,         // shelves and mids
+    has-q: bool,            // mids
+    freq: float,            // 0..1 across the frequency axis (log)
+    freq-text: string,
+    gain: float,            // dB
+    gain-text: string,
+    q: float,
+    q-text: string,
+    limiter-on: bool,
+    ceiling: float,         // dBFS
+    ceiling-text: string,
+    release: float,         // 0..1 (log, 10 to 1000 ms)
+    release-text: string,
+    latency-text: string,   // what the limiter adds
 }
 
 // A block of the preset, with its return and send (Routing view)
