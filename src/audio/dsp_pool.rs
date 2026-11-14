@@ -10,11 +10,13 @@
 //! for the result by spinning, since the job runs on another core and takes
 //! a fraction of the period. Workers take the scheduling class and priority
 //! of the thread handing them work (the JACK thread, `SCHED_FIFO`), so they
-//! are as real-time as it is.
+//! are as real-time as it is. A job that panics panics its caller too, once
+//! the job is over: a plugin failing on a worker is handled like one failing
+//! on the audio thread (`chain_switcher` drops the chain and rebuilds it).
 
 use std::cell::UnsafeCell;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread::{self, Thread};
 use std::time::{Duration, Instant};
@@ -50,6 +52,8 @@ struct Worker {
     sched: AtomicU64,
     /// Jobs run, for the tests and the monitor
     jobs: AtomicUsize,
+    /// The last job panicked: its caller panics in turn
+    panicked: AtomicBool,
 }
 
 impl Worker {
@@ -107,6 +111,7 @@ pub fn start(workers: usize) {
                 thread: OnceLock::new(),
                 sched: AtomicU64::new(0),
                 jobs: AtomicUsize::new(0),
+                panicked: AtomicBool::new(false),
             })
             .collect(),
         active: AtomicUsize::new(0),
@@ -255,13 +260,24 @@ impl Drop for Crew {
     }
 }
 
-/// Waits for the worker's job, then frees the worker
+/// A job run on a worker panicked
+#[derive(Debug)]
+pub struct JobPanicked;
+
+/// Waits for the worker's job, then frees the worker. Panics if the job
+/// did (unless the caller is already panicking)
 struct WaitDone(&'static Worker);
 
 impl Drop for WaitDone {
     fn drop(&mut self) {
         spin_until(|| self.0.state.load(Ordering::Acquire) == DONE);
+        // Read before the worker is free for another job (DONE, Acquire)
+        let panicked = self.0.panicked.swap(false, Ordering::Relaxed);
         self.0.state.store(IDLE, Ordering::Release);
+        if panicked && !thread::panicking() {
+            // A unit payload: nothing allocated for it
+            std::panic::resume_unwind(Box::new(JobPanicked));
+        }
     }
 }
 
@@ -316,12 +332,11 @@ fn run_worker(worker: &'static Worker) {
         let job = unsafe { (*worker.job.get()).take() };
         if let Some(job) = job {
             // A panicking job must still report DONE, or its caller spins
-            // forever; the rest of the chain goes on
+            // forever; the caller panics in its place (the panic hook has
+            // already printed it)
             // SAFETY: see `join`
-            // (A log off the audio thread, once per panic: the panic hook
-            // has already printed it)
             if catch_unwind(AssertUnwindSafe(|| unsafe { (job.run)(job.data) })).is_err() {
-                warn!("DSP job panicked, its part of the period is lost");
+                worker.panicked.store(true, Ordering::Relaxed);
             }
         }
         worker.jobs.fetch_add(1, Ordering::Relaxed);
@@ -421,6 +436,26 @@ mod tests {
         }
         // Its workers are free again
         assert_eq!(super::crew(3).len(), len);
+
+        // A job that panics on a worker panics its caller, once both
+        // sides are done
+        let mut done = false;
+        let caught = catch_unwind(AssertUnwindSafe(|| {
+            join(|| done = true, || panic!("job"));
+        }));
+        assert!(caught.is_err());
+        assert!(done);
+        // (Run here when the pool is busy with other tests: no panic then)
+        let crew = super::crew(2);
+        let on_workers = !crew.is_empty();
+        let caught = catch_unwind(AssertUnwindSafe(|| {
+            crew.run(&|k| assert_ne!(k, 1, "part"));
+        }));
+        assert_eq!(caught.is_err(), on_workers);
+        // The workers are well again
+        let mut c = 0;
+        join(|| (), || c = 7);
+        assert_eq!(c, 7);
 
         // Turned off: everything here again
         start(0);
