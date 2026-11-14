@@ -89,6 +89,11 @@ impl Server {
                             return;
                         }
                     };
+                    // Small messages (a knob, a pong) leave at once, not
+                    // after the acknowledgement of the previous ones
+                    let listener = axum::serve::ListenerExt::tap_io(listener, |tcp| {
+                        let _ = tcp.set_nodelay(true);
+                    });
                     let app = router(state);
                     let served = axum::serve(
                         listener,
