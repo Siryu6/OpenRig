@@ -141,7 +141,8 @@ export struct ResourceStatus {
     memory-used-mb: int,
     memory-total-mb: int,
     xruns: int,             // audio dropouts since start
-    latency-ms: float,      // one buffer period
+    latency-ms: float,      // input to output, JACK periods included, -1 unknown
+    effects-latency-ms: float, // what the effects add (latent plugins, limiter)
     buffer-info: string,    // "128 frames @ 48 kHz"
     throttling: string,     // Raspberry Pi firmware state ("" = not available)
     level: int,             // 0 ok, 1 warning, 2 critical

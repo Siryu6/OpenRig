@@ -77,6 +77,16 @@ impl AudioEngine {
         self.jack.stopped.load(Ordering::Relaxed)
     }
 
+    /// Latency of the effects alone, frames
+    pub fn effects_latency(&self) -> u32 {
+        self.jack.latency.chain()
+    }
+
+    /// Input to output through the effects, frames, JACK periods included
+    pub fn round_trip_latency(&self) -> Option<u32> {
+        self.jack.round_trip_latency()
+    }
+
     /// DSP load of the whole JACK graph as reported by the server (0..1),
     /// including the other clients
     pub fn jack_load(&self) -> f32 {

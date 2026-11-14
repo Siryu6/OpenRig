@@ -82,6 +82,13 @@ What OpenRig does, in more technical detail than the
   shows the tone picture.
 - **Chain with splits**: serial chain plus nested A/B, Mix and L/R splits;
   a split's type can be changed from the rack (its blocks are kept).
+- **Latency compensation**: a plugin that reports latency
+  (`lv2:reportsLatency`, e.g. a lookahead compressor or a pitch shifter)
+  stays in time with the rest. The other branch of a split, the dry signal
+  of its bypass and a Return after it are delayed to match, so a wet/dry mix
+  has no comb filtering (up to 100 ms per path). A change of latency fades
+  over 10 ms, without a click. The total is reported to JACK, so a recorder
+  can align what it records. See [ROUTING.md](ROUTING.md#latency).
 - **Inputs and outputs** (⋮ → Routing): every input and output of the
   interface (up to 16 each). One input feeds the effects; each output or stereo pair plays
   the main mix, one of 4 sends, or an input passed straight through, with
@@ -197,9 +204,10 @@ What OpenRig does, in more technical detail than the
   audio callback vs. the buffer period) and the SoC temperature, coloured
   green / orange / red. Tapping it opens the details: DSP average and peak,
   JACK load, CPU (total and busiest core), memory, dropouts (xruns), latency
+  (input to output, and what the effects add: "6.3 ms · fx 1.0")
   and, on the Pi, under-voltage / throttling. Adding an effect while the load
   is already high shows a warning. The block editor shows the share of a
-  CPU core the block uses.
+  CPU core the block uses, and its latency when it adds some.
 - **MIDI** (feature `midi`, default): every USB / DIN MIDI input is heard,
   hot-plugged. Helix-compatible map: Program Change and CC0 banks for
   presets (or setlist slots), CC69 scenes, CC64 tap, CC68 tuner, CC49–56

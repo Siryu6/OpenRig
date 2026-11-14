@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 use super::chain_switcher::ChainControl;
+use super::latency::{LatencyReport, OutputSource};
 use super::routing::{OutputRouter, PortMeter, Routing, RoutingControl, MAX_PORTS, MAX_SENDS};
 use super::{ChainSwitcher, Looper, Tuner, TunerResult};
 use crate::monitor::{DspMeter, LevelMeter};
@@ -16,6 +17,8 @@ use crate::plugins::Lv2Host;
 
 /// Preset/chain switch crossfade
 const CROSSFADE_MS: f32 = 20.0;
+/// How often a change of latency is looked for, to tell JACK
+const LATENCY_POLL: Duration = Duration::from_millis(250);
 
 /// Running JACK client plus the handles to control it
 pub struct ActiveJack {
@@ -30,6 +33,11 @@ pub struct ActiveJack {
     pub stopped: Arc<AtomicBool>,
     pub sample_rate: f32,
     pub buffer_size: usize,
+    /// Latency of the effects and of each output
+    pub latency: Arc<LatencyReport>,
+    /// Tells JACK when the latency changes. After `client`: dropped once
+    /// the client is closed, as the latency callback reads it
+    _latency_watch: LatencyWatch,
 }
 
 /// JACK client builder that creates and activates the audio client
@@ -112,6 +120,24 @@ impl JackClientBuilder {
         let meter = Arc::new(DspMeter::default());
         let levels = Arc::new(LevelMeter::default());
         let ports = Arc::new(PortMeter::default());
+        let latency = Arc::new(LatencyReport::default());
+        let latency_ports = Box::new(LatencyPorts {
+            report: latency.clone(),
+            inputs: in_ports.iter().map(|p| p.raw() as usize).collect(),
+            outputs: out_ports.iter().map(|p| p.raw() as usize).collect(),
+        });
+        // SAFETY: a client not yet active; the ports outlive the callback's
+        // data, which outlives the client (see `ActiveJack`)
+        let set = unsafe {
+            jack_sys::jack_set_latency_callback(
+                client.raw(),
+                Some(latency_callback),
+                &*latency_ports as *const LatencyPorts as *mut std::ffi::c_void,
+            )
+        };
+        if set != 0 {
+            warn!("JACK refused the latency callback: other clients will not see the effects' latency");
+        }
         let processor = PedalboardProcessor {
             meter: meter.clone(),
             levels: levels.clone(),
@@ -128,6 +154,7 @@ impl JackClientBuilder {
             sends: std::array::from_fn(|_| {
                 [vec![0.0; buffer_size.max(1)], vec![0.0; buffer_size.max(1)]]
             }),
+            latency: latency.clone(),
         };
 
         let stopped = Arc::new(AtomicBool::new(false));
@@ -141,6 +168,7 @@ impl JackClientBuilder {
             )
             .context("Failed to activate JACK client")?;
         connect_system_ports(client.as_client(), &self.client_name, &captures, &playbacks);
+        let latency_watch = LatencyWatch::start(client.as_client(), latency.clone(), latency_ports);
 
         info!("JACK client active");
         Ok(ActiveJack {
@@ -153,6 +181,8 @@ impl JackClientBuilder {
             stopped,
             sample_rate,
             buffer_size,
+            latency,
+            _latency_watch: latency_watch,
         })
     }
 }
@@ -215,6 +245,135 @@ fn list(items: &[String]) -> String {
     }
 }
 
+impl ActiveJack {
+    /// Input to output, frames, through the effects: what the capture
+    /// side, the effects and the limiter, and the playback side add up to
+    /// on the first output playing the effects. None when none does.
+    pub fn round_trip_latency(&self) -> Option<u32> {
+        let ports = &self._latency_watch._ports;
+        let (index, own) = (0..ports.outputs.len())
+            .map(|i| (i, self.latency.output(i)))
+            .find(|(_, own)| own.source == OutputSource::Effects)?;
+        let capture = ports
+            .inputs
+            .get(own.input)
+            .map_or(0, |&input| get_range(input, jack_sys::JackCaptureLatency).1);
+        let playback = get_range(ports.outputs[index], jack_sys::JackPlaybackLatency).1;
+        Some(capture + own.max + playback)
+    }
+}
+
+/// What the latency callback reads: the latencies, and the raw pointers of
+/// the ports (`jack_port_t`), valid while the client is open
+struct LatencyPorts {
+    report: Arc<LatencyReport>,
+    inputs: Vec<usize>,
+    outputs: Vec<usize>,
+}
+
+type RawPort = *mut jack_sys::jack_port_t;
+
+fn get_range(port: usize, mode: jack_sys::jack_latency_callback_mode_t) -> (u32, u32) {
+    let mut range = jack_sys::jack_latency_range_t { min: 0, max: 0 };
+    // SAFETY: a port of the open client
+    unsafe { jack_sys::jack_port_get_latency_range(port as RawPort, mode, &mut range) };
+    (range.min, range.max)
+}
+
+fn set_range(port: usize, mode: jack_sys::jack_latency_callback_mode_t, (min, max): (u32, u32)) {
+    let mut range = jack_sys::jack_latency_range_t { min, max };
+    // SAFETY: a port of the open client, in its latency callback
+    unsafe { jack_sys::jack_port_set_latency_range(port as RawPort, mode, &mut range) };
+}
+
+/// JACK asks for the latency of the ports: an output is as late as the
+/// input it comes from, plus the effects (or the send) and its limiter;
+/// an input is as early as the outputs it feeds need
+unsafe extern "C" fn latency_callback(
+    mode: jack_sys::jack_latency_callback_mode_t,
+    arg: *mut std::ffi::c_void,
+) {
+    // SAFETY: the `LatencyPorts` registered with the callback, alive as
+    // long as the client
+    let Some(ports) = (unsafe { (arg as *const LatencyPorts).as_ref() }) else {
+        return;
+    };
+    let report = &ports.report;
+    if mode == jack_sys::JackCaptureLatency {
+        for (index, &port) in ports.outputs.iter().enumerate() {
+            let own = report.output(index);
+            let (min, max) = ports
+                .inputs
+                .get(own.input)
+                .map_or((0, 0), |&input| get_range(input, mode));
+            set_range(port, mode, (min + own.min, max + own.max));
+        }
+    } else {
+        for (index, &port) in ports.inputs.iter().enumerate() {
+            let mut range: Option<(u32, u32)> = None;
+            for (out, &out_port) in ports.outputs.iter().enumerate() {
+                let own = report.output(out);
+                if own.source == OutputSource::Silent || own.input != index {
+                    continue;
+                }
+                let (min, max) = get_range(out_port, mode);
+                let (min, max) = (min + own.min, max + own.max);
+                range = Some(range.map_or((min, max), |(a, b)| (a.min(min), b.max(max))));
+            }
+            set_range(port, mode, range.unwrap_or((0, 0)));
+        }
+    }
+}
+
+/// Thread telling JACK to ask for the latencies again whenever they change
+struct LatencyWatch {
+    /// The client while it is open; None tells the thread to stop
+    client: Arc<Mutex<Option<usize>>>,
+    // Read by the latency callback until the client is closed
+    _ports: Box<LatencyPorts>,
+}
+
+impl LatencyWatch {
+    fn start(client: &Client, report: Arc<LatencyReport>, ports: Box<LatencyPorts>) -> Self {
+        let shared = Arc::new(Mutex::new(Some(client.raw() as usize)));
+        let open = shared.clone();
+        let spawned = std::thread::Builder::new()
+            .name("jack-latency".to_string())
+            .spawn(move || {
+                let mut seen = report.version();
+                loop {
+                    std::thread::sleep(LATENCY_POLL);
+                    let client = open.locked();
+                    let Some(raw) = *client else { break };
+                    let version = report.version();
+                    if version != seen {
+                        seen = version;
+                        // SAFETY: the client is open while the lock is held
+                        // (`Drop` takes it before the client closes)
+                        unsafe {
+                            jack_sys::jack_recompute_total_latencies(
+                                raw as *mut jack_sys::jack_client_t,
+                            )
+                        };
+                    }
+                }
+            });
+        if let Err(e) = spawned {
+            warn!(error = %e, "No thread to report latency changes to JACK");
+        }
+        Self {
+            client: shared,
+            _ports: ports,
+        }
+    }
+}
+
+impl Drop for LatencyWatch {
+    fn drop(&mut self) {
+        self.client.locked().take();
+    }
+}
+
 /// JACK server events
 pub struct Notifications {
     meter: Arc<DspMeter>,
@@ -256,6 +415,8 @@ pub struct PedalboardProcessor {
     scratch: [Vec<f32>; 2],
     /// Send buses (left, right), filled by the chain every period
     sends: [[Vec<f32>; 2]; MAX_SENDS],
+    /// Where the latency of each output goes
+    latency: Arc<LatencyReport>,
 }
 
 impl ProcessHandler for PedalboardProcessor {
@@ -352,6 +513,15 @@ impl ProcessHandler for PedalboardProcessor {
             self.ports.record_input(port, input);
         }
         self.levels.record(input, left, right);
+
+        // Latency of the effects and of every output, for JACK and the UI
+        let chain = self.chain_switcher.latency();
+        let sends = self.chain_switcher.send_latency();
+        self.latency.set_chain(chain);
+        for port in 0..count {
+            let latency = self.router.output_latency(port, chain, &sends);
+            self.latency.set_output(port, latency);
+        }
 
         // Running the old and the new chain together while switching costs
         // more than either: left out so the load shown is the chain's

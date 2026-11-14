@@ -185,7 +185,12 @@ impl Lv2Host {
         let _ = (file, channel);
 
         if catalogue.is_demo() {
-            return Ok(PluginInstance::passthrough(info, instance_id, max_block));
+            return Ok(PluginInstance::passthrough(
+                info,
+                instance_id,
+                sample_rate,
+                max_block,
+            ));
         }
 
         #[cfg(feature = "lv2")]
@@ -418,6 +423,8 @@ mod discovery {
         let unit = uri("http://lv2plug.in/ns/extensions/units#unit");
         let designation = uri(&format!("{LV2}designation"));
         let bpm = uri("http://lv2plug.in/ns/ext/time#beatsPerMinute");
+        let reports_latency = uri(&format!("{LV2}reportsLatency"));
+        let latency = uri(&format!("{LV2}latency"));
         let midi_event = uri(crate::plugins::atom::MIDI_EVENT);
         let position = uri(crate::plugins::atom::TIME_POSITION);
         let patch_message = uri(crate::plugins::atom::PATCH_MESSAGE);
@@ -524,6 +531,9 @@ mod discovery {
                     midi: port_type == PortType::AtomInput && port.supports_event(&midi_event),
                     time: port_type == PortType::AtomInput && port.supports_event(&position),
                     patch: port_type == PortType::AtomInput && port.supports_event(&patch_message),
+                    latency: port_type == PortType::ControlOutput
+                        && (port.has_property(&reports_latency)
+                            || port.get(&designation).is_some_and(|d| d == latency)),
                 });
             }
             ports.sort_by_key(|p| p.index);

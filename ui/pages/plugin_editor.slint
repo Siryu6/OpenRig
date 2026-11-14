@@ -471,6 +471,7 @@ export component PluginEditor {
     in property <int> midi-learn-heel: 0;           // its range in percent, at CC 0…
     in property <int> midi-learn-toe: 100;          // …and at CC 127
     in property <float> cpu: -1;                    // share of a core it uses, -1 unknown
+    in property <float> latency-ms: 0;              // delay the block adds
     in property <string> bypass-midi: "";           // "CC n" driving on/off
     callback midi-learn-toggled(bool);
     callback midi-learn-touch(int);
@@ -558,7 +559,9 @@ export component PluginEditor {
                         overflow: elide;
                     }
                     Text {
+                        // Latency before the rest: elided last on a small screen
                         text: (root.category != "" ? root.category + "  ·  " : "")
+                            + (root.latency-ms > 0.05 ? round(root.latency-ms * 10) / 10 + " ms latency  ·  " : "")
                             + root.parameters.length + (root.parameters.length == 1 ? " parameter" : " parameters")
                             + (root.cpu < 0 ? "" : root.cpu < 0.01 ? "  ·  CPU < 1 %" : "  ·  CPU " + round(root.cpu * 100) + " %");
                         color: Theme.text-secondary;

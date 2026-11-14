@@ -304,6 +304,7 @@ export component App inherits Window {
     in property <int> midi-learn-heel: 0;        // its range, percent: at CC 0…
     in property <int> midi-learn-toe: 100;       // …and at CC 127
     in property <float> selected-cpu: -1;         // share of a core the block uses, -1 unknown
+    in property <float> selected-latency-ms: 0;   // delay the block adds
     in property <string> selected-bypass-midi: ""; // "CC n" driving the block's on/off
 
     // Context menu
@@ -320,7 +321,7 @@ export component App inherits Window {
     // Resource monitor
     in-out property <ResourceStatus> resources: {
         dsp-load: -1, dsp-peak: -1, jack-load: -1, cpu: -1, cpu-max-core: -1,
-        temperature: -1, latency-ms: -1,
+        temperature: -1, latency-ms: -1, effects-latency-ms: 0,
     };
     private property <bool> show-resources: false;
     // A dialog over the page (the page switcher aside): the encoder's turns
@@ -1356,6 +1357,7 @@ export component App inherits Window {
                 }
                 bypass-midi: root.selected-bypass-midi;
                 cpu: root.selected-cpu;
+                latency-ms: root.selected-latency-ms;
                 midi-learn-toggled(on) => {
                     root.midi-learn-toggled(on);
                 }
