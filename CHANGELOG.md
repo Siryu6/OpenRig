@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.3](https://github.com/Siryu6/OpenRig/compare/v0.14.2...v0.14.3) - 2026-11-14
+
+### Fixed
+
+- *(audio)* switch off a plugin that overruns the period now and then ([#130](https://github.com/Siryu6/OpenRig/pull/130))
+- *(t3k)* load a capture in every block of its kind, whatever its gear ([#128](https://github.com/Siryu6/OpenRig/pull/128))
+
+### Other
+
+- Open the T3K browser on every gear, narrowed to the block's format ([#133](https://github.com/Siryu6/OpenRig/pull/133))
+
 ## [0.14.2](https://github.com/Siryu6/OpenRig/compare/v0.14.1...v0.14.2) - 2026-11-10
 
 ### Fixed
