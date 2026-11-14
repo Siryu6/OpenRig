@@ -172,6 +172,10 @@ if command -v nmcli >/dev/null 2>&1; then
 fi
 grep -E ' (pedalboard-hotspot|dnsmasq-dhcp|dnsmasq)(\[[0-9]+\])?: ' /var/log/messages 2>/dev/null | tail -30
 
+section "USB drives"
+grep ' /media/' /proc/mounts || echo "(none mounted)"
+grep -E ' pedalboard-drives(\[[0-9]+\])?: ' /var/log/messages 2>/dev/null | tail -30
+
 section "JACK and app log"
 grep -E ' (jackd|pedalboard|pedalboard-update|S00storage)(\[[0-9]+\])?: ' /var/log/messages 2>/dev/null | tail -200
 

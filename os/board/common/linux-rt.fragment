@@ -13,6 +13,19 @@ CONFIG_HZ_1000=y
 CONFIG_SND_USB_AUDIO=m
 CONFIG_SND_SEQUENCER=m
 CONFIG_SND_SEQ_MIDI=m
+# USB drives (rigs, backups): mass storage and UAS, FAT, exFAT and ext4
+# file systems with UTF-8 names, built in (mounted by udev,
+# /usr/libexec/pedalboard/drives)
+CONFIG_SCSI=y
+CONFIG_BLK_DEV_SD=y
+CONFIG_USB_STORAGE=y
+CONFIG_USB_UAS=y
+CONFIG_VFAT_FS=y
+CONFIG_EXFAT_FS=y
+CONFIG_EXT4_FS=y
+CONFIG_NLS_CODEPAGE_437=y
+CONFIG_NLS_ISO8859_1=y
+CONFIG_NLS_UTF8=y
 # Footswitches over USB (keyboard emulators)
 CONFIG_HID_GENERIC=y
 CONFIG_USB_HID=y

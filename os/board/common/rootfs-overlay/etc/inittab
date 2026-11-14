@@ -25,6 +25,8 @@ null::sysinit:/bin/ln -sf /proc/self/fd/2 /dev/stderr
 ::respawn:/usr/libexec/pedalboard/hotspot
 # Network MIDI (rtpmidid, avahi-daemon): only runs when switched on
 ::respawn:/usr/libexec/pedalboard/network-midi
+# Ejects USB drives for the UI (as root; udev mounts them)
+::respawn:/usr/libexec/pedalboard/drives serve
 
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/etc/init.d/rcK

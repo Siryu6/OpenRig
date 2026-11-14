@@ -68,6 +68,7 @@ keeper=$!
 		PEDALBOARD_ALIVE_FILE="$alive" \
 		PEDALBOARD_UPDATE_DIR=/run/pedalboard/update \
 		PEDALBOARD_SETTINGS_DIR=/run/pedalboard/settings \
+		PEDALBOARD_DRIVES_DIR=/run/pedalboard/drives \
 		PEDALBOARD_NETWORK_MIDI_DIR=/data/network-midi \
 		PEDALBOARD_NETWORK_MIDI_STATUS=/run/pedalboard/app/network-midi \
 		SLINT_BACKEND=linuxkms \

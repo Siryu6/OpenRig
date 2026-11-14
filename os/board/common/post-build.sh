@@ -8,7 +8,7 @@ TARGET=$1
 OS_DIR=$(cd "$(dirname "$0")/../.." && pwd)
 
 # Mount points and bind-mount targets on the read-only root (see S00storage)
-mkdir -p "$TARGET/boot" "$TARGET/data" "$TARGET/root/.ssh" \
+mkdir -p "$TARGET/boot" "$TARGET/data" "$TARGET/media" "$TARGET/root/.ssh" \
 	"$TARGET/etc/NetworkManager/system-connections"
 
 # dnsmasq is for the remote control's hotspot, started by NetworkManager

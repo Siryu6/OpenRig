@@ -10,6 +10,7 @@
 #   /data/update      system update state (see pedalboard-update)
 #   /data/app         app updates (see pedalboard-update)
 #   /data/rauc        RAUC state (data-directory in /etc/rauc/system.conf)
+# USB drives are mounted in /media, a RAM disk.
 # The second system slot (for updates) and the data partition are created
 # on first boot, from the rest of the disk (/etc/pedalboard/partitions).
 # Settings from pedalboard.txt (boot partition) go to /run/pedalboard/config.
@@ -96,6 +97,10 @@ if ! mount_data; then
 	log "data partition unavailable: changes will be lost at power off"
 	mount -t tmpfs -o mode=0755 tmpfs /data
 fi
+
+# USB drives are mounted in /media (udev, /usr/libexec/pedalboard/drives):
+# a RAM disk, as the root file system is read-only
+mount -t tmpfs -o mode=0755,nosuid,nodev,noexec,size=64k tmpfs /media
 
 persist /var/lib var/lib 0755
 persist /etc/NetworkManager/system-connections network 0700

@@ -1,0 +1,182 @@
+#!/bin/sh
+#
+# USB drives (sticks, card readers, USB disks), for the rigs and backups of
+# the app. Run as root, three ways:
+#
+#   drives add <kernel name>      by udev when a partition (or a disk with
+#                                 no partition table) of a USB drive appears
+#                                 (90-pedalboard-drives.rules): a FAT,
+#                                 exFAT or ext4 file system is mounted on
+#                                 /media/<label> (a RAM disk, see S00storage)
+#   drives remove <kernel name>   by udev when it goes, pulled out with or
+#                                 without Eject: unmounted at once (lazily)
+#   drives serve                  by init: ejects a drive for the app, which
+#                                 runs as the pedalboard user and asks
+#                                 through a FIFO, one line per request
+#                                 (same protocol as the settings helper):
+#
+#       <id> eject <name>         <name>: the folder in /media
+#
+# The result is in $DIR/status: "<id> done" or "<id> error <message>".
+# Eject writes what is cached, unmounts every file system of the drive and
+# powers it off: it can then be pulled out safely.
+#
+# The disk the system runs from is never mounted here, even on USB (a mini
+# PC may boot from a USB stick or SSD); internal disks (NVMe, SATA, SD
+# card) are not USB, so the rule never runs for them.
+
+MEDIA=/media
+DIR=/run/pedalboard/drives
+USER=pedalboard
+
+log() {
+	logger -t pedalboard-drives "$*"
+}
+
+# Disk of block device $1 (sdb1 -> sdb, sdb -> sdb)
+disk_of() {
+	if [ -e "/sys/class/block/$1/partition" ]; then
+		basename "$(readlink -f "/sys/class/block/$1/..")"
+	else
+		echo "$1"
+	fi
+}
+
+# Disk holding the root file system
+root_disk() {
+	majmin=$(awk '$5 == "/" { print $3; exit }' /proc/self/mountinfo)
+	basename "$(readlink -f "/sys/dev/block/$majmin/..")"
+}
+
+# Mount points in /media of the block devices named $1 (a pattern)
+mounts_of() {
+	awk -v dev="^/dev/$1\$" -v media="^$MEDIA/" '$1 ~ dev && $2 ~ media { print $2 }' /proc/mounts
+}
+
+# A free folder in /media named after the label, else the UUID, else the
+# device; made here (mkdir is atomic: two partitions at once get two names)
+make_dir() {
+	name=$(printf '%s' "${ID_FS_LABEL:-${ID_FS_UUID:-$1}}" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-32)
+	case "$name" in
+	"" | .*) name="usb-$1" ;;
+	esac
+	dir="$MEDIA/$name"
+	n=2
+	while ! mkdir -m 755 "$dir" 2>/dev/null; do
+		[ $n -le 20 ] || return 1
+		dir="$MEDIA/$name-$n"
+		n=$((n + 1))
+	done
+	echo "$dir"
+}
+
+add() {
+	dev=$1
+	[ -b "/dev/$dev" ] || return 0
+	case "$ID_FS_TYPE" in
+	vfat | exfat | ext4) ;;
+	*) return 0 ;;
+	esac
+	[ "$(disk_of "$dev")" != "$(root_disk)" ] || return 0
+	[ -z "$(mounts_of "$dev")" ] || return 0
+
+	uid=$(id -u "$USER") && gid=$(id -g "$USER") || return 1
+	# Nothing on a drive runs here, and it is not the system's to trust
+	options=nosuid,nodev,noexec,noatime
+	case "$ID_FS_TYPE" in
+	vfat)
+		# Owned by the app; written to the drive at each close (flush),
+		# so a drive pulled out without Eject loses as little as can be
+		options=$options,uid=$uid,gid=$gid,fmask=0133,dmask=0022,flush,utf8,shortname=mixed,errors=remount-ro
+		;;
+	exfat)
+		options=$options,uid=$uid,gid=$gid,fmask=0133,dmask=0022,iocharset=utf8,errors=remount-ro
+		;;
+	ext4)
+		# Owners as on the drive (the app writes where they let it);
+		# committed every second
+		options=$options,commit=1,errors=remount-ro
+		;;
+	esac
+	dir=$(make_dir "$dev") || {
+		log "no folder free in $MEDIA for $dev"
+		return 1
+	}
+	if /bin/mount -t "$ID_FS_TYPE" -o "$options" "/dev/$dev" "$dir"; then
+		log "$dev ($ID_FS_TYPE${ID_FS_LABEL:+, $ID_FS_LABEL}) mounted on $dir"
+	else
+		rmdir "$dir"
+		log "$dev ($ID_FS_TYPE) cannot be mounted"
+		return 1
+	fi
+}
+
+remove() {
+	for dir in $(mounts_of "$1"); do
+		# Lazy: the device is gone, files still open must not hang anything
+		/bin/umount -l "$dir" && rmdir "$dir"
+		log "$1 removed, $dir unmounted"
+	done
+}
+
+status() {
+	echo "$*" >"$DIR/status.tmp" && mv -f "$DIR/status.tmp" "$DIR/status"
+}
+
+# Eject the drive mounted on /media/$1: every file system of its disk
+eject() {
+	case "$1" in
+	"" | .* | *[!A-Za-z0-9._-]*) echo "Invalid drive" && return 1 ;;
+	esac
+	dev=$(awk -v dir="$MEDIA/$1" '$2 == dir { print $1; exit }' /proc/mounts)
+	[ -n "$dev" ] || {
+		echo "The drive is no longer there"
+		return 1
+	}
+	disk=$(disk_of "${dev#/dev/}")
+	sync
+	for dir in $(mounts_of "${disk}[0-9]*"); do
+		if ! /bin/umount "$dir"; then
+			log "$dir busy, not ejected"
+			echo "The drive is in use, try again"
+			return 1
+		fi
+		rmdir "$dir"
+	done
+	# Powered off (as other systems do): its light goes off, it is not
+	# mounted again until plugged in again
+	echo 1 >"/sys/block/$disk/device/delete" 2>/dev/null
+	log "$disk ejected"
+}
+
+serve() {
+	install -d -m 755 "$DIR"
+	rm -f "$DIR/request"
+	mkfifo -m 600 "$DIR/request" && chown "$USER:$USER" "$DIR/request" || exit 1
+	status - idle
+	while :; do
+		# Waits for the app to write a request
+		read -r id action name <"$DIR/request" || continue
+		case "$id" in "" | *[!0-9A-Za-z_-]*) continue ;; esac
+		case "$action" in
+		eject)
+			if message=$(eject "$name"); then
+				status "$id" "done"
+			else
+				status "$id" error "${message:-The drive could not be ejected}"
+			fi
+			;;
+		*) status "$id" error "Unknown request" ;;
+		esac
+	done
+}
+
+case "$1" in
+add) add "$2" ;;
+remove) remove "$2" ;;
+serve) serve ;;
+*)
+	echo "usage: $0 add|remove <device> | serve" >&2
+	exit 2
+	;;
+esac
