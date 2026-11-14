@@ -65,6 +65,9 @@ pub struct Remote {
     stream_clients: AtomicUsize,
     /// A client needs a whole picture (it just connected, or missed frames)
     keyframe: AtomicBool,
+    /// Areas a client did not get (it was behind): sent again, from the
+    /// window as it is now
+    repaint: Mutex<Option<frames::Rect>>,
     /// Window size the last streaming client asked for
     stream_size: Mutex<Option<(u32, u32)>>,
     dispatcher: Mutex<Option<Arc<Dispatcher>>>,
@@ -88,6 +91,7 @@ impl Remote {
             tuner_clients: AtomicUsize::new(0),
             stream_clients: AtomicUsize::new(0),
             keyframe: AtomicBool::new(false),
+            repaint: Mutex::new(None),
             stream_size: Mutex::new(None),
             dispatcher: Mutex::new(None),
             status: Mutex::new(status),
@@ -138,6 +142,19 @@ impl Remote {
     /// Whether the next frame must be the whole window (and clear it)
     pub fn take_keyframe(&self) -> bool {
         self.keyframe.swap(false, Ordering::Relaxed)
+    }
+
+    /// Area to send again, if a client missed some (and clear it)
+    pub fn take_repaint(&self) -> Option<frames::Rect> {
+        self.repaint.locked().take()
+    }
+
+    fn request_repaint(&self, rect: frames::Rect) {
+        let mut repaint = self.repaint.locked();
+        *repaint = Some(match *repaint {
+            Some(r) => r.union(rect),
+            None => rect,
+        });
     }
 
     /// Publish the state, when it changed

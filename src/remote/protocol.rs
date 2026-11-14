@@ -30,7 +30,13 @@ pub enum ClientMessage {
         width: u32,
         #[serde(default)]
         height: u32,
+        /// The page acknowledges each frame once drawn (`Ack`): the pedal
+        /// holds frames back while too many are on the way
+        #[serde(default)]
+        acks: bool,
     },
+    /// Full editor: a frame was drawn
+    Ack,
     /// Everything else changes the pedal
     #[serde(untagged)]
     Command(Command),
@@ -303,9 +309,20 @@ mod tests {
             Some(ClientMessage::Stream {
                 on: true,
                 width: 1024,
-                height: 600
+                height: 600,
+                acks: false
             })
         );
+        assert_eq!(
+            parse(r#"{"type":"stream","on":true,"width":800,"height":480,"acks":true}"#),
+            Some(ClientMessage::Stream {
+                on: true,
+                width: 800,
+                height: 480,
+                acks: true
+            })
+        );
+        assert_eq!(parse(r#"{"type":"ack"}"#), Some(ClientMessage::Ack));
         assert_eq!(
             parse(r#"{"type":"pointer","kind":"down","x":1,"y":2}"#),
             Some(ClientMessage::Command(Command::Pointer {

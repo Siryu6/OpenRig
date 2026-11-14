@@ -7,7 +7,7 @@
 //! Origin (no cross-site requests). The cookie is HttpOnly and
 //! SameSite=Strict; the page has a strict Content Security Policy.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -22,12 +22,18 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use tokio::sync::{broadcast, Semaphore};
 
+use super::frames::{self, Rect};
 use super::protocol::{ClientMessage, Command};
 use super::{net, web, Remote};
 
 const COOKIE: &str = "openrig_session";
 /// Knob moves are merged and sent to the UI thread at most this often
 const KNOB_FLUSH: Duration = Duration::from_millis(33);
+/// Editor frames on the way to a page (sent, not acknowledged yet) at most:
+/// past it, frames are held back and their area is sent again, as it is
+/// then, once the page caught up. Without it a slow link (weak Wi-Fi) or a
+/// slow phone queues frames, and the page shows the pedal seconds late.
+const FRAMES_IN_FLIGHT: usize = 32 * 1024;
 
 /// The running server; stopped when dropped
 pub struct Server {
@@ -385,6 +391,13 @@ struct Client {
     stream: bool,
     /// Knob moves not sent yet, the last value of each knob
     knobs: HashMap<(usize, usize), Command>,
+    /// The page acknowledges frames: flow control (FRAMES_IN_FLIGHT)
+    acks: bool,
+    /// Sizes of the frames sent and not acknowledged yet, and their sum
+    in_flight: VecDeque<usize>,
+    in_flight_bytes: usize,
+    /// Area of the frames held back
+    missed: Option<Rect>,
 }
 
 impl Client {
@@ -416,6 +429,35 @@ impl Client {
         }
     }
 
+    /// Whether to send this frame now: always without acknowledgements,
+    /// else while little is on the way (one frame at least)
+    fn admit(&mut self, frame: &[u8]) -> bool {
+        if !self.acks {
+            return true;
+        }
+        if self.in_flight_bytes > 0 && self.in_flight_bytes + frame.len() > FRAMES_IN_FLIGHT {
+            if let Some(rect) = frames::rect_of(frame) {
+                self.missed = Some(self.missed.map_or(rect, |m| m.union(rect)));
+            }
+            return false;
+        }
+        self.in_flight.push_back(frame.len());
+        self.in_flight_bytes += frame.len();
+        true
+    }
+
+    /// The page drew a frame: once all are, what it missed is sent again
+    fn acked(&mut self, remote: &Remote) {
+        if let Some(size) = self.in_flight.pop_front() {
+            self.in_flight_bytes -= size;
+        }
+        if self.in_flight.is_empty() {
+            if let Some(rect) = self.missed.take() {
+                remote.request_repaint(rect);
+            }
+        }
+    }
+
     fn flush(&mut self, remote: &Remote) {
         for (_, command) in self.knobs.drain() {
             remote.dispatch(command);
@@ -428,7 +470,16 @@ impl Client {
         };
         match message {
             ClientMessage::Tuner { on } => self.set_tuner(remote, on),
-            ClientMessage::Stream { on, width, height } => {
+            ClientMessage::Ack => self.acked(remote),
+            ClientMessage::Stream {
+                on,
+                width,
+                height,
+                acks,
+            } => {
+                if on {
+                    self.acks = acks;
+                }
                 self.set_stream(remote, on);
                 if on && width > 0 && height > 0 {
                     if let Some(Command::Resize { width, height }) =
@@ -508,7 +559,7 @@ impl Client {
                     Err(broadcast::error::RecvError::Closed) => break,
                 },
                 frame = frames.recv() => match frame {
-                    Ok(frame) if self.stream => {
+                    Ok(frame) if self.stream && self.admit(&frame) => {
                         if socket.send(Message::Binary(frame.to_vec().into())).await.is_err() {
                             break;
                         }
@@ -624,6 +675,67 @@ mod tests {
         client.set_stream(&remote, false);
         assert!(!remote.tuner_wanted());
         assert!(!remote.stream_wanted());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A frame message of `bytes` bytes showing `rect`
+    fn frame(rect: Rect, bytes: usize) -> Vec<u8> {
+        let fit = |v: usize| u16::try_from(v).unwrap_or(u16::MAX);
+        let mut message = super::super::protocol::frame_header(
+            super::super::protocol::FrameFormat::Png,
+            [fit(rect.x), fit(rect.y), fit(rect.width), fit(rect.height)],
+            [800, 480],
+        )
+        .to_vec();
+        message.resize(bytes, 0);
+        message
+    }
+
+    #[test]
+    fn frames_held_back_while_the_page_is_behind() {
+        let (remote, dir, _) = remote();
+        let mut client = Client::default();
+        let big = FRAMES_IN_FLIGHT / 2 + 1;
+        let a = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
+        };
+        let b = Rect {
+            x: 100,
+            y: 50,
+            width: 20,
+            height: 5,
+        };
+        // A page without acknowledgements gets everything, as before
+        for _ in 0..10 {
+            assert!(client.admit(&frame(a, big)));
+        }
+        client.handle(
+            &remote,
+            r#"{"type":"stream","on":true,"width":800,"height":480,"acks":true}"#,
+        );
+        assert!(client.acks);
+        // One frame always goes, even larger than the budget
+        assert!(client.admit(&frame(a, FRAMES_IN_FLIGHT * 2)));
+        client.handle(&remote, r#"{"type":"ack"}"#);
+        assert!(client.admit(&frame(a, big)));
+        // Over the budget: held back, its area remembered
+        assert!(!client.admit(&frame(a, big)));
+        assert!(!client.admit(&frame(b, big)));
+        // A small one still fits
+        assert!(client.admit(&frame(b, 100)));
+        assert_eq!(remote.take_repaint(), None, "not before the page caught up");
+        client.handle(&remote, r#"{"type":"ack"}"#);
+        assert_eq!(remote.take_repaint(), None, "one still on the way");
+        client.handle(&remote, r#"{"type":"ack"}"#);
+        assert_eq!(remote.take_repaint(), Some(a.union(b)));
+        assert_eq!(remote.take_repaint(), None);
+        // Acknowledgements without frames change nothing
+        client.handle(&remote, r#"{"type":"ack"}"#);
+        assert_eq!(client.in_flight_bytes, 0);
+        client.set_stream(&remote, false);
         let _ = std::fs::remove_dir_all(dir);
     }
 

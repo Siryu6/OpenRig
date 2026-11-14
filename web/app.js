@@ -232,7 +232,9 @@ function wantedSize() {
 function startStream() {
   if (!state || !state.editor) return;
   wanted = wantedSize();
-  send({ type: "stream", on: true, width: wanted[0], height: wanted[1] });
+  // acks: each frame is acknowledged once drawn, so the pedal never sends
+  // more than this page and its link can take (no growing delay)
+  send({ type: "stream", on: true, width: wanted[0], height: wanted[1], acks: true });
   layoutCanvas();
 }
 
@@ -264,8 +266,14 @@ window.addEventListener("resize", () => {
 });
 
 function onFrame(buffer) {
+  // Acknowledged on the connection it came from (not after a reconnection)
+  const from = ws;
+  const ack = () => { if (ws === from) send({ type: "ack" }); };
   const head = new DataView(buffer, 0, 14);
-  if (head.getUint8(0) !== 1) return;
+  if (head.getUint8(0) !== 1) {
+    ack();
+    return;
+  }
   const type = head.getUint8(1) === 2 ? "image/jpeg" : "image/png";
   const x = head.getUint16(2, true), y = head.getUint16(4, true);
   const ww = head.getUint16(10, true), wh = head.getUint16(12, true);
@@ -283,6 +291,7 @@ function onFrame(buffer) {
       ctx.drawImage(bitmap, x, y);
       bitmap.close();
     } catch (_) { /* a broken picture: the next one repairs it */ }
+    ack();
   });
 }
 
