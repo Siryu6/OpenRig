@@ -13,7 +13,7 @@ use slint::{ComponentHandle, Image, Model as _, Rgba8Pixel, SharedPixelBuffer, S
 use tracing::{debug, error, warn};
 
 use pedalboard::audio::ChainNode;
-use pedalboard::plugins::scanner::{self, FileBlock, FileKind};
+use pedalboard::plugins::scanner::{self, FileBlock};
 use pedalboard::state::AppState;
 use pedalboard::tone3000::images;
 use pedalboard::tone3000::library::{self, List, Model, Tone};
@@ -565,19 +565,9 @@ fn tone_detail(tone: &Tone) -> String {
     }
 }
 
-/// The block made for `tone`, if any
+/// The block a new block for `tone` would be, if any
 fn block_for(tone: &Tone) -> Option<&'static FileBlock> {
-    scanner::FILE_BLOCKS.iter().find(|b| fits(b, tone))
-}
-
-/// Whether `tone` can be loaded in `block`
-fn fits(block: &FileBlock, tone: &Tone) -> bool {
-    let kind = match tone.format.as_str() {
-        "nam" => FileKind::Neural,
-        "ir" => FileKind::ImpulseResponse,
-        _ => return false,
-    };
-    block.kind == kind && block.gears.contains(&tone.gear.as_str())
+    scanner::block_for_tone(&tone.format, &tone.gear)
 }
 
 fn tone_row(shared: &Shared, library: &Library, tone: &Tone) -> T3kTone {
@@ -592,7 +582,18 @@ fn tone_row(shared: &Shared, library: &Library, tone: &Tone) -> T3kTone {
         detail: tone_detail(tone).into(),
         supported: tone.supported(),
         on_board: library::is_downloaded(&shared.models_dir, tone),
-        usable: library.target.is_some_and(|b| fits(b, tone)),
+        usable: library
+            .target
+            .is_some_and(|b| tone.supported() && b.loads_format(&tone.format)),
+        reason: match library.target {
+            Some(_) if !tone.supported() => format!(
+                "{} files cannot be loaded in OpenRig yet.",
+                tone.format.to_uppercase()
+            ),
+            Some(block) => block.refusal(&tone.format).unwrap_or_default(),
+            None => String::new(),
+        }
+        .into(),
         block_uri: block_for(tone).map(|b| b.uri).unwrap_or_default().into(),
         block_name: block_for(tone).map(|b| b.name).unwrap_or_default().into(),
         image,

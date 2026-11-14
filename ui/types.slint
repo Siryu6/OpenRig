@@ -159,6 +159,7 @@ export struct T3kTone {
     supported: bool,     // a block can load its format
     on-board: bool,      // some of its models are downloaded
     usable: bool,        // can be loaded in the block the library was opened from
+    reason: string,      // why it cannot be loaded there ("" when usable or no block)
     block-uri: string,   // block made for it, added to the chain by "Add" ("" = none)
     block-name: string,
     image: image,        // tone picture, empty until loaded

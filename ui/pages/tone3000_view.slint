@@ -570,6 +570,13 @@ export component Tone3000View inherits Rectangle {
                     color: Theme.text-muted;
                     font-size: Theme.font-caption;
                 }
+                // Opened from a block that cannot load this tone: say why
+                if root.target-name != "" && root.detail.reason != "": Text {
+                    text: root.detail.reason;
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-caption;
+                    wrap: word-wrap;
+                }
                 if !root.can-use && root.detail.block-uri != "": Text {
                     text: "Add puts the model in a new " + root.detail.block-name + " block at the end of the chain.";
                     color: Theme.text-muted;

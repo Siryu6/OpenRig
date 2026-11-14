@@ -31,9 +31,9 @@ What OpenRig does, in more technical detail than the
   `.aidax` models) through [NeuralAudio](https://github.com/mikeoliphant/NeuralAudio).
   The editor lists tones (a folder of captures, e.g. one TONE3000 tone)
   rather than files: choosing a tone loads its first preset, and a drop-down
-  switches between its presets. Long lists have a search field. Each block only lists the tones of its
-  gear (Amp: heads; Amp + Cab: combos and amps with their cab;
-  Pedal: pedals, outboard, experimental). Each has a noise gate (as in the NAM plugin: it listens to
+  switches between its presets. Long lists have a search field. Each block lists the tones of its
+  gear first (Amp: heads; Amp + Cab: combos and amps with their cab;
+  Pedal: pedals, outboard, experimental), then every other tone it can load. Each has a noise gate (as in the NAM plugin: it listens to
   the clean input and gates the model output); the amp blocks add a bass /
   middle / treble tone stack (after the model, or before it with EQ
   position Pre), and packed A2 captures a Full / Light quality
@@ -72,8 +72,10 @@ What OpenRig does, in more technical detail than the
   downloaded one after the other, at a pace that stays under the TONE3000
   rate limit (as every request), into `models/Tone3000/<gear>/<tone>/` with the creator,
   license and link in `tone.json`, and can be loaded straight into the block.
-  Opened from a block, the library only shows the gears that block plays;
-  from the menu, "Add" puts a downloaded model in a new block of its type.
+  Opened from a block, "Use" loads a downloaded model in it when the
+  block can play its format (any IR in Cabinet or Space, any NAM model in
+  Amp, Amp + Cab or Pedal), else the library says why;
+  "Add" puts a downloaded model in a new block of its type.
   A block playing a TONE3000 tone carries the T3K mark, and its editor
   shows the tone picture.
 - **Chain with splits**: serial chain plus nested A/B, Mix and L/R splits;

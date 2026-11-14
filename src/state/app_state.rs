@@ -1083,16 +1083,19 @@ impl AppState {
         models
     }
 
-    /// Models the block `uri` can load, grouped by tone (folder), sorted by
-    /// title. TONE3000 tones of another gear than the block's are left out.
+    /// Models the block `uri` can load, grouped by tone (folder): the tones
+    /// of the block's own gears first, then the others of the same kind
+    /// (an outboard spring tank IR in a Space block), each sorted by title
     pub fn list_packs(&self, uri: &str) -> Vec<ModelPack> {
         let gears = crate::plugins::scanner::file_block(uri).map_or(&[][..], |b| b.gears);
-        self.packs_of(self.list_files(uri), Some(gears))
+        let mut packs = self.packs_of(self.list_files(uri));
+        // Stable: the titles stay sorted within each group
+        packs.sort_by_key(|p| p.gear.as_deref().is_some_and(|g| !gears.contains(&g)));
+        packs
     }
 
-    /// `files` grouped by tone (folder), sorted by title; with `gears`,
-    /// TONE3000 tones of another gear are left out
-    fn packs_of(&self, files: Vec<String>, gears: Option<&[&str]>) -> Vec<ModelPack> {
+    /// `files` grouped by tone (folder), sorted by title
+    fn packs_of(&self, files: Vec<String>) -> Vec<ModelPack> {
         let mut by_dir: Vec<(PathBuf, Vec<String>)> = Vec::new();
         for file in files {
             let dir = Path::new(&file)
@@ -1111,10 +1114,6 @@ impl AppState {
         let mut packs: Vec<ModelPack> = by_dir
             .into_iter()
             .map(|(dir, files)| ModelPack::new(&root, &dir, files))
-            .filter(|p| match (gears, p.gear.as_deref()) {
-                (Some(gears), Some(gear)) => gears.contains(&gear),
-                _ => true,
-            })
             .collect();
         packs.sort_by_key(|p| p.title.to_lowercase());
         packs
@@ -1631,7 +1630,7 @@ impl AppState {
         else {
             return Vec::new();
         };
-        self.packs_of(self.list_files_where(|path| file_param.accepts(path)), None)
+        self.packs_of(self.list_files_where(|path| file_param.accepts(path)))
     }
 
     /// Load a preset the plugin's bundle ships (`PluginInfo::presets`): its
@@ -2396,6 +2395,45 @@ mod tests {
     }
 
     #[test]
+    fn irs_of_any_gear_load_in_every_ir_block() {
+        use crate::plugins::scanner::{IR_SPACE_URI, IR_URI, NAM_URI};
+        let (state, _dir) = state();
+        let models = state.models_dir();
+        // Shared rig "Texas Two-Amp Blues": TONE3000 files the spring tank
+        // under "outboard"
+        let spring = "Tone3000/Outboard/Fender Spring Reverb Tank [36034]";
+        let cab = "Tone3000/Cabs/Deluxe Oxford [27465]";
+        for (dir, title, gear) in [
+            (spring, "Fender Spring Reverb Tank", "outboard"),
+            (cab, "Deluxe Oxford", "cab"),
+        ] {
+            std::fs::create_dir_all(models.join(dir)).unwrap();
+            std::fs::write(
+                models.join(dir).join("tone.json"),
+                format!(
+                    r#"{{"title":"{title}","gear":"{gear}","source":"Downloaded from TONE3000 (https://www.tone3000.com)"}}"#
+                ),
+            )
+            .unwrap();
+        }
+        std::fs::write(models.join(spring).join("Dwell 05 [172680].wav"), "").unwrap();
+        // Extension case does not matter
+        std::fs::write(models.join(cab).join("LEAN.WAV"), "").unwrap();
+
+        let titles =
+            |uri| -> Vec<String> { state.list_packs(uri).into_iter().map(|p| p.title).collect() };
+        assert_eq!(
+            titles(IR_SPACE_URI),
+            ["Fender Spring Reverb Tank", "Deluxe Oxford"]
+        );
+        assert_eq!(
+            titles(IR_URI),
+            ["Deluxe Oxford", "Fender Spring Reverb Tank"]
+        );
+        assert!(titles(NAM_URI).is_empty());
+    }
+
+    #[test]
     fn models_are_grouped_by_tone() {
         use crate::plugins::scanner::{NAM_AMP_CAB_URI, NAM_PEDAL_URI, NAM_URI};
         let (state, dir) = state();
@@ -2436,12 +2474,20 @@ mod tests {
 
         let titles =
             |uri| -> Vec<String> { state.list_packs(uri).into_iter().map(|p| p.title).collect() };
-        // Tones of another gear are left out; the user's own files are everywhere
-        assert_eq!(titles(NAM_URI), ["mine", "MyRig", "Plexi"]);
-        assert_eq!(titles(NAM_AMP_CAB_URI), ["AC30", "mine", "MyRig"]);
+        // Every NAM model loads in every NAM block: the tones of the
+        // block's gear come first, the user's own files with them, then
+        // the other gears
+        assert_eq!(
+            titles(NAM_URI),
+            ["mine", "MyRig", "Plexi", "AC30", "Boss Metal Zone MT-2"]
+        );
+        assert_eq!(
+            titles(NAM_AMP_CAB_URI),
+            ["AC30", "mine", "MyRig", "Boss Metal Zone MT-2", "Plexi"]
+        );
         assert_eq!(
             titles(NAM_PEDAL_URI),
-            ["Boss Metal Zone MT-2", "mine", "MyRig"]
+            ["Boss Metal Zone MT-2", "mine", "MyRig", "AC30", "Plexi"]
         );
 
         let pack = state
