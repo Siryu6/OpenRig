@@ -75,6 +75,19 @@ pub fn rect_of(message: &[u8]) -> Option<Rect> {
     })
 }
 
+/// The part of `rect` inside a window of `window` (width, height), None
+/// when nothing is left
+pub fn clip(rect: Rect, window: (usize, usize)) -> Option<Rect> {
+    let x2 = (rect.x + rect.width).min(window.0);
+    let y2 = (rect.y + rect.height).min(window.1);
+    (rect.x < x2 && rect.y < y2).then(|| Rect {
+        x: rect.x,
+        y: rect.y,
+        width: x2 - rect.x,
+        height: y2 - rect.y,
+    })
+}
+
 /// The message for rectangle `rect` of an RGB window (`rgb`, 3 bytes per
 /// pixel, `window` = width and height): header then picture. None when the
 /// rectangle is empty or outside the window.
@@ -85,16 +98,29 @@ pub fn encode(
     encoding: Encoding,
 ) -> Option<Vec<u8>> {
     let (win_w, win_h) = window;
-    let x2 = (rect.x + rect.width).min(win_w);
-    let y2 = (rect.y + rect.height).min(win_h);
-    if rect.x >= x2 || rect.y >= y2 || rgb.len() < win_w * win_h * 3 {
+    let rect = clip(rect, window)?;
+    if rgb.len() < win_w * win_h * 3 {
         return None;
     }
-    let (w, h) = (x2 - rect.x, y2 - rect.y);
-    let mut pixels = Vec::with_capacity(w * h * 3);
-    for row in rect.y..y2 {
+    let mut pixels = Vec::with_capacity(rect.width * rect.height * 3);
+    for row in rect.y..rect.y + rect.height {
         let start = (row * win_w + rect.x) * 3;
-        pixels.extend_from_slice(&rgb[start..start + w * 3]);
+        pixels.extend_from_slice(&rgb[start..start + rect.width * 3]);
+    }
+    encode_packed(&pixels, window, rect, encoding)
+}
+
+/// The message for rectangle `rect` (inside the window, see clip) whose
+/// pixels are `rgb`: its rows one after the other, 3 bytes per pixel
+pub fn encode_packed(
+    rgb: &[u8],
+    window: (usize, usize),
+    rect: Rect,
+    encoding: Encoding,
+) -> Option<Vec<u8>> {
+    let (w, h) = (rect.width, rect.height);
+    if w == 0 || h == 0 || rgb.len() != w * h * 3 {
+        return None;
     }
     let format = encoding.format(w * h);
     let mut out = Vec::with_capacity(FRAME_HEADER + w * h / 4);
@@ -102,7 +128,7 @@ pub fn encode(
     out.extend_from_slice(&frame_header(
         format,
         [fit(rect.x), fit(rect.y), fit(w), fit(h)],
-        [fit(win_w), fit(win_h)],
+        [fit(window.0), fit(window.1)],
     ));
     match format {
         FrameFormat::Png => {
@@ -111,13 +137,13 @@ pub fn encode(
             encoder.set_depth(png::BitDepth::Eight);
             encoder.set_compression(png::Compression::Fast);
             let mut writer = encoder.write_header().ok()?;
-            writer.write_image_data(&pixels).ok()?;
+            writer.write_image_data(rgb).ok()?;
             writer.finish().ok()?;
         }
         FrameFormat::Jpeg => {
             let encoder = jpeg_encoder::Encoder::new(&mut out, JPEG_QUALITY);
             encoder
-                .encode(&pixels, fit(w), fit(h), jpeg_encoder::ColorType::Rgb)
+                .encode(rgb, fit(w), fit(h), jpeg_encoder::ColorType::Rgb)
                 .ok()?;
         }
     }
@@ -240,6 +266,40 @@ mod tests {
                 height: 13
             }
         );
+    }
+
+    #[test]
+    fn packed_pixels_encode_like_the_window() {
+        let rgb = window(100, 50);
+        let rect = Rect {
+            x: 90,
+            y: 40,
+            width: 50,
+            height: 50,
+        };
+        let clipped = clip(rect, (100, 50)).unwrap_or(rect);
+        assert_eq!((clipped.width, clipped.height), (10, 10));
+        let mut packed = Vec::new();
+        for row in clipped.y..clipped.y + clipped.height {
+            let start = (row * 100 + clipped.x) * 3;
+            packed.extend_from_slice(&rgb[start..start + clipped.width * 3]);
+        }
+        assert_eq!(
+            encode_packed(&packed, (100, 50), clipped, Encoding::Png),
+            encode(&rgb, (100, 50), rect, Encoding::Png)
+        );
+        // Pixels that do not match the rectangle
+        assert!(encode_packed(&packed[3..], (100, 50), clipped, Encoding::Png).is_none());
+        assert!(clip(
+            Rect {
+                x: 100,
+                y: 0,
+                width: 5,
+                height: 5
+            },
+            (100, 50)
+        )
+        .is_none());
     }
 
     /// Sizes and times of both encodings: `cargo test --release frames -- --nocapture`
