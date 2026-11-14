@@ -1,15 +1,17 @@
 # Neural amp models
 
 The pedalboard has five built-in blocks that load a file, one per kind of
-gear, so each one only offers the captures that make sense in it:
+gear. Each block loads every file of its engine: any NAM model in any NAM
+block, any IR in any IR block. The gear only decides which tones a block
+lists first, and which block "Add" makes for a new tone:
 
-| Block | Engine | Plays TONE3000 gear | URI |
+| Block | Engine | Made for TONE3000 gear | URI |
 |---|---|---|---|
 | **Amp** | NAM | `amp` (head only: add a Cabinet) | `urn:pedalboard:nam` |
 | **Amp + Cab** | NAM | `amp-cab` (combo, or amp with its cab and mic) | `urn:pedalboard:nam-amp-cab` |
 | **Pedal** | NAM | `pedal`, `outboard`, `experimental` | `urn:pedalboard:nam-pedal` |
 | **Cabinet** | IR | `cab` | `urn:pedalboard:ir` |
-| **Space** | IR | `space`, `experimental` | `urn:pedalboard:ir-space` |
+| **Space** | IR | `space`, `outboard` (spring tanks, plates), `experimental` | `urn:pedalboard:ir-space` |
 
 The NAM blocks (feature `nam`, on by default) run
 [Neural Amp Modeler](https://www.neuralampmodeler.com) captures natively,
