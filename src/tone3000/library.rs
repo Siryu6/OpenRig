@@ -213,8 +213,26 @@ pub struct Page {
     pub has_more: bool,
 }
 
-/// Fetch one page of `list`, filtered by gear (API value, `None` for all)
-pub fn list(token: &str, list: List, gear: Option<&str>, page: u32) -> Result<Page, AuthError> {
+/// What a list or a search is narrowed to (API values, `None` for all)
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Filter<'a> {
+    pub gear: Option<&'a str>,
+    /// Format a block can load ("nam", "ir"), when opened from one
+    pub format: Option<&'a str>,
+}
+
+impl Filter<'_> {
+    /// Whether `tone` passes: the lists ignore some filters, so the answer
+    /// is filtered here too
+    pub fn keeps(&self, tone: &Tone) -> bool {
+        self.gear.is_none_or(|g| tone.gear == g) && self.format.is_none_or(|f| tone.format == f)
+    }
+}
+
+/// Fetch one page of `list`, narrowed by `filter`. The list endpoints
+/// only filter by gear: the format is filtered here.
+pub fn list(token: &str, list: List, filter: Filter, page: u32) -> Result<Page, AuthError> {
+    let gear = filter.gear;
     let mut path = format!("{}?page={page}", list.path());
     if list.paginated() {
         path += &format!("&page_size={PAGE_SIZE}");
@@ -224,9 +242,7 @@ pub fn list(token: &str, list: List, gear: Option<&str>, page: u32) -> Result<Pa
     }
     let response: ListResponse<Tone> = get_json(token, &path)?;
     let mut tones = response.data;
-    if let Some(gear) = gear {
-        tones.retain(|t| t.gear == gear);
-    }
+    tones.retain(|t| filter.keeps(t));
     let page = response.page.unwrap_or(page);
     let has_more = list.paginated() && page < response.total_pages.unwrap_or(0);
     Ok(Page {
@@ -236,27 +252,32 @@ pub fn list(token: &str, list: List, gear: Option<&str>, page: u32) -> Result<Pa
     })
 }
 
-/// One page of the tones matching `query`, filtered by gear (API value,
-/// `None` for all)
-pub fn search(token: &str, query: &str, gear: Option<&str>, page: u32) -> Result<Page, AuthError> {
-    let mut path = format!(
-        "/tones/search?query={}&page={page}&page_size={PAGE_SIZE}",
-        encode(query.trim())
-    );
-    if let Some(gear) = gear {
-        path += &format!("&gears={}", encode(gear));
-    }
+/// One page of the tones matching `query`, narrowed by `filter`
+pub fn search(token: &str, query: &str, filter: Filter, page: u32) -> Result<Page, AuthError> {
+    let path = search_path(query, filter, page);
     let response: ListResponse<Tone> = get_json(token, &path)?;
     let mut tones = response.data;
-    if let Some(gear) = gear {
-        tones.retain(|t| t.gear == gear);
-    }
+    tones.retain(|t| filter.keeps(t));
     let page = response.page.unwrap_or(page);
     Ok(Page {
         tones,
         page,
         has_more: page < response.total_pages.unwrap_or(0),
     })
+}
+
+fn search_path(query: &str, filter: Filter, page: u32) -> String {
+    let mut path = format!(
+        "/tones/search?query={}&page={page}&page_size={PAGE_SIZE}",
+        encode(query.trim())
+    );
+    if let Some(gear) = filter.gear {
+        path += &format!("&gears={}", encode(gear));
+    }
+    if let Some(format) = filter.format {
+        path += &format!("&format={}", encode(format));
+    }
+    path
 }
 
 /// Percent-encode a query parameter
@@ -555,6 +576,33 @@ mod tests {
         // Trending / latest answer without pagination fields
         let short: ListResponse<Tone> = serde_json::from_str(r#"{"data":[]}"#).unwrap();
         assert_eq!(short.total_pages, None);
+    }
+
+    #[test]
+    fn filters_by_gear_and_format() {
+        let mut spring = tone("ir");
+        spring.gear = "outboard".into();
+        let all = Filter::default();
+        let irs = Filter {
+            gear: None,
+            format: Some("ir"),
+        };
+        let pedals = Filter {
+            gear: Some("pedal"),
+            format: Some("nam"),
+        };
+        assert!(all.keeps(&spring));
+        assert!(irs.keeps(&spring));
+        assert!(!irs.keeps(&tone("nam")));
+        assert!(!pedals.keeps(&spring));
+        assert_eq!(
+            search_path("spring", irs, 1),
+            "/tones/search?query=spring&page=1&page_size=25&format=ir"
+        );
+        assert_eq!(
+            search_path("klon", pedals, 2),
+            "/tones/search?query=klon&page=2&page_size=25&gears=pedal&format=nam"
+        );
     }
 
     #[test]

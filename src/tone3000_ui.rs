@@ -13,10 +13,10 @@ use slint::{ComponentHandle, Image, Model as _, Rgba8Pixel, SharedPixelBuffer, S
 use tracing::{debug, error, warn};
 
 use pedalboard::audio::ChainNode;
-use pedalboard::plugins::scanner::{self, FileBlock};
+use pedalboard::plugins::scanner::{self, FileBlock, FileKind};
 use pedalboard::state::AppState;
 use pedalboard::tone3000::images;
-use pedalboard::tone3000::library::{self, List, Model, Tone};
+use pedalboard::tone3000::library::{self, Filter, List, Model, Tone};
 use pedalboard::tone3000::limiter;
 use pedalboard::tone3000::{self, AuthError, ConnectEvent, Connection, DeviceCode, Settings};
 
@@ -885,6 +885,43 @@ fn download_summary(downloads: &Downloads) -> Option<String> {
     }
 }
 
+/// Gear filters of the library: (API value, label), "" first for all.
+/// Every gear is offered, opened from a block too: the block's format is
+/// what narrows the list ("All IRs" from a Space block), the gear filter
+/// stays visible and can always be cleared.
+fn gear_filters(block: Option<&FileBlock>) -> Vec<(&'static str, String)> {
+    let all = match block.map(|b| b.kind) {
+        None => "All".to_string(),
+        Some(FileKind::Neural) => "All NAM".to_string(),
+        Some(FileKind::ImpulseResponse) => "All IRs".to_string(),
+    };
+    std::iter::once(("", all))
+        .chain(
+            library::GEARS
+                .iter()
+                .map(|(id, label, _)| (*id, (*label).to_string())),
+        )
+        .collect()
+}
+
+/// Gear filter set when the library opens: the one chosen last when it is
+/// opened from the same block again, or from the menu, or when it is one
+/// of the block's own gears; else every gear. Never a gear the user did
+/// not pick (the Pedal block used to open on "Pedal" only).
+fn default_gear(block: Option<&FileBlock>, same_target: bool, current: Option<&str>) -> String {
+    let current = current.unwrap_or_default();
+    let keep = match block {
+        None => true,
+        Some(_) if same_target => true,
+        Some(block) => block.gears.contains(&current),
+    };
+    if keep {
+        current.to_string()
+    } else {
+        String::new()
+    }
+}
+
 fn setup_library(app: &App, shared: &Arc<Shared>) {
     let weak = app.as_weak();
     let state = shared.clone();
@@ -898,36 +935,28 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
                     _ => None,
                 });
         let block = uri.as_deref().and_then(scanner::file_block);
-        let gears: Vec<&str> = match block {
-            Some(block) => block.gears.to_vec(),
-            None => std::iter::once("")
-                .chain(library::GEARS.iter().map(|(id, ..)| *id))
-                .collect(),
-        };
-        let names = gears
-            .iter()
-            .map(|g| match *g {
-                "" => SharedString::from("All"),
-                g => library::gear_label(g).into(),
-            })
-            .collect();
+        let filters = gear_filters(block);
         app.set_t3k_gear_ids(model(
-            gears.iter().map(|g| SharedString::from(*g)).collect(),
+            filters
+                .iter()
+                .map(|(id, _)| SharedString::from(*id))
+                .collect(),
         ));
-        app.set_t3k_gear_names(model(names));
+        app.set_t3k_gear_names(model(
+            filters
+                .iter()
+                .map(|(_, name)| SharedString::from(name.as_str()))
+                .collect(),
+        ));
         app.set_t3k_target_id(if block.is_some() { target_id } else { -1 });
         show_account_avatar(&app, &state);
         app.set_t3k_target_name(block.map(|b| b.name).unwrap_or_default().into());
 
         let (tab, gear) = {
             let mut library = state.library.locked();
+            let same_target = library.target.map(|b| b.uri) == block.map(|b| b.uri);
             library.target = block;
-            let current = library.gear.clone().unwrap_or_default();
-            let gear = if gears.contains(&current.as_str()) {
-                current
-            } else {
-                gears.first().copied().unwrap_or_default().to_string()
-            };
+            let gear = default_gear(block, same_target, library.gear.as_deref());
             app.set_t3k_query(library.query.as_str().into());
             (library.list as i32, gear)
         };
@@ -940,7 +969,7 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
         let Some(app) = weak.upgrade() else { return };
         let mut list = usize::try_from(list).unwrap_or(0).min(SEARCH_TAB);
         let gear = (!gear.is_empty()).then(|| gear.to_string());
-        let (page, query) = {
+        let (page, query, format) = {
             let mut library = state.library.locked();
             if list == SEARCH_TAB && library.query.is_empty() {
                 list = library.browse;
@@ -956,7 +985,8 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
                 library.tones.clear();
                 show_tones(&app, &state, &library);
             }
-            (library.page + 1, library.query.clone())
+            let format = library.target.map(|b| b.kind.format());
+            (library.page + 1, library.query.clone(), format)
         };
         app.set_t3k_tab(list as i32);
         app.set_t3k_gear(gear.clone().unwrap_or_default().into());
@@ -970,10 +1000,14 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
         let weak = app.as_weak();
         let shared = state.clone();
         let started = spawn("t3k-list", move || {
+            let filter = Filter {
+                gear: gear.as_deref(),
+                format,
+            };
             let result = shared.call(|token| match List::ALL.get(list) {
-                Some(&list) => library::list(token, list, gear.as_deref(), page),
+                Some(&list) => library::list(token, list, filter, page),
                 // Only sent when the user submits a search
-                None => library::search(token, &query, gear.as_deref(), page),
+                None => library::search(token, &query, filter, page),
             });
             let revoked = matches!(result, Err(AuthError::Revoked));
             if revoked {
@@ -1162,4 +1196,40 @@ fn setup_library(app: &App, shared: &Arc<Shared>) {
         app.set_t3k_query(query.into());
         app.invoke_t3k_load(tab, gear.into(), false);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pedalboard::plugins::scanner::{file_block, IR_SPACE_URI, NAM_PEDAL_URI};
+
+    #[test]
+    fn every_gear_filter_is_offered_and_all_comes_first() {
+        let space = file_block(IR_SPACE_URI);
+        let pedal = file_block(NAM_PEDAL_URI);
+        let ids = |b| -> Vec<&str> { gear_filters(b).into_iter().map(|(id, _)| id).collect() };
+        let all = |b| gear_filters(b)[0].1.clone();
+        assert_eq!(ids(None).len(), library::GEARS.len() + 1);
+        assert_eq!(ids(space), ids(None));
+        assert_eq!(ids(pedal)[0], "");
+        assert_eq!(all(None), "All");
+        assert_eq!(all(space), "All IRs");
+        assert_eq!(all(pedal), "All NAM");
+    }
+
+    #[test]
+    fn opens_on_every_gear_unless_the_user_picked_one() {
+        let space = file_block(IR_SPACE_URI);
+        let pedal = file_block(NAM_PEDAL_URI);
+        // First open from a Pedal block: no hidden "pedal" filter
+        assert_eq!(default_gear(pedal, false, None), "");
+        // The user's pick is kept when it fits the block
+        assert_eq!(default_gear(pedal, false, Some("outboard")), "outboard");
+        assert_eq!(default_gear(space, false, Some("outboard")), "outboard");
+        // A pick made for another block is dropped
+        assert_eq!(default_gear(space, false, Some("amp")), "");
+        // Same block again, or the menu: kept as is
+        assert_eq!(default_gear(space, true, Some("amp")), "amp");
+        assert_eq!(default_gear(None, false, Some("cab")), "cab");
+    }
 }
