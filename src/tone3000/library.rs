@@ -8,7 +8,6 @@
 //! prefetched or cached; the creator, license and link of every downloaded
 //! tone are kept in a `tone.json` next to its files.
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -431,32 +430,16 @@ pub fn download(token: &str, models_dir: &Path, tone: &Tone, model: &Model) -> R
         401 => bail!(AuthError::Revoked),
         status => bail!("Download of {} failed (HTTP {status})", model.name),
     }
-    let part = path.with_extension("part");
-    let mut file =
-        std::fs::File::create(&part).with_context(|| format!("Cannot write {}", part.display()))?;
     // Bounded: /data also holds the system's state (network, clock)
-    let mut body = response.into_body().into_reader().take(MAX_MODEL_BYTES + 1);
-    let written = std::io::copy(&mut body, &mut file);
-    let result = written
-        .map_err(anyhow::Error::from)
-        .and_then(|n| {
-            if n == 0 {
-                bail!("{} is empty", model.name);
-            }
-            if n > MAX_MODEL_BYTES {
-                bail!("{} is too large", model.name);
-            }
-            // On the card before it gets its name: a power cut must not
-            // leave a truncated model that looks downloaded
-            file.sync_all()?;
-            Ok(())
-        })
-        .and_then(|()| std::fs::rename(&part, &path).map_err(Into::into));
-    if let Err(e) = result {
-        // May already be gone (renamed) or never written
-        let _ = std::fs::remove_file(&part);
-        return Err(e.context(format!("Download of {} failed", model.name)));
-    }
+    let body = response.into_body().into_reader();
+    crate::download::save(
+        body,
+        crate::download::Expected::AtMost(MAX_MODEL_BYTES),
+        &path,
+        &model.name,
+        |_, _| {},
+    )
+    .with_context(|| format!("Download of {} failed", model.name))?;
 
     // Written once a model is there: it marks the tone as downloaded. The
     // models already noted in it are kept.
