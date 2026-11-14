@@ -170,7 +170,13 @@ Limits:
 - Only pixels that changed are sent: the areas Slint redraws are compared
   with the last picture sent and trimmed (a label redrawn as it was goes
   nowhere), and areas close to each other go as one picture. A knob drag
-  sends one picture per frame, not three.
+  sends one picture per frame, not three. A page that starts showing the
+  Editor, or a new window size, gets the whole window; for a new page it
+  comes from the picture already drawn, without drawing it again.
+- One pipeline (`src/remote/frames.rs`): draw, compare with what was sent,
+  copy the areas, encode them, then each page's flow control decides
+  whether the picture goes. What a page misses comes back as a request for
+  the next picture, with the window size and keyframes the pages ask for.
 - Flow control: the page acknowledges each frame once drawn. The pedal
   measures how fast the page gets its messages (the bytes delivered over
   the time they took, the highest rate of the last 2 s) and the shortest
