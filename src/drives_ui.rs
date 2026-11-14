@@ -3,6 +3,8 @@
 //! ejects the one they show (`pedalboard::drives`, through the root helper of the
 //! OpenRig OS). Ejecting runs on a worker thread.
 
+use std::path::PathBuf;
+
 use slint::ComponentHandle;
 use tracing::{info, warn};
 
@@ -15,10 +17,10 @@ fn set_ejecting(app: &App, on: bool) {
     app.global::<Backup>().set_ejecting(on);
 }
 
-/// The drives changed: the pages that show them read them again
-fn changed(app: &App) {
-    rigs_ui::drives_changed(app);
-    backup_ui::drives_changed(app);
+/// The drives changed (`now`): the pages that show them read them again
+fn changed(app: &App, now: &[PathBuf]) {
+    rigs_ui::drives_changed(app, now);
+    backup_ui::drives_changed(app, now);
 }
 
 /// Eject `shown`, the drive the page shows (and writes to)
@@ -44,10 +46,11 @@ fn eject(app: &App, shown: slint::SharedString) {
                 }
             },
         };
+        let now = pedalboard::rigs::removable_drives();
         ui(&weak, move |app| {
             set_ejecting(app, false);
             show_status(app, text.into());
-            changed(app);
+            changed(app, &now);
         });
     });
     if !started {
@@ -72,7 +75,7 @@ pub fn setup(app: &App) {
         }
     });
     let weak = app.as_weak();
-    if let Err(e) = drives::watch(move |_| ui(&weak, changed)) {
+    if let Err(e) = drives::watch(move |now| ui(&weak, move |app| changed(app, &now))) {
         warn!(error = %e, "USB drives not watched: refresh the pages by hand");
     }
 }
