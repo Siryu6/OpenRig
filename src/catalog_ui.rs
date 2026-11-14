@@ -65,14 +65,7 @@ thread_local! {
 }
 
 fn with_page<R>(f: impl FnOnce(&mut Page) -> R) -> Option<R> {
-    PAGE.with(|p| match p.try_borrow_mut() {
-        Ok(mut page) => page.as_mut().map(f),
-        // Called back from inside another `with_page`: skipped, not a crash
-        Err(_) => {
-            warn!("Store page in use, update skipped");
-            None
-        }
-    })
+    PAGE.with(|p| crate::borrow_page(p, "Store page")?.as_mut().map(f))
 }
 
 /// Pictures downloaded at once

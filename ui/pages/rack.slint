@@ -121,8 +121,7 @@ export component PluginRack {
     callback remove-node-clicked(int);                // instance-id
     callback add-plugin-clicked();
     callback add-split-clicked();
-    callback add-plugin-to-split-top-clicked(int);    // split instance-id
-    callback add-plugin-to-split-bottom-clicked(int); // split instance-id
+    callback add-plugin-to-split-clicked(int, bool); // split instance-id, top lane
     callback toggle-ab-clicked(int);                  // split instance-id
     callback mix-ratio-changed(int, float);           // split instance-id, ratio
     callback split-type-clicked(int);                 // split instance-id
@@ -335,7 +334,6 @@ export component PluginRack {
                             kind: node.kind;
                             name: node.name;
                             tint: node.tint;
-                            tinted: node.tinted;
                             bypassed: node.bypassed;
                             t3k: node.t3k;
                             picture: node.picture;
@@ -903,7 +901,7 @@ export component PluginRack {
                     icon: "plus";
                     text: root.sel.split-type == "lr" ? "Left" : "A";
                     clicked => {
-                        root.add-plugin-to-split-top-clicked(root.sel.instance-id);
+                        root.add-plugin-to-split-clicked(root.sel.instance-id, true);
                     }
                 }
                 Button {
@@ -911,7 +909,7 @@ export component PluginRack {
                     icon: "plus";
                     text: root.sel.split-type == "lr" ? "Right" : "B";
                     clicked => {
-                        root.add-plugin-to-split-bottom-clicked(root.sel.instance-id);
+                        root.add-plugin-to-split-clicked(root.sel.instance-id, false);
                     }
                 }
 
@@ -1152,7 +1150,6 @@ export component PluginRack {
         kind: root.dragged.kind;
         name: root.dragged.name;
         tint: root.dragged.tint;
-        tinted: root.dragged.tinted;
         bypassed: root.dragged.bypassed;
         t3k: root.dragged.t3k;
         picture: root.dragged.picture;

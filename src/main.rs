@@ -38,7 +38,7 @@ mod wifi_ui;
 use anyhow::Result;
 use pedalboard::sync::MutexExt;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell, RefMut};
 use std::io::IsTerminal;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -76,12 +76,6 @@ const POLL_MS: u64 = 50;
 /// How long a status message stays visible
 const STATUS_SECONDS: f32 = 4.0;
 const STATUS_ACTION_SECONDS: f32 = 8.0;
-/// View indexes of the block editor, the tuner and the Live page
-#[cfg_attr(not(feature = "midi"), allow(dead_code))]
-const EDITOR_VIEW: i32 = 1;
-const TUNER_VIEW: i32 = 3;
-#[cfg_attr(not(feature = "midi"), allow(dead_code))]
-const LIVE_VIEW: i32 = 9;
 /// The tuner shows the last note this long after the string dies out
 const TUNER_HOLD: Duration = Duration::from_millis(600);
 /// Resource monitor refresh period
@@ -159,6 +153,17 @@ pub(crate) fn ui(app: &slint::Weak<App>, f: impl FnOnce(&App) + Send + 'static) 
             f(&app);
         }
     });
+}
+
+/// Borrow the state of a page for a callback; `None` (logged) when a callback
+/// run from inside another (a Slint re-entry) already holds it, so the inner
+/// one is skipped rather than panicking
+pub(crate) fn borrow_page<'a, T>(cell: &'a RefCell<T>, page: &str) -> Option<RefMut<'a, T>> {
+    let borrowed = cell.try_borrow_mut().ok();
+    if borrowed.is_none() {
+        warn!("{page} in use, change skipped");
+    }
+    borrowed
 }
 
 /// Set by `restart`: the app starts again once it has quit
@@ -317,10 +322,6 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
                 pan_b: n.pan[1],
                 kind: scanner::shape(&n.uri).into(),
                 tint: rgb(block_tint(state, &chain, n.instance_id, &n.uri)),
-                tinted: chain
-                    .colors
-                    .get(&n.instance_id)
-                    .is_some_and(|c| views::block_color(c).is_some()),
                 t3k: !n.is_split
                     && chain
                         .files
@@ -357,9 +358,6 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
     live_ui::refresh(app, state);
 }
 
-/// Name of a block: blocks loading a file are named after its tone
-/// ("Boss MT-2")
-/// Picture saved with a downloaded tone (none without TONE3000)
 /// The folder holding a tone's folder, for the folder view of the lists
 fn pack_location(pack: &ModelPack) -> &str {
     let dir = pack
@@ -370,6 +368,7 @@ fn pack_location(pack: &ModelPack) -> &str {
     dir.rsplit_once('/').map_or("", |(location, _)| location)
 }
 
+/// Picture saved with a downloaded tone (none without TONE3000)
 fn pack_picture(pack: Option<&ModelPack>) -> slint::Image {
     #[cfg(feature = "tone3000")]
     if let Some(path) = pack.and_then(|p| p.picture.as_deref()) {
@@ -379,6 +378,35 @@ fn pack_picture(pack: Option<&ModelPack>) -> slint::Image {
     slint::Image::default()
 }
 
+/// A choice of the model chooser: `file` of a tone
+fn pack_choice(
+    pack: &ModelPack,
+    file: &str,
+    title: SharedString,
+    subtitle: SharedString,
+    current: bool,
+) -> ModelChoice {
+    ModelChoice {
+        title,
+        subtitle,
+        image: pack_picture(Some(pack)),
+        t3k: pack.tone3000,
+        current,
+        file: file.into(),
+        location: pack_location(pack).into(),
+        folder: false,
+    }
+}
+
+/// Show the choices of the model chooser
+fn show_model_choices(app: &App, state: &AppState, choices: Vec<ModelChoice>) {
+    app.set_available_packs_pictures(choices.iter().any(|p| p.t3k));
+    app.set_available_packs(model(choices));
+    app.set_models_dir(state.models_dir().display().to_string().into());
+}
+
+/// Name of a block: blocks loading a file are named after its tone
+/// ("Boss MT-2")
 pub(crate) fn block_name(
     state: &AppState,
     chain: &EffectChainState,
@@ -476,8 +504,8 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
         app.set_selected_factory_presets(model(Vec::new()));
         app.set_selected_strip_factory(model(Vec::new()));
         app.set_selected_strip_models(model(Vec::new()));
-        if app.get_current_view() == 1 {
-            app.set_current_view(0);
+        if app.get_current_view() == View::Editor {
+            app.set_current_view(View::Rack);
         }
         return;
     };
@@ -880,25 +908,11 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
     on!(
         app,
         state,
-        on_add_plugin_to_split_top,
-        |app, state, split, uri| {
+        on_add_plugin_to_split,
+        |app, state, split, top, uri| {
             let result = id(split)
                 .ok_or_else(|| anyhow::anyhow!("No split selected"))
-                .and_then(|split| state.add_plugin_to_split(split, true, &uri));
-            if report(&app, result).is_some() {
-                refresh_chain(&app, state);
-                warn_if_loaded(&app);
-            }
-        }
-    );
-    on!(
-        app,
-        state,
-        on_add_plugin_to_split_bottom,
-        |app, state, split, uri| {
-            let result = id(split)
-                .ok_or_else(|| anyhow::anyhow!("No split selected"))
-                .and_then(|split| state.add_plugin_to_split(split, false, &uri));
+                .and_then(|split| state.add_plugin_to_split(split, top, &uri));
             if report(&app, result).is_some() {
                 refresh_chain(&app, state);
                 warn_if_loaded(&app);
@@ -980,7 +994,7 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
             _ => None,
         });
         let current = app.get_selected_file();
-        let packs: Vec<ModelChoice> = uri
+        let packs = uri
             .map(|uri| state.list_packs(&uri))
             .unwrap_or_default()
             .into_iter()
@@ -989,26 +1003,23 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
                     1 => "1 preset".to_string(),
                     n => format!("{n} presets"),
                 };
-                ModelChoice {
-                    image: pack_picture(Some(&pack)),
-                    t3k: pack.tone3000,
-                    subtitle: match &pack.creator {
-                        Some(creator) => format!("by @{creator} · {presets}"),
-                        None => presets,
-                    }
-                    .into(),
-                    current: pack.files.iter().any(|f| *f == current.as_str()),
-                    // A tone loads its first preset; the others are in the editor
-                    file: pack.files.first().cloned().unwrap_or_default().into(),
-                    location: pack_location(&pack).into(),
-                    title: pack.title.into(),
-                    folder: false,
-                }
+                let subtitle = match &pack.creator {
+                    Some(creator) => format!("by @{creator} · {presets}"),
+                    None => presets,
+                };
+                let current = pack.files.iter().any(|f| *f == current.as_str());
+                // A tone loads its first preset; the others are in the editor
+                let file = pack.files.first().map_or("", String::as_str);
+                pack_choice(
+                    &pack,
+                    file,
+                    pack.title.as_str().into(),
+                    subtitle.into(),
+                    current,
+                )
             })
             .collect();
-        app.set_available_packs_pictures(packs.iter().any(|p| p.t3k));
-        app.set_available_packs(model(packs));
-        app.set_models_dir(state.models_dir().display().to_string().into());
+        show_model_choices(&app, state, packs);
     });
     on!(app, state, on_refresh_slot_files, |app, state, param| {
         let Some(instance_id) = id(app.get_selected_instance_id()) else {
@@ -1025,32 +1036,21 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
             .cloned()
             .unwrap_or_default();
         // One choice per file: a slot loads a file, not a tone
-        let choices: Vec<ModelChoice> = state
+        let choices = state
             .list_param_packs(uri, &param)
             .into_iter()
             .flat_map(|pack| {
-                let image = pack_picture(Some(&pack));
-                let labels = pack.preset_labels();
-                let location = SharedString::from(pack_location(&pack));
                 pack.files
                     .iter()
-                    .zip(labels)
-                    .map(|(file, label)| ModelChoice {
-                        title: label.into(),
-                        subtitle: pack.title.as_str().into(),
-                        image: image.clone(),
-                        t3k: pack.tone3000,
-                        current: *file == current,
-                        file: file.as_str().into(),
-                        location: location.clone(),
-                        folder: false,
+                    .zip(pack.preset_labels())
+                    .map(|(file, label)| {
+                        let subtitle = pack.title.as_str().into();
+                        pack_choice(&pack, file, label.into(), subtitle, *file == current)
                     })
                     .collect::<Vec<_>>()
             })
             .collect();
-        app.set_available_packs_pictures(choices.iter().any(|p| p.t3k));
-        app.set_available_packs(model(choices));
-        app.set_models_dir(state.models_dir().display().to_string().into());
+        show_model_choices(&app, state, choices);
     });
     on!(
         app,
@@ -1453,7 +1453,7 @@ fn start_poll_timer(
             // Tuner: only analyse audio while the tuner page is shown
             // (locked only on a change: the audio thread skips the tuner, and
             // its mute, for a cycle when the lock is taken)
-            let tuner_visible = app.get_current_view() == TUNER_VIEW || remote_tuner();
+            let tuner_visible = app.get_current_view() == View::Tuner || remote_tuner();
             if tuner_shown.replace(tuner_visible) != tuner_visible {
                 state.tuner.locked().set_active(tuner_visible);
             }

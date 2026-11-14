@@ -3,6 +3,7 @@
 // Set by Rust (src/backup_ui.rs) through `app.global::<Backup>()`.
 import { Theme } from "../theme.slint";
 import { Badge, Button, Card, Icon, SectionHeader, Toggle } from "../components/controls.slint";
+import { Drives } from "../drives.slint";
 
 // A backup file found on a drive or on the pedal
 export struct BackupFile {
@@ -26,11 +27,7 @@ export global Backup {
     in-out property <string> progress: "";
     // Back up
     in-out property <bool> include-large: false;
-    in-out property <string> destination: "";   // where the next backup goes
-    in-out property <bool> usb: false;          // to a USB drive
-    in-out property <bool> can-eject: false;    // the system ejects drives (OpenRig OS)
-    in-out property <bool> ejecting: false;
-    in-out property <string> drive: "";         // the drive backups go to, Eject ejects
+    in-out property <int> local-kept: 0;        // backups kept on the pedal
     in-out property <string> large-size: "";    // "Models 1.2 GB, plugins 300 MB"
     in-out property <string> local-note: "";    // what only a full backup keeps
     // Restore
@@ -49,7 +46,6 @@ export global Backup {
 
     callback opened();
     callback back-up();
-    callback eject(string);                     // the drive, before pulling it out
     callback select(int);
     callback ask-undo();
     callback confirm();
@@ -59,7 +55,6 @@ export global Backup {
 
 // The Settings card that opens the panel
 export component BackupCard inherits Card {
-    in property <bool> focused: false;
     height: 72px;
 
     ta := TouchArea {
@@ -276,7 +271,7 @@ export component BackupPanel inherits Rectangle {
                         text: "Passwords, accounts and Wi-Fi keys are never saved.";
                     }
                     Button {
-                        text: Backup.usb ? "Back up to USB drive" : "Back up on the pedal";
+                        text: Drives.drive != "" ? "Back up to USB drive" : "Back up on the pedal";
                         icon: "save";
                         variant: "primary";
                         enabled: !Backup.busy;
@@ -289,16 +284,17 @@ export component BackupPanel inherits Rectangle {
                         Note {
                             horizontal-stretch: 1;
                             vertical-alignment: center;
-                            text: Backup.destination;
+                            text: Drives.drive != "" ? "To \{Drives.name}"
+                                : "No USB drive: kept on the pedal (the last \{Backup.local-kept}). Download it from the remote control.";
                         }
-                        if Backup.usb && Backup.can-eject: Button {
+                        if Drives.drive != "" && Drives.can-eject: Button {
                             horizontal-stretch: 0;
                             text: "Eject";
                             icon: "eject";
                             variant: "ghost";
-                            enabled: !Backup.busy && !Backup.ejecting;
+                            enabled: !Backup.busy && !Drives.ejecting;
                             clicked => {
-                                Backup.eject(Backup.drive);
+                                Drives.eject();
                             }
                         }
                     }
