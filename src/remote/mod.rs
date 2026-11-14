@@ -17,6 +17,7 @@
 pub mod auth;
 pub mod bootcfg;
 pub mod display;
+mod flow;
 pub mod frames;
 pub mod net;
 pub mod protocol;
@@ -38,6 +39,9 @@ pub const DEFAULT_PORT: u16 = 80;
 pub const FALLBACK_PORT: u16 = 8080;
 
 /// Runs a command on the UI thread
+/// The frames of one picture of the full editor
+pub type Picture = Arc<[Vec<u8>]>;
+
 pub type Dispatcher = Box<dyn Fn(Command) + Send + Sync>;
 
 /// Facts shown on the status page
@@ -57,7 +61,7 @@ pub struct Remote {
     /// Last state sent to the clients (JSON)
     state: watch::Sender<Arc<str>>,
     telemetry: broadcast::Sender<Arc<str>>,
-    frames: broadcast::Sender<Arc<[u8]>>,
+    frames: broadcast::Sender<Picture>,
     /// Bumped when sessions are revoked: connections check theirs again
     revoked: watch::Sender<u64>,
     clients: AtomicUsize,
@@ -67,7 +71,7 @@ pub struct Remote {
     keyframe: AtomicBool,
     /// Areas a client did not get (it was behind): sent again, from the
     /// window as it is now
-    repaint: Mutex<Option<frames::Rect>>,
+    repaint: Mutex<frames::Areas>,
     /// Window size the last streaming client asked for
     stream_size: Mutex<Option<(u32, u32)>>,
     dispatcher: Mutex<Option<Arc<Dispatcher>>>,
@@ -98,7 +102,7 @@ impl Remote {
             tuner_clients: AtomicUsize::new(0),
             stream_clients: AtomicUsize::new(0),
             keyframe: AtomicBool::new(false),
-            repaint: Mutex::new(None),
+            repaint: Mutex::new(frames::Areas::default()),
             stream_size: Mutex::new(None),
             dispatcher: Mutex::new(None),
             status: Mutex::new(status),
@@ -165,17 +169,16 @@ impl Remote {
         self.keyframe.swap(false, Ordering::Relaxed)
     }
 
-    /// Area to send again, if a client missed some (and clear it)
-    pub fn take_repaint(&self) -> Option<frames::Rect> {
-        self.repaint.locked().take()
+    /// Areas to send again, if a client missed some (and clear them)
+    pub fn take_repaint(&self) -> frames::Areas {
+        std::mem::take(&mut *self.repaint.locked())
     }
 
-    fn request_repaint(&self, rect: frames::Rect) {
+    fn request_repaint(&self, areas: &frames::Areas) {
         let mut repaint = self.repaint.locked();
-        *repaint = Some(match *repaint {
-            Some(r) => r.union(rect),
-            None => rect,
-        });
+        for &rect in areas.rects() {
+            repaint.add(rect);
+        }
     }
 
     /// Publish the state, when it changed
@@ -195,9 +198,12 @@ impl Remote {
         let _ = self.telemetry.send(Arc::from(json));
     }
 
-    /// A frame message of the full editor (see protocol::frame_header)
-    pub fn publish_frame(&self, frame: Vec<u8>) {
-        let _ = self.frames.send(Arc::from(frame));
+    /// The frame messages of one picture of the full editor (see
+    /// protocol::frame_header): they go to a page together
+    pub fn publish_picture(&self, frames: Vec<Vec<u8>>) {
+        if !frames.is_empty() {
+            let _ = self.frames.send(Arc::from(frames));
+        }
     }
 
     /// Sign every device out (and close their connections)

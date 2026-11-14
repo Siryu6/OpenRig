@@ -63,6 +63,65 @@ impl Rect {
     }
 }
 
+impl Rect {
+    fn area(self) -> usize {
+        self.width * self.height
+    }
+
+    /// Whether they overlap or share an edge
+    fn touches(self, other: Rect) -> bool {
+        self.x <= other.x + other.width
+            && other.x <= self.x + self.width
+            && self.y <= other.y + other.height
+            && other.y <= self.y + self.height
+    }
+}
+
+/// Areas held at most, before the closest ones merge
+const MAX_AREAS: usize = 4;
+
+/// Areas of the window to send again: a few rectangles. Areas that touch
+/// merge; distant ones (a meter and a knob) stay apart instead of becoming
+/// the large rectangle between them, unless there are too many.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Areas(Vec<Rect>);
+
+impl Areas {
+    pub fn add(&mut self, mut rect: Rect) {
+        if rect.area() == 0 {
+            return;
+        }
+        while let Some(i) = self.0.iter().position(|r| r.touches(rect)) {
+            rect = rect.union(self.0.swap_remove(i));
+        }
+        self.0.push(rect);
+        while self.0.len() > MAX_AREAS {
+            // Merge the two that add the least area
+            let mut best = (usize::MAX, 0, 1);
+            for i in 0..self.0.len() {
+                for j in i + 1..self.0.len() {
+                    let (a, b) = (self.0[i], self.0[j]);
+                    let cost = a.union(b).area().saturating_sub(a.area() + b.area());
+                    if cost < best.0 {
+                        best = (cost, i, j);
+                    }
+                }
+            }
+            let (_, i, j) = best;
+            let b = self.0.swap_remove(j);
+            self.0[i] = self.0[i].union(b);
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn rects(&self) -> &[Rect] {
+        &self.0
+    }
+}
+
 /// The rectangle a frame message shows (see protocol::frame_header)
 pub fn rect_of(message: &[u8]) -> Option<Rect> {
     let header = message.get(..FRAME_HEADER)?;
@@ -300,6 +359,36 @@ mod tests {
             (100, 50)
         )
         .is_none());
+    }
+
+    #[test]
+    fn areas_merge_when_they_touch_or_are_too_many() {
+        let r = |x, y, width, height| Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+        let mut areas = Areas::default();
+        areas.add(r(0, 0, 10, 10));
+        areas.add(r(500, 500, 10, 10));
+        assert_eq!(areas.rects().len(), 2, "far apart");
+        areas.add(r(10, 0, 10, 10));
+        assert_eq!(areas.rects().len(), 2);
+        assert!(areas.rects().contains(&r(0, 0, 20, 10)), "touching");
+        areas.add(r(0, 0, 0, 5));
+        assert_eq!(areas.rects().len(), 2, "empty");
+        for i in 0..4 {
+            areas.add(r(100 + i * 100, 300, 5, 5));
+        }
+        assert_eq!(areas.rects().len(), MAX_AREAS);
+        // Everything is still covered
+        for (x, y) in [(0, 0), (19, 9), (500, 500), (100, 300), (404, 304)] {
+            assert!(areas
+                .rects()
+                .iter()
+                .any(|a| a.x <= x && x < a.x + a.width && a.y <= y && y < a.y + a.height));
+        }
     }
 
     /// Sizes and times of both encodings: `cargo test --release frames -- --nocapture`
