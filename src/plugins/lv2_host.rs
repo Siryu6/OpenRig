@@ -425,6 +425,7 @@ mod discovery {
         let bpm = uri("http://lv2plug.in/ns/ext/time#beatsPerMinute");
         let reports_latency = uri(&format!("{LV2}reportsLatency"));
         let latency = uri(&format!("{LV2}latency"));
+        let enabled = uri(&format!("{LV2}enabled"));
         let midi_event = uri(crate::plugins::atom::MIDI_EVENT);
         let position = uri(crate::plugins::atom::TIME_POSITION);
         let patch_message = uri(crate::plugins::atom::PATCH_MESSAGE);
@@ -534,6 +535,8 @@ mod discovery {
                     latency: port_type == PortType::ControlOutput
                         && (port.has_property(&reports_latency)
                             || port.get(&designation).is_some_and(|d| d == latency)),
+                    enabled: port_type == PortType::ControlInput
+                        && port.get(&designation).is_some_and(|d| d == enabled),
                 });
             }
             ports.sort_by_key(|p| p.index);

@@ -202,6 +202,9 @@ pub struct PluginInstance {
     /// Frames of silence out of a bypassed block with trails
     quiet: usize,
     quiet_limit: usize,
+    /// The plugin's lv2:enabled port: bypassed, it keeps running with
+    /// that port at 0 and plays its own tail, without a crossfade to dry
+    enabled_port: Option<usize>,
 
     /// Control output the plugin reports its latency on, and that latency
     /// in frames as of its last run
@@ -237,6 +240,10 @@ impl PluginInstance {
         let mut controls = vec![0.0f32; port_count].into_boxed_slice();
         for port in &info.ports {
             controls[port.index] = port.default;
+        }
+        let enabled_port = info.enabled_port();
+        if let Some(port) = enabled_port {
+            controls[port] = 1.0;
         }
         // A plugin with no audio output has no latency to compensate
         let latency_port = info
@@ -279,6 +286,7 @@ impl PluginInstance {
             ramp: block(),
             quiet: 0,
             quiet_limit: (sample_rate * TAIL_SILENCE_SECONDS) as usize,
+            enabled_port,
             latency_port,
             latency: 0,
             max_latency: latency::max_latency(sample_rate),
@@ -865,7 +873,7 @@ impl PluginInstance {
         }
         // From here `left` and `right` are the dry signal
         self.delay_dry(left, right.as_deref_mut().filter(|_| stereo_in));
-        let target = if self.bypassed { 0.0 } else { 1.0 };
+        let target = self.wet_target();
         if self.wet == 1.0 && target == 1.0 {
             // Fully on, the common case: no ramp to mix in
             let (wet_l, wet_r) = (
@@ -911,7 +919,7 @@ impl PluginInstance {
         stereo_in: bool,
     ) {
         let frames = left.len();
-        let target = if self.bypassed { 0.0 } else { 1.0 };
+        let target = self.wet_target();
         for gain in &mut self.ramp[..frames] {
             ramp(&mut self.wet, target, self.wet_step);
             *gain = self.wet;
@@ -1017,10 +1025,30 @@ impl PluginInstance {
             .and_then(|&(port, ..)| self.controls.get(port).copied())
     }
 
-    /// Bypass with a short crossfade
+    /// Bypass with a short crossfade, or through the plugin's lv2:enabled
+    /// port if it has one
     pub fn set_bypass(&mut self, bypassed: bool) {
         self.bypassed = bypassed;
         self.quiet = 0;
+        self.set_enabled_port();
+    }
+
+    fn set_enabled_port(&mut self) {
+        if let Some(control) = self.enabled_port.and_then(|p| self.controls.get_mut(p)) {
+            *control = if self.bypassed { 0.0 } else { 1.0 };
+        }
+    }
+
+    /// Where the crossfade goes: to dry when bypassed, except for a plugin
+    /// that bypasses itself (lv2:enabled) and still runs. One stopped at
+    /// once (built bypassed, or by the guard) stays stopped.
+    fn wet_target(&self) -> f32 {
+        let runs_bypassed = self.enabled_port.is_some() && self.wet > 0.0;
+        if self.bypassed && !runs_bypassed {
+            0.0
+        } else {
+            1.0
+        }
     }
 
     /// True when bypassed
@@ -1036,6 +1064,7 @@ impl PluginInstance {
         self.wet = if bypassed { 0.0 } else { 1.0 };
         // Built bypassed: no tail to play
         self.quiet = if bypassed { self.quiet_limit } else { 0 };
+        self.set_enabled_port();
     }
 }
 

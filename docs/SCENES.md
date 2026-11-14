@@ -107,6 +107,9 @@ the chain is built. A MIDI clock can drive the tempo too (see
 Delay and reverb blocks (LV2 plugins of those categories and the Space
 block) keep ringing when they are bypassed: their input is faded out while
 their output keeps playing, until it has been silent for half a second.
+An LV2 plugin with an `lv2:enabled` port bypasses itself: OpenRig sets that
+port to 0 and keeps running the plugin, which plays its own tail. The port is
+not shown as a control and presets do not save it.
 Other blocks are bypassed with a 10 ms ramp. Tails survive scene changes and
 footswitch bypasses; a preset change or a structural edit crossfades to a new
 chain, which ends them over 20 ms.
