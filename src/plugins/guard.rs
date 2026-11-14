@@ -32,6 +32,17 @@ pub const SPIKE_LIMIT: f32 = 3.0;
 /// then (a preset load, a burst of system activity) is harmless, several
 /// in a row are not
 pub const SPIKE_FORGIVE_SECONDS: f32 = 0.25;
+/// A period that the plugin alone takes longer than: the deadline is
+/// missed whatever the rest of the chain does, so a dropout
+pub const OVERRUN_SHARE: f32 = 1.0;
+/// Overruns that switch the plugin off...
+pub const OVERRUN_LIMIT: f32 = 5.0;
+/// ...each one being forgiven after this many seconds: unlike a spike, an
+/// overrun is a dropout the user hears. Spikes spaced more than
+/// `SPIKE_FORGIVE_SECONDS` apart never add up, so a plugin that overruns
+/// one period every half second (a buffer rebuilt in one go) would
+/// otherwise never be cut
+pub const OVERRUN_FORGIVE_SECONDS: f32 = 3.0;
 /// Periods with a non-finite output that switch the plugin off, each one
 /// forgiven after `SPIKE_FORGIVE_SECONDS` too
 pub const NON_FINITE_LIMIT: f32 = 3.0;
@@ -82,8 +93,9 @@ pub struct Watchdog {
     grace: f32,
     /// Net seconds of heavy periods
     heavy: f32,
-    /// Spikes and non-finite periods not forgiven yet
+    /// Spikes, overruns and non-finite periods not forgiven yet
     spikes: f32,
+    overruns: f32,
     bad_output: f32,
     tripped: bool,
 }
@@ -101,6 +113,7 @@ impl Watchdog {
             grace: GRACE_SECONDS,
             heavy: 0.0,
             spikes: 0.0,
+            overruns: 0.0,
             bad_output: 0.0,
             tripped: false,
         }
@@ -159,7 +172,15 @@ impl Watchdog {
         } else {
             self.spikes = (self.spikes - forgiven).max(0.0);
         }
-        if self.heavy >= HEAVY_SECONDS || self.spikes >= SPIKE_LIMIT {
+        if load >= OVERRUN_SHARE {
+            self.overruns += 1.0;
+        } else {
+            self.overruns = (self.overruns - period / OVERRUN_FORGIVE_SECONDS).max(0.0);
+        }
+        if self.heavy >= HEAVY_SECONDS
+            || self.spikes >= SPIKE_LIMIT
+            || self.overruns >= OVERRUN_LIMIT
+        {
             self.tripped = true;
             return Some(Trip::Cpu);
         }
@@ -268,9 +289,10 @@ mod tests {
         let mut dog = Watchdog::new(RATE, PERIOD);
         // A preset load: the first periods take far more than the period
         assert_eq!(feed(&mut dog, periods(0.15), 20.0), None);
-        // Then a spike every half second, and short heavy bursts
+        // Then a spike every half second (within the period), and short
+        // heavy bursts
         for _ in 0..40 {
-            assert_eq!(feed(&mut dog, 1, 4.0), None);
+            assert_eq!(feed(&mut dog, 1, 0.9), None);
             assert_eq!(feed(&mut dog, periods(0.1), 0.6), None);
             assert_eq!(feed(&mut dog, periods(0.4), 0.1), None);
         }
@@ -292,6 +314,36 @@ mod tests {
         assert_eq!(cut, Some(Trip::Cpu));
         let seconds = elapsed as f32 * PERIOD as f32 / RATE;
         assert!(seconds <= 0.6, "cut after {seconds} s");
+    }
+
+    #[test]
+    fn periodic_overruns_are_cut_even_when_far_apart() {
+        // Dragonfly Plate (Tank) or Room 3.2.10 on a Pi 5, 64 frames at
+        // 48 kHz: about 1 % on average, but one block of about 1.8
+        // periods every 32768 samples (0.68 s), a dropout each time
+        const SMALL: usize = 64;
+        let mut dog = Watchdog::new(RATE, SMALL);
+        let small = |share: f32| (share * SMALL as f32 / RATE * 1e9) as u64;
+        let mut blocks = 0usize;
+        let cut = (0..60).find_map(|_| {
+            let spike = dog.record(SMALL, small(1.8), true);
+            let rest = (1..512).find_map(|_| dog.record(SMALL, small(0.01), true));
+            blocks += 512;
+            spike.or(rest)
+        });
+        assert_eq!(cut, Some(Trip::Cpu));
+        let seconds = blocks as f32 * SMALL as f32 / RATE;
+        assert!(seconds <= 6.0, "cut after {seconds} s");
+    }
+
+    #[test]
+    fn a_rare_overrun_is_tolerated() {
+        // One missed deadline every 4 s (a burst of system activity)
+        let mut dog = Watchdog::new(RATE, PERIOD);
+        for _ in 0..30 {
+            assert_eq!(feed(&mut dog, 1, 2.0), None);
+            assert_eq!(feed(&mut dog, periods(4.0), 0.2), None);
+        }
     }
 
     #[test]
