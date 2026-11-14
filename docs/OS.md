@@ -56,7 +56,10 @@ kms,lv2,nam,tone3000,midi,splash,update,store,rigs-online` (plus `gpio` on the P
 Wayland. Its
 dependencies are vendored from `Cargo.lock` at build time; the image's rustc
 is 1.99 (`RUST_BIN_VERSION` in `os/Makefile`, newer than Buildroot's own),
-which `rust-version` in `Cargo.toml` keeps the lockfile compatible with.
+the app's `rust-version`. Update the lockfile with `cargo update
+--ignore-rust-version` and build with rustc 1.99: plain `cargo update` takes
+the lowest `rust-version` of the workspace (1.80, the shared
+`crates/openrig-rig`) and would pick old versions of many crates.
 Slint's KMS backend is a patched copy in `third_party/` (see its
 `PATCHED.md`): it could not display on drivers without framebuffer
 modifiers (virtio-gpu in QEMU), and touch did not turn with the screen.
