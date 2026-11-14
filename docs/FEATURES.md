@@ -151,7 +151,8 @@ What OpenRig does, in more technical detail than the
 - **Rigs**: share a preset as a `.openrig` file with the plugins and models
   it needs (built-in, store, TONE3000 or local). Importing one installs
   what the store and your TONE3000 account can provide, then adds it as a
-  new preset. Files live in `<data>/rigs` and on mounted USB drives. The
+  new preset. Files live in `<data>/rigs` and on USB drives (the OpenRig
+  OS mounts them when plugged in; **Eject** before pulling them out). The
   **openrig.eu** tab browses, installs, favourites and publishes rigs on
   the community site, with the pedalboard linked to an account by a code.
   See [RIGS.md](RIGS.md).
