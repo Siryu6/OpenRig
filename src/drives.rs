@@ -46,6 +46,48 @@ pub fn gone(drive: &Path, drives: &[PathBuf]) -> bool {
     !drives.iter().any(|d| d == drive)
 }
 
+/// Folder at the top of a drive for the app when it cannot write at the
+/// top: on ext4 the OS makes it and gives it to the app (the other files
+/// keep their owners)
+pub const FOLDER: &str = "OpenRig";
+
+/// The folders of `drive` where rigs and backups are looked for: its top,
+/// and its `OpenRig` folder when there is one
+pub fn folders(drive: &Path) -> Vec<PathBuf> {
+    let mut folders = vec![drive.to_path_buf()];
+    let own = drive.join(FOLDER);
+    if own.symlink_metadata().is_ok_and(|m| m.is_dir()) {
+        folders.push(own);
+    }
+    folders
+}
+
+/// Where the app writes on `drive`: its top when the app may write there
+/// (FAT and exFAT drives belong to it), else its `OpenRig` folder (ext4)
+pub fn write_folder(drive: &Path) -> PathBuf {
+    let own = drive.join(FOLDER);
+    if !writable(drive) && own.symlink_metadata().is_ok_and(|m| m.is_dir()) {
+        own
+    } else {
+        drive.to_path_buf()
+    }
+}
+
+#[cfg(unix)]
+fn writable(dir: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(c) = std::ffi::CString::new(dir.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `c` is a valid NUL-terminated path for the call
+    unsafe { libc::access(c.as_ptr(), libc::W_OK) == 0 }
+}
+
+#[cfg(not(unix))]
+fn writable(dir: &Path) -> bool {
+    std::fs::metadata(dir).is_ok_and(|m| !m.permissions().readonly())
+}
+
 /// The name of a drive, as the pages show it (its label)
 pub fn name(drive: &Path) -> String {
     drive
@@ -131,6 +173,38 @@ mod tests {
         assert!(!gone(Path::new("/media/A"), &drives));
         assert!(gone(Path::new("/media/C"), &drives));
         assert!(gone(Path::new("/media/A"), &[]));
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn writes_in_the_openrig_folder_when_the_top_is_not_writable() {
+        use std::os::unix::fs::PermissionsExt;
+        let drive = dir("ext4");
+        // FAT, exFAT: the top
+        assert_eq!(folders(&drive), vec![drive.clone()]);
+        assert_eq!(write_folder(&drive), drive);
+        std::fs::create_dir(drive.join(FOLDER)).unwrap();
+        assert_eq!(folders(&drive), vec![drive.clone(), drive.join(FOLDER)]);
+        // Writable top: still the top
+        assert_eq!(write_folder(&drive), drive);
+        // ext4 owned by another user: the folder the OS gave the app
+        std::fs::set_permissions(&drive, std::fs::Permissions::from_mode(0o555)).unwrap();
+        if !writable(&drive) {
+            // (root may write anywhere)
+            assert_eq!(write_folder(&drive), drive.join(FOLDER));
+        }
+        std::fs::set_permissions(&drive, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::remove_dir_all(&drive).unwrap();
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn a_link_is_not_the_openrig_folder() {
+        let drive = dir("link");
+        std::os::unix::fs::symlink("/", drive.join(FOLDER)).unwrap();
+        assert_eq!(folders(&drive), vec![drive.clone()]);
+        assert_eq!(write_folder(&drive), drive);
+        std::fs::remove_dir_all(&drive).unwrap();
     }
 
     #[test]

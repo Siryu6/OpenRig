@@ -189,7 +189,13 @@ same). `/media` is a RAM disk: the root file system stays read-only.
   disk the system runs from when it is a USB stick or SSD. Options:
   `nosuid,nodev,noexec,noatime`; FAT and exFAT files belong to the
   `pedalboard` user, and FAT is written at each file close (`flush`);
-  ext4 keeps the owners of the drive and commits every second.
+  ext4 keeps the owners of the drive and commits every second. On ext4
+  the app writes in an `OpenRig` folder at the top of the drive: the
+  script makes it at mount time (or takes the one there) and gives that
+  folder alone to `pedalboard` (`chown -h`, not recursive, a link is left
+  alone). Files already in it keep their owners; nothing else on the drive
+  changes. The app writes at the top when it may (FAT, exFAT), else in
+  `OpenRig`, and looks for rigs and backups in both.
 - **Eject**: the Eject button (Rigs panel, Settings → Backup) ejects the
   drive the panel shows and writes to (the first one, by name, when there
   are several), and only that one. It asks the same script, run by init as root (`drives serve`, FIFO

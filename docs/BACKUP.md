@@ -9,7 +9,8 @@ or to go back after a mistake.
 Settings → **Backup**.
 
 - **Back up to USB drive** writes `openrig-backup-<date>-<time>.tar.gz` at
-  the top of the first USB drive found. With no drive, the backup stays on
+  the top of the first USB drive found (in its `OpenRig` folder on an ext4
+  drive, see [OS.md](OS.md#usb-drives)). Backups are found in both places. With no drive, the backup stays on
   the pedal in `<data>/backups` (the last 3 are kept): download it from the
   remote control. The panel follows the drives plugged in and pulled out.
   **Eject**, under the button, makes that drive (and only it) safe to
