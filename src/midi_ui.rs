@@ -361,7 +361,6 @@ fn reset_learning(app: &App, message: &str) {
         m.learn_target = None;
     });
     app.set_midi_learn_target(NO_TARGET);
-    app.set_midi_learn_cc(-1);
     app.set_midi_learn_assigned(false);
     app.set_midi_learn_message(message.into());
 }
@@ -412,7 +411,6 @@ fn learn_controller(app: &App, state: &AppState, controller: u8) -> bool {
             MIDI.with(|m| m.borrow_mut().learn_controller = Some(controller));
             app.set_midi_learn_target(NO_TARGET);
             app.set_midi_learn_assigned(false);
-            app.set_midi_learn_cc(i32::from(controller));
             app.set_midi_learn_message(
                 format!("CC {}: now touch the control it drives.", controller).into(),
             );

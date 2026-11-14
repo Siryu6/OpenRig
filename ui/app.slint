@@ -295,7 +295,6 @@ export component App inherits Window {
     in property <bool> tempo-clock: false;       // the tempo comes from a MIDI clock
     in-out property <bool> midi-learning: false; // block editor: learning a controller
     in property <int> midi-learn-target: -2;     // -2 none, -1 on/off, n parameter n
-    in property <int> midi-learn-cc: -1;         // controller moved first
     in property <string> midi-learn-message: "";
     in property <bool> midi-learn-assigned: false; // the touched control has a controller
     in property <int> midi-learn-heel: 0;        // its range, percent: at CC 0…
@@ -441,8 +440,7 @@ export component App inherits Window {
     callback apply-factory-preset(int, int);         // instance-id, position of the preset
 
     callback add-split(string);                      // "ab", "mix" or "lr"
-    callback add-plugin-to-split-top(int, string);   // split instance-id, plugin uri
-    callback add-plugin-to-split-bottom(int, string);// split instance-id, plugin uri
+    callback add-plugin-to-split(int, bool, string); // split instance-id, top lane, plugin uri
     callback toggle-split-ab(int);                   // split instance-id
     callback set-split-mix-ratio(int, float);        // split instance-id, ratio
     callback set-split-type(int, string);            // split instance-id, "ab", "mix" or "lr"
@@ -651,10 +649,8 @@ export component App inherits Window {
     }
 
     function add-plugin(uri: string) {
-        if (root.split-insertion-mode == 1) {
-            root.add-plugin-to-split-top(root.target-split-index, uri);
-        } else if (root.split-insertion-mode == 2) {
-            root.add-plugin-to-split-bottom(root.target-split-index, uri);
+        if (root.split-insertion-mode != 0) {
+            root.add-plugin-to-split(root.target-split-index, root.split-insertion-mode == 1, uri);
         } else {
             root.add-plugin-to-chain(uri);
         }
@@ -1251,11 +1247,8 @@ export component App inherits Window {
                     root.context-menu-y = Theme.top-bar-height + Theme.space-md + Theme.touch-target + 4px;
                     root.show-context-menu = true;
                 }
-                add-plugin-to-split-top-clicked(id) => {
-                    root.open-browser(1, id);
-                }
-                add-plugin-to-split-bottom-clicked(id) => {
-                    root.open-browser(2, id);
+                add-plugin-to-split-clicked(id, top) => {
+                    root.open-browser(top ? 1 : 2, id);
                 }
                 toggle-ab-clicked(id) => {
                     root.toggle-split-ab(id);
@@ -1345,7 +1338,6 @@ export component App inherits Window {
                 midi-available: root.midi-available;
                 midi-learning: root.midi-learning;
                 midi-learn-target: root.midi-learn-target;
-                midi-learn-cc: root.midi-learn-cc;
                 midi-learn-message: root.midi-learn-message;
                 midi-learn-assigned: root.midi-learn-assigned;
                 midi-learn-heel: root.midi-learn-heel;

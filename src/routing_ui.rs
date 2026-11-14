@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use slint::{ComponentHandle, Model, ModelRc, Timer, TimerMode, VecModel, Weak};
-use tracing::{error, warn};
+use tracing::error;
 
 use pedalboard::audio::master::{self, Limiter, OutputEq, BANDS, BAND_KINDS};
 use pedalboard::audio::routing::{Fold, PortMeter, Routing, RoutingControl, Source, MAX_PORTS};
@@ -101,10 +101,7 @@ impl Context {
         let Some(app) = self.app.upgrade() else {
             return;
         };
-        // A change made from inside another (a Slint re-entry) is dropped
-        // rather than borrowing the editor twice
-        let Ok(mut editor) = self.editor.try_borrow_mut() else {
-            warn!("Routing editor in use, change skipped");
+        let Some(mut editor) = crate::borrow_page(&self.editor, "Routing editor") else {
             return;
         };
         let editor = &mut *editor;
@@ -130,7 +127,7 @@ impl Context {
         let Some(app) = self.app.upgrade() else {
             return;
         };
-        let Ok(mut editor) = self.editor.try_borrow_mut() else {
+        let Some(mut editor) = crate::borrow_page(&self.editor, "Routing editor") else {
             return;
         };
         edit(&mut editor.master);
