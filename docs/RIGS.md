@@ -17,8 +17,8 @@ Presets page → share button (next to Save) opens the Rigs panel.
 
 - **Export** writes the current chain to `<data>/rigs/<name>.openrig`, and
   to a USB drive when one is mounted (**To USB**, to the first drive by
-  name; **Eject** next to it ejects that drive, on the OpenRig OS, before
-  pulling it out). MIDI CCs learned by the
+  name, at its top, or in its `OpenRig` folder on an ext4 drive; **Eject**
+  next to it ejects that drive, on the OpenRig OS, before pulling it out). MIDI CCs learned by the
   blocks fit one controller setup, so they are left out unless the
   **MIDI CCs** toggle is on. The note under the title lists what only this
   pedalboard has (see below). **Author** sets, once, the name written in

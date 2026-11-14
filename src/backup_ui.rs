@@ -32,7 +32,8 @@ thread_local! {
 /// Where backups are written and looked for: the drives, then the pedal
 fn places(data: &Path) -> Vec<(PathBuf, bool)> {
     let mut places: Vec<(PathBuf, bool)> = pedalboard::rigs::removable_drives()
-        .into_iter()
+        .iter()
+        .flat_map(|d| pedalboard::drives::folders(d))
         .map(|d| (d, true))
         .collect();
     places.push((data.join(backup::LOCAL_DIR), false));
@@ -417,7 +418,8 @@ fn back_up(app: &App, state: &Arc<AppState>) {
         // The drive the panel shows; the pedal when there was none (or it is gone)
         let drive = pedalboard::drives::chosen(&pedalboard::rigs::removable_drives(), &shown);
         let dir = drive
-            .clone()
+            .as_deref()
+            .map(pedalboard::drives::write_folder)
             .unwrap_or_else(|| data.join(backup::LOCAL_DIR));
         let result = backup::write_to_dir(&data, options, &dir);
         if result.is_ok() && drive.is_none() {

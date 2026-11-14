@@ -21,6 +21,10 @@
 # Eject writes what is cached, unmounts every file system of the drive and
 # powers it off: it can then be pulled out safely.
 #
+# On ext4 the files keep their owners: the app writes in the folder
+# OpenRig at the top of the drive, made (or taken) for it at mount time.
+# Nothing else on the drive changes owner.
+#
 # The disk the system runs from is never mounted here, even on USB (a mini
 # PC may boot from a USB stick or SSD); internal disks (NVMe, SATA, SD
 # card) are not USB, so the rule never runs for them.
@@ -70,6 +74,22 @@ make_dir() {
 	echo "$dir"
 }
 
+# The folder OpenRig at the top of the ext4 drive mounted on $1, made if
+# missing and given to the app; only the folder, not what it holds. A link
+# is left alone, and chown -h never follows one put there meanwhile.
+own_folder() {
+	folder="$1/OpenRig"
+	if [ -L "$folder" ]; then
+		log "$folder is a link, not used"
+		return 0
+	fi
+	[ -d "$folder" ] || mkdir -m 755 "$folder" 2>/dev/null || {
+		log "$folder cannot be made (read-only drive?)"
+		return 0
+	}
+	chown -h "$uid:$gid" "$folder" || log "$folder cannot be given to $USER"
+}
+
 add() {
 	dev=$1
 	[ -b "/dev/$dev" ] || return 0
@@ -93,8 +113,8 @@ add() {
 		options=$options,uid=$uid,gid=$gid,fmask=0133,dmask=0022,iocharset=utf8,errors=remount-ro
 		;;
 	ext4)
-		# Owners as on the drive (the app writes where they let it);
-		# committed every second
+		# Owners as on the drive (the app writes in OpenRig, see
+		# own_folder); committed every second
 		options=$options,commit=1,errors=remount-ro
 		;;
 	esac
@@ -104,6 +124,7 @@ add() {
 	}
 	if /bin/mount -t "$ID_FS_TYPE" -o "$options" "/dev/$dev" "$dir"; then
 		log "$dev ($ID_FS_TYPE${ID_FS_LABEL:+, $ID_FS_LABEL}) mounted on $dir"
+		[ "$ID_FS_TYPE" != ext4 ] || own_folder "$dir"
 	else
 		rmdir "$dir"
 		log "$dev ($ID_FS_TYPE) cannot be mounted"

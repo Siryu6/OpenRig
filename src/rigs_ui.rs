@@ -138,8 +138,8 @@ fn list(weak: &Weak<App>) {
     spawn("rigs-list", move || {
         let drives = rigs::removable_drives();
         let mut files = rigs::list(&rigs::rigs_dir(&data_dir()), false);
-        for drive in &drives {
-            files.extend(rigs::list(drive, true));
+        for folder in drives.iter().flat_map(|d| pedalboard::drives::folders(d)) {
+            files.extend(rigs::list(&folder, true));
         }
         let usb = !drives.is_empty();
         // The drive "To USB" writes to and Eject ejects
@@ -291,18 +291,21 @@ fn export_current(app: &App, state: &Arc<AppState>, usb: bool) {
             let mut on_drive = None;
             if usb {
                 match pedalboard::drives::chosen(&rigs::removable_drives(), &shown) {
-                    Some(drive) => match rigs::write(&drive, &exported.rig) {
-                        Ok(copy) => {
-                            info!(path = %copy.display(), "Rig copied to a drive");
-                            let said = format!(", and on {}", pedalboard::drives::name(&drive));
-                            note.push_str(&said);
-                            on_drive = Some((drive, said));
+                    Some(drive) => {
+                        match rigs::write(&pedalboard::drives::write_folder(&drive), &exported.rig)
+                        {
+                            Ok(copy) => {
+                                info!(path = %copy.display(), "Rig copied to a drive");
+                                let said = format!(", and on {}", pedalboard::drives::name(&drive));
+                                note.push_str(&said);
+                                on_drive = Some((drive, said));
+                            }
+                            Err(e) => {
+                                warn!(error = format_args!("{e:#}"), "Rig not copied to the drive");
+                                note.push_str(", not on the USB drive");
+                            }
                         }
-                        Err(e) => {
-                            warn!(error = format_args!("{e:#}"), "Rig not copied to the drive");
-                            note.push_str(", not on the USB drive");
-                        }
-                    },
+                    }
                     None => note.push_str(", no USB drive found"),
                 }
             }
