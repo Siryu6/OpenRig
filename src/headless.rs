@@ -123,6 +123,9 @@ impl Platform for HeadlessPlatform {
 struct Screen {
     window: Rc<MinimalSoftwareWindow>,
     pixels: Vec<Rgb8Pixel>,
+    /// The window as last sent: Slint redraws whole items (a label whose
+    /// model row was set again), only the pixels that changed go
+    sent: Vec<Rgb8Pixel>,
     size: (u32, u32),
     last: Instant,
     encoding: Encoding,
@@ -311,6 +314,7 @@ impl Screen {
         Self {
             window,
             pixels: Vec::new(),
+            sent: Vec::new(),
             size: (size.width, size.height),
             last: Instant::now() - Duration::from_secs(1),
             encoding: Encoding::from_env(),
@@ -376,9 +380,38 @@ impl Screen {
                 height: h,
             });
         }
-        if !keyframe {
+        let window = (w, h);
+        let clip = |rect: &mut Rect| match frames::clip(*rect, window) {
+            Some(clipped) => {
+                *rect = clipped;
+                true
+            }
+            None => false,
+        };
+        rects.retain_mut(clip);
+        if keyframe || self.sent.len() != self.pixels.len() {
+            self.sent.clone_from(&self.pixels);
+        } else {
+            let (now, sent) = (&self.pixels, &mut self.sent);
+            rects.retain_mut(|rect| match frames::changed(*rect, now, sent, w) {
+                Some(changed) => {
+                    *rect = changed;
+                    true
+                }
+                None => false,
+            });
+            for rect in &rects {
+                for row in rect.y..rect.y + rect.height {
+                    let start = row * w + rect.x;
+                    let span = start..start + rect.width;
+                    sent[span.clone()].copy_from_slice(&now[span]);
+                }
+            }
             rects.extend_from_slice(repaint.rects());
+            rects.retain_mut(clip);
         }
+        // Close areas go as one picture
+        frames::merge_close(&mut rects);
         if !drawn && !keyframe && repaint.is_empty() {
             self.encoder.idle = Some((packed, rects));
             // Nothing changed: look again soon (an animation may be running)
@@ -391,13 +424,6 @@ impl Screen {
         self.last = Instant::now();
         // Only the areas sent leave the window: copies of their rows
         packed.clear();
-        rects.retain_mut(|rect| match frames::clip(*rect, (w, h)) {
-            Some(clipped) => {
-                *rect = clipped;
-                true
-            }
-            None => false,
-        });
         for rect in &rects {
             for row in rect.y..rect.y + rect.height {
                 let start = row * w + rect.x;

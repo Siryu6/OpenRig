@@ -122,6 +122,59 @@ impl Areas {
     }
 }
 
+/// Merging two areas may add this many pixels: below, one picture costs
+/// less than two (each has a header, a PNG or JPEG header, and is
+/// acknowledged)
+const MERGE_SLACK: usize = 4096;
+
+/// Merge the areas that are close: the same pixels, in fewer pictures
+pub fn merge_close(rects: &mut Vec<Rect>) {
+    loop {
+        let mut best = (usize::MAX, 0, 0);
+        for i in 0..rects.len() {
+            for j in i + 1..rects.len() {
+                let (a, b) = (rects[i], rects[j]);
+                let cost = a.union(b).area().saturating_sub(a.area() + b.area());
+                if cost < best.0 {
+                    best = (cost, i, j);
+                }
+            }
+        }
+        let (cost, i, j) = best;
+        if cost > MERGE_SLACK {
+            return;
+        }
+        let b = rects.swap_remove(j);
+        rects[i] = rects[i].union(b);
+    }
+}
+
+/// The part of `rect` where `now` differs from `before` (both pictures of
+/// the window, `width` pixels a row), None when nothing changed
+pub fn changed<P: PartialEq>(rect: Rect, now: &[P], before: &[P], width: usize) -> Option<Rect> {
+    let row = |y: usize| y * width + rect.x..y * width + rect.x + rect.width;
+    let differs = |y: &usize| now[row(*y)] != before[row(*y)];
+    let mut rows = rect.y..rect.y + rect.height;
+    let top = rows.find(differs)?;
+    let bottom = rows.rev().find(differs).unwrap_or(top);
+    let (mut left, mut right) = (rect.width, 0);
+    for y in top..=bottom {
+        let (a, b) = (&now[row(y)], &before[row(y)]);
+        if let Some(l) = (0..left).find(|&x| a[x] != b[x]) {
+            left = l;
+        }
+        if let Some(r) = (right..rect.width).rev().find(|&x| a[x] != b[x]) {
+            right = r + 1;
+        }
+    }
+    Some(Rect {
+        x: rect.x + left,
+        y: top,
+        width: right.saturating_sub(left),
+        height: bottom + 1 - top,
+    })
+}
+
 /// The rectangle a frame message shows (see protocol::frame_header)
 pub fn rect_of(message: &[u8]) -> Option<Rect> {
     let header = message.get(..FRAME_HEADER)?;
@@ -389,6 +442,55 @@ mod tests {
                 .iter()
                 .any(|a| a.x <= x && x < a.x + a.width && a.y <= y && y < a.y + a.height));
         }
+    }
+
+    #[test]
+    fn close_areas_merge_far_ones_stay() {
+        let r = |x, y, width, height| Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+        // A knob and its value under it, and a meter far away
+        let mut rects = vec![r(648, 701, 65, 64), r(660, 768, 40, 20), r(10, 10, 8, 100)];
+        merge_close(&mut rects);
+        assert_eq!(rects.len(), 2);
+        assert!(rects.contains(&r(648, 701, 65, 87)));
+        assert!(rects.contains(&r(10, 10, 8, 100)));
+        let mut one = vec![r(0, 0, 5, 5)];
+        merge_close(&mut one);
+        assert_eq!(one, [r(0, 0, 5, 5)]);
+    }
+
+    #[test]
+    fn only_what_changed_is_sent() {
+        let width = 10;
+        let before = vec![0u8; width * 8];
+        let mut now = before.clone();
+        let rect = Rect {
+            x: 1,
+            y: 1,
+            width: 8,
+            height: 6,
+        };
+        assert_eq!(changed(rect, &now, &before, width), None);
+        now[2 * width + 3] = 1;
+        now[4 * width + 6] = 1;
+        // Outside the rectangle: not looked at
+        now[7 * width + 9] = 1;
+        assert_eq!(
+            changed(rect, &now, &before, width),
+            Some(Rect {
+                x: 3,
+                y: 2,
+                width: 4,
+                height: 3,
+            })
+        );
+        now[width + 1] = 1;
+        now[6 * width + 8] = 1;
+        assert_eq!(changed(rect, &now, &before, width), Some(rect));
     }
 
     /// Sizes and times of both encodings: `cargo test --release frames -- --nocapture`
