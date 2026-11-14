@@ -36,7 +36,7 @@ export component Tone3000View inherits Rectangle {
     in property <string> download-status: "";       // "" when no download runs
     // Block the library was opened from ("" = none): downloaded models can be loaded in it
     in property <string> target-name: "";
-    private property <bool> can-use: root.target-name != "" && root.detail.usable;
+    private property <bool> can-use: root.detail.usable;
     // Gear filters ("" = all); only the block's gears when opened from a block
     in property <[string]> gear-ids: [];
     in property <[string]> gear-names: [];
@@ -569,13 +569,6 @@ export component Tone3000View inherits Rectangle {
                     text: "Use loads the model in " + root.target-name + ".";
                     color: Theme.text-muted;
                     font-size: Theme.font-caption;
-                }
-                // Opened from a block that cannot load this tone: say why
-                if root.target-name != "" && root.detail.reason != "": Text {
-                    text: root.detail.reason;
-                    color: Theme.text-secondary;
-                    font-size: Theme.font-caption;
-                    wrap: word-wrap;
                 }
                 if !root.can-use && root.detail.block-uri != "": Text {
                     text: "Add puts the model in a new " + root.detail.block-name + " block at the end of the chain.";

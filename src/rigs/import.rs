@@ -11,8 +11,9 @@ use std::path::Path;
 
 use super::format::{is_safe_relative_path, Rig, Source, Tone3000Model};
 use super::CatalogPlugin;
+use crate::plugins::scanner::FileKind;
 use crate::presets::Preset;
-use crate::tone_info::{format_extension, model_file, tone_folder};
+use crate::tone_info::{model_file, tone_folder};
 
 /// What the importing pedalboard has
 pub struct Context<'a> {
@@ -153,7 +154,7 @@ pub fn plan(rig: Rig, context: &Context) -> Result<Plan> {
                         Step::Missing("This OpenRig has no TONE3000 support".into()),
                         None,
                     ),
-                    None if format_extension(&model.format).is_none() => (
+                    None if FileKind::of_format(&model.format).is_none() => (
                         label,
                         Step::Missing(format!("Unsupported format {}", model.format)),
                         None,
@@ -187,7 +188,7 @@ pub fn plan(rig: Rig, context: &Context) -> Result<Plan> {
 /// Where the TONE3000 library would have put `model`, if it is there
 fn downloaded_path(models_dir: &Path, model: &Tone3000Model) -> Option<String> {
     let id = model.model_id?;
-    let extension = format_extension(&model.format)?;
+    let extension = FileKind::of_format(&model.format)?.extension();
     let path = tone_folder(&model.gear, &model.tone_title, model.tone_id).join(model_file(
         &model.model_name,
         id,

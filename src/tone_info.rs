@@ -39,16 +39,6 @@ pub fn gear_folder(gear: &str) -> &str {
         .unwrap_or("Other")
 }
 
-/// File extension of a TONE3000 format, whether or not a block of this
-/// build can load it
-pub fn format_extension(format: &str) -> Option<&'static str> {
-    match format {
-        "nam" => Some("nam"),
-        "ir" => Some("wav"),
-        _ => None,
-    }
-}
-
 /// Keep a name usable as a file name on every OS
 pub fn file_name(name: &str) -> String {
     let cleaned: String = name

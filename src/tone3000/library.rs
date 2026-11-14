@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use super::auth::{download_agent, get_json, AuthError};
-use crate::plugins::scanner::{TONE_INFO_FILE, TONE_PICTURE_FILE};
+use crate::plugins::scanner::{FileKind, TONE_INFO_FILE, TONE_PICTURE_FILE};
 
 pub use crate::tone_info::{file_name, gear_label, FOLDER, GEARS};
 use crate::tone_info::{model_file, tone_folder, ModelInfo, ToneInfo};
@@ -57,15 +57,6 @@ impl List {
     /// filter, so it is applied here
     fn paginated(self) -> bool {
         matches!(self, List::Favorites | List::Created | List::Downloaded)
-    }
-}
-
-/// File extension of a model format, `None` when no block can load it yet
-pub fn file_extension(format: &str) -> Option<&'static str> {
-    match format {
-        "nam" if cfg!(feature = "nam") => Some("nam"),
-        "ir" => Some("wav"),
-        _ => None,
     }
 }
 
@@ -134,8 +125,14 @@ impl Tone {
             .filter(|u| !u.is_empty())
     }
 
+    /// Kind of the tone's files, `None` when no block of this build loads
+    /// its format
+    pub fn kind(&self) -> Option<FileKind> {
+        FileKind::playable(&self.format)
+    }
+
     pub fn supported(&self) -> bool {
-        file_extension(&self.format).is_some()
+        self.kind().is_some()
     }
 
     /// Link to the tone page
@@ -171,7 +168,7 @@ impl Model {
     /// File path relative to the models dir. The id keeps apart models of
     /// a tone with the same name (A1 and A2 captures, sizes)
     pub fn relative_path(&self, tone: &Tone) -> Option<PathBuf> {
-        let extension = file_extension(&tone.format)?;
+        let extension = tone.kind()?.extension();
         Some(
             tone.folder()
                 .join(model_file(&self.name, self.id, extension)),
@@ -482,8 +479,10 @@ pub fn download(token: &str, models_dir: &Path, tone: &Tone, model: &Model) -> R
     Ok(relative)
 }
 
-/// Side of the picture kept with a downloaded tone
-const PICTURE_SIDE: u32 = 96;
+/// Side tone pictures are fetched at, and kept at with a downloaded tone
+/// (drawn at 48 px in the lists, 88 px in the tone sheet and the block
+/// editor)
+pub const PICTURE_SIDE: u32 = 96;
 
 /// Keep the tone's picture with its models, for its block on stage (no
 /// network there); returns whether it was saved now. Optional: the models
@@ -549,6 +548,26 @@ mod tests {
         assert_eq!(model.description(&tone("nam")), "A2 · lite");
         assert!(model.relative_path(&tone("proteus")).is_none());
         assert_eq!(file_name(" ..  "), "untitled");
+    }
+
+    #[test]
+    fn supports_the_formats_this_build_plays() {
+        let model = Model {
+            id: 3,
+            name: "Crunch".into(),
+            model_url: String::new(),
+            size: None,
+            architecture_version: None,
+            tone_id: None,
+        };
+        let nam = cfg!(feature = "nam");
+        assert!(tone("ir").supported());
+        assert_eq!(tone("nam").supported(), nam);
+        assert_eq!(
+            model.relative_path(&tone("nam")),
+            nam.then(|| PathBuf::from("Tone3000/Amps/Fender- Twin-Reverb- [42]/Crunch [3].nam"))
+        );
+        assert!(!tone("aida-x").supported());
     }
 
     #[test]

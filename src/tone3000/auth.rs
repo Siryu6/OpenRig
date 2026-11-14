@@ -173,10 +173,8 @@ impl Settings {
         let path = Self::path();
         let dir = path.parent().unwrap_or(&path);
         std::fs::create_dir_all(dir).with_context(|| format!("Cannot create {}", dir.display()))?;
-        let tmp = path.with_extension("json.tmp");
-        write_private(&tmp, serde_json::to_string_pretty(self)?.as_bytes())?;
-        std::fs::rename(&tmp, &path).with_context(|| format!("Cannot write {}", path.display()))?;
-        Ok(())
+        // The tokens are credentials: for the owner only
+        crate::persist::write_private(&path, &serde_json::to_vec_pretty(self)?)
     }
 
     /// Forget the session (the publishable key is kept)
@@ -225,30 +223,6 @@ impl Settings {
         }
         Ok(access_token)
     }
-}
-
-/// Write a file only its owner can read (the tokens are credentials)
-fn write_private(path: &std::path::Path, data: &[u8]) -> Result<()> {
-    use std::io::Write;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options
-        .open(path)
-        .with_context(|| format!("Cannot write {}", path.display()))?;
-    // The mode above only applies to a new file
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
-    file.write_all(data)?;
-    file.sync_all()?;
-    Ok(())
 }
 
 /// Why an authenticated call failed
