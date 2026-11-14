@@ -13,7 +13,7 @@ use slint::{ComponentHandle, Image, Model as _, Rgba8Pixel, SharedPixelBuffer, S
 use tracing::{debug, error, warn};
 
 use pedalboard::audio::ChainNode;
-use pedalboard::plugins::scanner::{self, FileBlock};
+use pedalboard::plugins::scanner::{self, FileBlock, FileKind};
 use pedalboard::state::AppState;
 use pedalboard::tone3000::images;
 use pedalboard::tone3000::library::{self, Filter, List, Model, Tone};
