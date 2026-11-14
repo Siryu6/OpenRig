@@ -16,7 +16,7 @@ use std::rc::Rc;
 
 use slint::{ComponentHandle, Model};
 
-use crate::App;
+use crate::{App, View};
 use pedalboard::ui::encoder;
 
 /// Knobs on a page of the strip (the rack's `per-page`)
@@ -170,7 +170,7 @@ fn event(
     detents: i32,
 ) {
     let instance = app.get_selected_instance_id();
-    if app.get_current_view() != 0 || instance < 0 {
+    if app.get_current_view() != View::Rack || instance < 0 {
         return;
     }
     // The parameters in the strip, then the list fields

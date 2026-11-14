@@ -2,12 +2,12 @@
 //! encoders wired to the board.
 //! Changes apply at once: the inputs are opened again on their new GPIOs.
 
-use std::cell::{RefCell, RefMut};
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use slint::{ComponentHandle, ModelRc, VecModel, Weak};
-use tracing::{error, warn};
+use tracing::error;
 
 use pedalboard::hardware::{
     Encoder, Hardware, I2cEncoders, I2cModule, ENCODER_STEPS, MAX_FOOTSWITCHES, MAX_PIN,
@@ -20,16 +20,6 @@ struct Board {
     hardware: Hardware,
     #[cfg(feature = "gpio")]
     gpio: Option<crate::gpio::Gpio>,
-}
-
-/// The board, for a callback; `None` (logged) when a callback run from
-/// inside another (a Slint re-entry) would borrow it twice
-fn borrow(board: &RefCell<Board>) -> Option<RefMut<'_, Board>> {
-    let borrowed = board.try_borrow_mut().ok();
-    if borrowed.is_none() {
-        warn!("Hardware settings in use, change skipped");
-    }
-    borrowed
 }
 
 pub fn setup(app: &App, state: &Arc<AppState>) {
@@ -181,7 +171,7 @@ fn edit(
     f: impl FnOnce(&mut Hardware),
 ) {
     let Some(app) = app.upgrade() else { return };
-    let Some(mut board) = borrow(board) else {
+    let Some(mut board) = crate::borrow_page(board, "Hardware settings") else {
         return;
     };
     let mut hardware = board.hardware.clone();
@@ -330,6 +320,7 @@ mod tests {
     #[cfg(feature = "headless")]
     #[test]
     fn the_encoder_leaves_its_own_settings_alone() {
+        use crate::View;
         use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
         use slint::platform::{Key, Platform, WindowAdapter, WindowEvent};
 
@@ -383,9 +374,9 @@ mod tests {
         // Every stop, past the last: a press, a turn (adjusting it when it
         // is a stepper), a press again
         for stop in 0..12 {
-            app.set_current_view(0);
+            app.set_current_view(View::Rack);
             settle();
-            app.set_current_view(12);
+            app.set_current_view(View::Hardware);
             settle();
             for _ in 0..stop {
                 key(Key::RightArrow);

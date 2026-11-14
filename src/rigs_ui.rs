@@ -33,13 +33,7 @@ thread_local! {
 }
 
 fn with_page<R>(f: impl FnOnce(&mut Page) -> R) -> Option<R> {
-    PAGE.with(|p| match p.try_borrow_mut() {
-        Ok(mut page) => Some(f(&mut page)),
-        Err(_) => {
-            warn!("Rigs page in use, update skipped");
-            None
-        }
-    })
+    PAGE.with(|p| crate::borrow_page(p, "Rigs page").map(|mut page| f(&mut page)))
 }
 
 pub fn setup(app: &App, state: &Arc<AppState>) {
