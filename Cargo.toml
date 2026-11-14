@@ -64,7 +64,7 @@ splash = ["dep:png"]
 update = ["dep:ureq", "dep:ring"]
 # Plugin store: downloads the signed catalog index and installs LV2 bundles
 # into the data directory (minisign check, tar.xz / tar.gz in pure Rust)
-store = ["dep:ureq", "dep:ring", "dep:minisign-verify", "dep:tar", "dep:flate2", "dep:lzma-rs"]
+store = ["dep:ureq", "dep:ring", "dep:minisign-verify", "dep:lzma-rs"]
 # openrig.eu in the Rigs panel: browse, download, favourite and publish rigs
 # (HTTPS client, QR code of the link page)
 rigs-online = ["dep:ureq", "dep:qrcodegen"]
@@ -125,8 +125,9 @@ zune-jpeg = { version = "0.5", optional = true }
 libc = "0.2"  # DSP workers: real-time scheduling
 bytemuck = "1"  # Byte views of the LV2 atom buffers, without unsafe
 minisign-verify = { version = "0.3", optional = true }
-tar = { version = "0.4", default-features = false, optional = true }
-flate2 = { version = "1", optional = true }
+# .tar.gz: store archives, and the backups of Settings → Backup
+tar = { version = "0.4", default-features = false }
+flate2 = "1"
 lzma-rs = { version = "0.3", optional = true }
 # Web remote: HTTP / WebSocket server on one thread, password hashes
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "ws", "json", "query"], optional = true }

@@ -582,6 +582,37 @@ function onTelemetry(t) {
 
 // ------------------------------------------------------------ status
 
+// ------------------------------------------------------------ backup
+
+$("backup-full").addEventListener("change", (e) => {
+  $("backup-download").href = e.target.checked ? "/api/backup?full=1" : "/api/backup";
+});
+
+$("backup-restore").addEventListener("click", async () => {
+  const file = $("backup-file").files[0];
+  if (!file) { toast("Choose a backup file first."); return; }
+  if (!confirm(`Restore ${file.name}? The pedal restarts. What it replaces is kept for one undo.`)) return;
+  const button = $("backup-restore");
+  button.disabled = true;
+  toast("Sending the backup…");
+  try {
+    const response = await fetch("/api/restore", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/gzip" },
+      body: file,
+    });
+    if (response.status === 401) { showLogin("Signed out: sign in again."); return; }
+    if (response.status === 413) { toast("Too large to send: restore it from a USB drive."); return; }
+    const text = response.ok ? "" : await response.text();
+    toast(response.ok ? "Backup received: the pedal restarts to restore it." : `Not restored: ${text}`);
+  } catch (_) {
+    toast("Not sent: the pedal cannot be reached.");
+  } finally {
+    button.disabled = false;
+  }
+});
+
 async function loadStatus() {
   const r = await api("/api/status").catch(() => null);
   if (!r) return;

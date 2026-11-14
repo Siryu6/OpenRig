@@ -66,12 +66,22 @@ pub fn catalog_plugins(
         .collect()
 }
 
+/// Folder of the drives, instead of the system's places
+pub const MEDIA_DIR_ENV: &str = "PEDALBOARD_MEDIA_DIR";
+
 /// Removable drives mounted by the system, where rigs can be copied to and
 /// read from: `/media/<user>/<drive>`, `/run/media/<user>/<drive>` (Linux
 /// desktops), `/Volumes/<drive>` (macOS). Empty elsewhere (Windows, the
-/// OpenRig OS, which mounts no drive by itself).
+/// OpenRig OS, which mounts no drive by itself). `PEDALBOARD_MEDIA_DIR`
+/// names a folder whose subfolders are taken as drives instead (a system
+/// that mounts drives there, tests).
 pub fn removable_drives() -> Vec<PathBuf> {
     let mut drives = Vec::new();
+    if let Some(media) = std::env::var_os(MEDIA_DIR_ENV).filter(|m| !m.is_empty()) {
+        drives = subdirs(Path::new(&media));
+        drives.sort();
+        return drives;
+    }
     if cfg!(target_os = "macos") {
         drives.extend(subdirs(Path::new("/Volumes")));
         // The system disk is listed there as a link to /

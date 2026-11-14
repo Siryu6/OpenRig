@@ -135,6 +135,13 @@ pub fn setup(app: &App, state: &Arc<AppState>, headless: bool) {
         let st = st.clone();
         crate::ui(&weak, move |app| apply(app, &st, command));
     }));
+    let weak = app.as_weak();
+    remote.set_restore_hook(Box::new(move || {
+        crate::ui(&weak, |app| {
+            crate::show_status(app, "Backup received: restarting to restore it".into());
+            crate::restart(app);
+        });
+    }));
     #[cfg(feature = "headless")]
     if headless {
         crate::headless::stream_to(Some(remote.clone()));

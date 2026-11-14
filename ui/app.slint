@@ -16,6 +16,7 @@ import { LooperView } from "pages/looper_view.slint";
 import { LiveView } from "pages/live_view.slint";
 import { CatalogView } from "pages/catalog_view.slint";
 import { SettingsView } from "pages/settings_view.slint";
+import { Backup, BackupFile, BackupPart } from "pages/backup_view.slint";
 import { Tone3000View } from "pages/tone3000_view.slint";
 import { OutputMaster, RoutingView } from "pages/routing_view.slint";
 import { HardwareView } from "pages/hardware_view.slint";
@@ -34,7 +35,7 @@ import { NetMidiPrompt } from "components/netmidi_prompt.slint";
 import { PlotEvents } from "components/plot.slint";
 
 // Re-export the data types used by the Rust side
-export { ChoiceSearch, Encoder, Features, RemoteControl, PlotEvents, OutputMaster, Rigs, RigFileInfo, RigItem, RigsOnline, OnlineRig, OnlineDep, TextEdit, TextEditing, Theme }
+export { Backup, BackupFile, BackupPart, ChoiceSearch, Encoder, Features, RemoteControl, PlotEvents, OutputMaster, Rigs, RigFileInfo, RigItem, RigsOnline, OnlineRig, OnlineDep, TextEdit, TextEditing, Theme }
 export { PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, SavedLoopInfo, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot, SystemSetting }
 
 // A control the encoder stops on: its name, its row in a list

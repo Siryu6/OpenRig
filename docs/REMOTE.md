@@ -121,6 +121,10 @@ password.
   `localhost`): another site's name resolving to the pedal is refused (DNS
   rebinding). Changes and the WebSocket need an `Origin` of the same host
   (no cross-site requests).
+- Backups (Status page): `GET /api/backup` and `POST /api/restore` need a
+  session; the upload also needs the same `Origin`. A backup never holds
+  the password, and an uploaded one is checked in full before the pedal
+  restarts to restore it. See [BACKUP.md](BACKUP.md).
 - Strict Content-Security-Policy (`default-src 'self'`, no inline script),
   `X-Frame-Options: DENY`, `nosniff`, no referrer, no caching.
 

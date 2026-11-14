@@ -158,6 +158,7 @@ with audio disabled.
 | `PEDALBOARD_DATA_DIR` | platform data dir (`~/.local/share/pedalboard` on Linux) | Presets, setlists, session, `models/` (NAM models and IRs) |
 | `PEDALBOARD_TONE3000_CLIENT_ID` | unset | Uses the publishable key (`t3k_pub_…`) of your own TONE3000 application instead of OpenRig's, when none is saved |
 | `OPENRIG_TONE3000_CLIENT_ID` | OpenRig's key | At build time: the publishable key built in |
+| `PEDALBOARD_MEDIA_DIR` | unset | Folder whose subfolders are taken as USB drives (rigs and backups), instead of the desktop's mount points |
 | `PEDALBOARD_NO_AUTOCONNECT` | unset | Do not connect JACK ports |
 | `PEDALBOARD_FOOTSWITCH_PINS` | `17,27,22,23` | Footswitch GPIOs (BCM), until set in Settings → Hardware (empty: none) |
 | `PEDALBOARD_ENCODER_PINS` | `5,6,13` | Encoder A, B and button, until set in Settings (`A,B`: no button; empty: no encoder) |
@@ -303,6 +304,7 @@ Three threads share the chain:
   Live modes, the hotspot, security
 - [docs/ROUTING.md](docs/ROUTING.md): inputs, outputs, sends and returns, `routing.json`
 - [docs/STORE.md](docs/STORE.md): the plugin store: charter, signed index, install and removal
+- [docs/BACKUP.md](docs/BACKUP.md): backup and restore: what is saved, the archive format, safety
 - [docs/NEURAL_MODELS.md](docs/NEURAL_MODELS.md): the Amp / Amp + Cab / Pedal / Cabinet /
   Space blocks, TONE3000, roadmap
 - [PROJECT_STATUS.md](PROJECT_STATUS.md): what works, what is left

@@ -281,6 +281,16 @@ button.danger { color: var(--danger); }
 .status dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 0 0 16px; }
 .status dt { color: var(--muted); }
 .status dd { margin: 0; word-break: break-word; }
+.status h2.section { font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 28px 0 4px; }
+.status .check { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+.status .check input { width: 20px; height: 20px; accent-color: var(--accent); }
+.status input[type="file"] { flex: 1; min-width: 0; align-self: center; }
+a.button {
+  display: inline-flex; align-items: center; justify-content: center; flex: 1;
+  min-height: 44px; padding: 0 14px; border-radius: var(--radius); text-decoration: none;
+  border: 1px solid #3a3f4a; background: var(--panel-2); color: inherit;
+}
+a.button.primary { background: var(--accent); border-color: var(--accent); color: #0d1112; font-weight: 600; }
 
 .toast {
   position: fixed;

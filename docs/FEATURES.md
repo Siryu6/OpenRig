@@ -163,6 +163,13 @@ What OpenRig does, in more technical detail than the
   when the scene changes.
 - **Session**: the current chain is saved a few seconds after each change (and on exit)
   and restored at startup, so switching the pedalboard off is safe.
+- **Backup and restore**: Settings → Backup writes presets, setlists, rigs,
+  loops and settings to one `.tar.gz` file on a USB drive (or on the pedal),
+  with models and plugins as an option. Without them, store plugins and
+  TONE3000 models are downloaded again after a restore. A restore is
+  checked first, applied at the next start with one undo, and never touches
+  passwords, accounts or Wi-Fi. The remote control downloads and uploads
+  backups too. See [BACKUP.md](BACKUP.md).
 - **Tuner** down to 38 Hz (7- and 8-string drop tunings, bass; analysis only while the tuner page is open, optional mute) and
   **looper** (record, overdub layers, undo, 30 s max) after the effects.
   On the tempo of the preset (tap tempo on the page too, MIDI clock) and a
