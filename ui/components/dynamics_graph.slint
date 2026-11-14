@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
 import { DynView, DynLive } from "../types.slint";
-import { Caption, DbLabels, Handle, InOut, Plot, PlotPath } from "plot.slint";
+import { Caption, DbLabels, Handle, InOut, Plot, PlotEvents, PlotPath } from "plot.slint";
 
 // Level curve of a compressor, limiter or gate, with what it does right now:
 // the sound on the curve, the last seconds in and out, and the gain
@@ -60,6 +60,12 @@ export component DynamicsGraph inherits Rectangle {
         plot-y: curve.y;
         plot-width: curve.width;
         plot-height: curve.height;
+        drag(x, y) => {
+            PlotEvents.drag(self.handle.name, x, y);
+        }
+        released => {
+            PlotEvents.released();
+        }
     }
     Handle {
         handle: root.dyn.threshold;
@@ -68,6 +74,12 @@ export component DynamicsGraph inherits Rectangle {
         plot-y: curve.y;
         plot-width: curve.width;
         plot-height: curve.height;
+        drag(x, y) => {
+            PlotEvents.drag(self.handle.name, x, y);
+        }
+        released => {
+            PlotEvents.released();
+        }
     }
     // The sound, on the curve (over the handles, which it passes through)
     if root.live.active: Rectangle {
@@ -87,7 +99,10 @@ export component DynamicsGraph inherits Rectangle {
         y: curve.y;
         width: root.width - self.x - 64px;
         height: curve.height;
-        wide: true;
+        // The wide plot of the view
+        sized(w, h) => {
+            PlotEvents.resized(w, h);
+        }
 
         InOut {
             input: root.live.history-in;

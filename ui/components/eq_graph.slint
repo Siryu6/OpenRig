@@ -13,10 +13,10 @@ export component EqGraph inherits Rectangle {
     in property <Spectrum> spectrum;
     in property <color> accent: Theme.accent;
     in property <bool> bypassed: false;
-    // The plot that sets the proportions of the block views (PlotEvents.resized);
-    // another one reports its size with plot-sized
-    in property <bool> wide: true;
-    callback plot-sized(length, length);
+    callback sized(length, length);         // the plot was laid out
+    callback drag(int, float, float);       // point, where to, 0..1 from the plot's bottom left
+    callback released();                    // the point dragged was let go
+    callback double-tapped(int);            // point
 
     private property <color> line: root.eq.enabled && !root.bypassed ? root.accent : Theme.text-muted;
 
@@ -30,10 +30,9 @@ export component EqGraph inherits Rectangle {
         y: 12px;
         width: parent.width - 52px;
         height: parent.height - 34px;
-        wide: root.wide;
         rows: [];
         sized(w, h) => {
-            root.plot-sized(w, h);
+            root.sized(w, h);
         }
 
         // Gain grid, 6 dB apart
@@ -82,12 +81,21 @@ export component EqGraph inherits Rectangle {
     }
 
     // Band points, over the curve
-    for p in root.points: Handle {
+    for p[i] in root.points: Handle {
         handle: p;
         accent: root.line;
         plot-x: plot.x;
         plot-y: plot.y;
         plot-width: plot.width;
         plot-height: plot.height;
+        drag(x, y) => {
+            root.drag(i, x, y);
+        }
+        released => {
+            root.released();
+        }
+        double-tapped => {
+            root.double-tapped(i);
+        }
     }
 }

@@ -441,11 +441,16 @@ component MasterPanel inherits Rectangle {
                 EqGraph {
                     min-height: 90px;
                     vertical-stretch: 1;
-                    wide: false;
                     eq: OutputMaster.eq;
                     points: OutputMaster.points;
-                    plot-sized(w, h) => {
+                    sized(w, h) => {
                         OutputMaster.resized(w, h);
+                    }
+                    drag(band, x, y) => {
+                        OutputMaster.drag(band, x, y);
+                    }
+                    double-tapped(band) => {
+                        OutputMaster.toggle-band(band);
                     }
                 }
 

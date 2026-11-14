@@ -2,9 +2,11 @@ import { Theme } from "../theme.slint";
 import { PlotHandle } from "../types.slint";
 
 // Pieces of the views drawn above a block's parameters (EQ, level curve,
-// scope). Rust draws them (src/plugin_view.rs) and reads the handles back:
-// the UI only says where a plot is laid out and where a handle is dragged.
+// scope) and of the Routing view's output EQ. Rust draws them
+// (src/plugin_view.rs) and reads the handles back: the UI only says where a
+// plot is laid out and where a handle is dragged.
 
+// What the block views say (each graph wires its plots and handles here)
 export global PlotEvents {
     callback resized(length, length);       // the wide plot of the view shown was laid out
     callback drag(string, float, float);    // handle, where to, 0..1 from the plot's bottom left
@@ -19,12 +21,11 @@ export global FreqAxis {
     out property <[{ x: float, text: string }]> decades: [{ x: 0.2330, text: "100" }, { x: 0.5663, text: "1k" }, { x: 0.8997, text: "10k" }];
 }
 
-// A framed plot with a row grid. The `wide` one of a view says when it is
-// laid out: paths across it are drawn for its proportions.
+// A framed plot with a row grid. It says when it is laid out: paths
+// across it are drawn for its proportions.
 export component Plot inherits Rectangle {
-    in property <bool> wide: false;
     in property <[float]> rows: [0.2, 0.4, 0.6, 0.8];
-    callback sized(length, length);         // laid out, wide or not
+    callback sized(length, length);
     clip: true;
     border-width: 1px;
     border-color: Theme.border;
@@ -39,9 +40,6 @@ export component Plot inherits Rectangle {
     }
     function laid-out() {
         root.sized(root.width, root.height);
-        if root.wide {
-            PlotEvents.resized(root.width, root.height);
-        }
     }
 
     for f in root.rows: Rectangle {
@@ -195,6 +193,9 @@ export component Caption inherits Rectangle {
 // made, dropping the finger): one element each, or a model updated in place
 export component Handle inherits Rectangle {
     in property <PlotHandle> handle;
+    callback drag(float, float);            // where to, 0..1 from the plot's bottom left
+    callback released();
+    callback double-tapped();
     in property <color> accent;
     in property <length> plot-x;
     in property <length> plot-y;
@@ -232,15 +233,15 @@ export component Handle inherits Rectangle {
             }
             let fx = (root.x - root.plot-x + self.mouse-x) / root.plot-width;
             let fy = 1 - (root.y - root.plot-y + self.mouse-y) / root.plot-height;
-            PlotEvents.drag(root.handle.name, max(0, min(1, fx)), max(0, min(1, fy)));
+            root.drag(max(0, min(1, fx)), max(0, min(1, fy)));
         }
         changed pressed => {
             if !self.pressed {
-                PlotEvents.released();
+                root.released();
             }
         }
         double-clicked => {
-            PlotEvents.double-tapped(root.handle.name);
+            root.double-tapped();
         }
     }
 }
