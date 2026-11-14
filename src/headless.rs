@@ -201,10 +201,12 @@ struct Done {
     spent: Duration,
 }
 
-/// Encode a job and send its frames. `rgb` is the encoder's own buffer.
+/// Encode a job and send its frames, together: the areas of a picture
+/// reach the page together. `rgb` is the encoder's own buffer.
 fn encode(job: Job, rgb: &mut Vec<u8>) -> Done {
     let started = Instant::now();
-    let (mut frames, mut bytes, mut offset) = (0, 0, 0);
+    let mut picture = Vec::with_capacity(job.rects.len());
+    let mut offset = 0;
     for &rect in &job.rects {
         let n = rect.width * rect.height;
         let Some(pixels) = job.pixels.get(offset..offset + n) else {
@@ -213,12 +215,10 @@ fn encode(job: Job, rgb: &mut Vec<u8>) -> Done {
         offset += n;
         rgb.clear();
         rgb.extend(pixels.iter().flat_map(|p| [p.r, p.g, p.b]));
-        if let Some(frame) = frames::encode_packed(rgb, job.window, rect, job.encoding) {
-            bytes += frame.len();
-            frames += 1;
-            job.remote.publish_frame(frame);
-        }
+        picture.extend(frames::encode_packed(rgb, job.window, rect, job.encoding));
     }
+    let (frames, bytes) = (picture.len(), picture.iter().map(Vec::len).sum());
+    job.remote.publish_picture(picture);
     Done {
         pixels: job.pixels,
         rects: job.rects,
@@ -376,10 +376,10 @@ impl Screen {
                 height: h,
             });
         }
-        if let Some(rect) = repaint.filter(|_| !keyframe) {
-            rects.push(rect);
+        if !keyframe {
+            rects.extend_from_slice(repaint.rects());
         }
-        if !drawn && !keyframe && repaint.is_none() {
+        if !drawn && !keyframe && repaint.is_empty() {
             self.encoder.idle = Some((packed, rects));
             // Nothing changed: look again soon (an animation may be running)
             return Some(if self.window.has_active_animations() {

@@ -167,11 +167,16 @@ Limits:
 - Pictures are encoded on a thread of their own: the UI thread only draws
   and copies the changed areas. While a frame is being encoded, the UI keeps
   drawing and the next frame takes everything that changed meanwhile.
-- Flow control: the page acknowledges each frame once drawn. At most 32 KiB
-  of frames are on the way to a page; past that, frames are held back and
-  their area is sent again, as it is then, once the page caught up. A slow
-  link (weak Wi-Fi) or a slow phone gets fewer frames, never late ones: the
-  delay stays under about 32 KiB over the link's speed instead of growing.
+- Flow control: the page acknowledges each frame once drawn. The pedal
+  measures how fast the page gets its messages (the bytes delivered over
+  the time they took, the highest rate of the last 2 s) and the shortest
+  round trip, and allows about 100 ms of data on the way (or two round
+  trips, if longer), between 8 and 256 KiB. State and meter messages count
+  too: while the budget is used, the state waits (the latest one goes) and
+  meters are skipped. Past the budget, pictures are held back and their
+  area is sent again, as it is then, once the page caught up. The areas of
+  one picture go together. A slow link (weak Wi-Fi) or a slow phone gets
+  fewer frames, never late ones.
 - The sockets send small messages at once (`TCP_NODELAY`): a knob or a
   meter does not wait for the acknowledgement of the previous frame.
 

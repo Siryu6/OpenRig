@@ -7,11 +7,11 @@
 //! Origin (no cross-site requests). The cookie is HttpOnly and
 //! SameSite=Strict; the page has a strict Content Security Policy.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, DefaultBodyLimit, Query, Request, State};
@@ -22,18 +22,14 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use tokio::sync::{broadcast, Semaphore};
 
-use super::frames::{self, Rect};
+use super::flow::FlowControl;
+use super::frames;
 use super::protocol::{ClientMessage, Command};
 use super::{net, web, Remote};
 
 const COOKIE: &str = "openrig_session";
 /// Knob moves are merged and sent to the UI thread at most this often
 const KNOB_FLUSH: Duration = Duration::from_millis(33);
-/// Editor frames on the way to a page (sent, not acknowledged yet) at most:
-/// past it, frames are held back and their area is sent again, as it is
-/// then, once the page caught up. Without it a slow link (weak Wi-Fi) or a
-/// slow phone queues frames, and the page shows the pedal seconds late.
-const FRAMES_IN_FLIGHT: usize = 32 * 1024;
 
 /// The running server; stopped when dropped
 pub struct Server {
@@ -480,13 +476,14 @@ struct Client {
     stream: bool,
     /// Knob moves not sent yet, the last value of each knob
     knobs: HashMap<(usize, usize), Command>,
-    /// The page acknowledges frames: flow control (FRAMES_IN_FLIGHT)
+    /// The page acknowledges frames: flow control. Past the budget, frames
+    /// are held back and their area is sent again, as it is then, once the
+    /// page caught up. Without it a slow link (weak Wi-Fi) or a slow phone
+    /// queues frames, and the page shows the pedal seconds late.
     acks: bool,
-    /// Sizes of the frames sent and not acknowledged yet, and their sum
-    in_flight: VecDeque<usize>,
-    in_flight_bytes: usize,
+    flow: FlowControl,
     /// Area of the frames held back
-    missed: Option<Rect>,
+    missed: frames::Areas,
 }
 
 impl Client {
@@ -518,32 +515,43 @@ impl Client {
         }
     }
 
-    /// Whether to send this frame now: always without acknowledgements,
-    /// else while little is on the way (one frame at least)
-    fn admit(&mut self, frame: &[u8]) -> bool {
+    /// Whether to send this picture now: always without acknowledgements,
+    /// else while little is on the way (one picture at least)
+    fn admit(&mut self, picture: &[Vec<u8>]) -> bool {
         if !self.acks {
             return true;
         }
-        if self.in_flight_bytes > 0 && self.in_flight_bytes + frame.len() > FRAMES_IN_FLIGHT {
-            if let Some(rect) = frames::rect_of(frame) {
-                self.missed = Some(self.missed.map_or(rect, |m| m.union(rect)));
-            }
-            return false;
+        let size = picture.iter().map(Vec::len).sum();
+        if self.flow.admit(size, picture.len(), Instant::now()) {
+            return true;
         }
-        self.in_flight.push_back(frame.len());
-        self.in_flight_bytes += frame.len();
-        true
+        for rect in picture.iter().filter_map(|frame| frames::rect_of(frame)) {
+            self.missed.add(rect);
+        }
+        false
+    }
+
+    /// Whether state and meters may go now: not while the frames on the
+    /// way to the page use the budget (the state waits for the latest)
+    fn text_allowed(&self) -> bool {
+        !(self.acks && self.stream) || self.flow.text_allowed()
+    }
+
+    fn text_sent(&mut self, size: usize) {
+        if self.acks && self.stream {
+            self.flow.text_sent(size);
+        }
     }
 
     /// The page drew a frame: once all are, what it missed is sent again
     fn acked(&mut self, remote: &Remote) {
-        if let Some(size) = self.in_flight.pop_front() {
-            self.in_flight_bytes -= size;
+        let budget = self.flow.budget();
+        self.flow.acked(Instant::now());
+        if self.flow.budget() != budget {
+            tracing::debug!(budget = self.flow.budget(), "Remote frames budget");
         }
-        if self.in_flight.is_empty() {
-            if let Some(rect) = self.missed.take() {
-                remote.request_repaint(rect);
-            }
+        if self.flow.idle() && !self.missed.is_empty() {
+            remote.request_repaint(&std::mem::take(&mut self.missed));
         }
     }
 
@@ -629,7 +637,7 @@ impl Client {
                     Some(Ok(_)) => {}
                 },
                 _ = tick.tick(), if !self.knobs.is_empty() => self.flush(remote),
-                changed = state.changed() => {
+                changed = state.changed(), if self.text_allowed() => {
                     if changed.is_err() {
                         break;
                     }
@@ -637,20 +645,26 @@ impl Client {
                     if socket.send(Message::Text((*json).into())).await.is_err() {
                         break;
                     }
+                    self.text_sent(json.len());
                 }
-                values = telemetry.recv() => match values {
+                // Meters skipped while the page is behind: the next ones
+                // replace them
+                values = telemetry.recv(), if self.text_allowed() => match values {
                     Ok(json) => {
                         if socket.send(Message::Text((*json).into())).await.is_err() {
                             break;
                         }
+                        self.text_sent(json.len());
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {}
                     Err(broadcast::error::RecvError::Closed) => break,
                 },
-                frame = frames.recv() => match frame {
-                    Ok(frame) if self.stream && self.admit(&frame) => {
-                        if socket.send(Message::Binary(frame.to_vec().into())).await.is_err() {
-                            break;
+                picture = frames.recv() => match picture {
+                    Ok(picture) if self.stream && self.admit(&picture) => {
+                        for frame in picture.iter() {
+                            if socket.send(Message::Binary(frame.clone().into())).await.is_err() {
+                                return self.flush(remote);
+                            }
                         }
                     }
                     Ok(_) => {}
@@ -675,6 +689,7 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote::frames::Rect;
 
     #[test]
     fn cookie_token() {
@@ -784,7 +799,8 @@ mod tests {
     fn frames_held_back_while_the_page_is_behind() {
         let (remote, dir, _) = remote();
         let mut client = Client::default();
-        let big = FRAMES_IN_FLIGHT / 2 + 1;
+        let budget = client.flow.budget();
+        let big = budget / 2 + 1;
         let a = Rect {
             x: 0,
             y: 0,
@@ -799,7 +815,7 @@ mod tests {
         };
         // A page without acknowledgements gets everything, as before
         for _ in 0..10 {
-            assert!(client.admit(&frame(a, big)));
+            assert!(client.admit(&[frame(a, big)]));
         }
         client.handle(
             &remote,
@@ -807,23 +823,36 @@ mod tests {
         );
         assert!(client.acks);
         // One frame always goes, even larger than the budget
-        assert!(client.admit(&frame(a, FRAMES_IN_FLIGHT * 2)));
+        assert!(client.admit(&[frame(a, budget * 2)]));
         client.handle(&remote, r#"{"type":"ack"}"#);
-        assert!(client.admit(&frame(a, big)));
+        assert!(client.admit(&[frame(a, big)]));
         // Over the budget: held back, its area remembered
-        assert!(!client.admit(&frame(a, big)));
-        assert!(!client.admit(&frame(b, big)));
+        assert!(!client.admit(&[frame(a, big)]));
+        assert!(!client.admit(&[frame(b, big)]));
         // A small one still fits
-        assert!(client.admit(&frame(b, 100)));
-        assert_eq!(remote.take_repaint(), None, "not before the page caught up");
+        assert!(client.admit(&[frame(b, 100)]));
+        assert!(
+            remote.take_repaint().is_empty(),
+            "not before the page caught up"
+        );
         client.handle(&remote, r#"{"type":"ack"}"#);
-        assert_eq!(remote.take_repaint(), None, "one still on the way");
+        assert!(remote.take_repaint().is_empty(), "one still on the way");
         client.handle(&remote, r#"{"type":"ack"}"#);
-        assert_eq!(remote.take_repaint(), Some(a.union(b)));
-        assert_eq!(remote.take_repaint(), None);
+        assert_eq!(remote.take_repaint().rects(), [a, b]);
+        assert!(remote.take_repaint().is_empty());
         // Acknowledgements without frames change nothing
         client.handle(&remote, r#"{"type":"ack"}"#);
-        assert_eq!(client.in_flight_bytes, 0);
+        assert_eq!(client.flow.in_flight_bytes(), 0);
+        // A picture goes whole, or is held back whole
+        assert!(client.admit(&[frame(a, big), frame(b, big)]));
+        assert!(!client.admit(&[frame(a, 100), frame(b, 100)]));
+        client.handle(&remote, r#"{"type":"ack"}"#);
+        assert!(
+            remote.take_repaint().is_empty(),
+            "half of the picture drawn"
+        );
+        client.handle(&remote, r#"{"type":"ack"}"#);
+        assert_eq!(remote.take_repaint().rects(), [a, b]);
         client.set_stream(&remote, false);
         let _ = std::fs::remove_dir_all(dir);
     }
