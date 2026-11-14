@@ -25,11 +25,9 @@ use pedalboard::plugins::scanner::{self, ret, send};
 use crate::plugin_view::{self, area, freq, line, VIEW as PLOT};
 use crate::{
     block_name, model, App, EqView, OutputMaster, PlotHandle, RoutingBlock, RoutingMaster,
-    RoutingOutput,
+    RoutingOutput, View,
 };
 
-/// The routing view, as `current-view` in ui/app.slint
-const VIEW: i32 = 10;
 /// Meter refresh while the view is shown
 const METER_PERIOD: Duration = Duration::from_millis(33);
 /// Meter fall, as the main meters
@@ -475,7 +473,7 @@ pub fn setup(app: &App, state: &Arc<AppState>, engine: Option<&AudioEngine>) -> 
 /// The chain changed (edit, preset, scene, undo): list its blocks again if
 /// the view is open
 pub(crate) fn chain_changed(app: &App, state: &AppState) {
-    if app.get_current_view() == VIEW {
+    if app.get_current_view() == View::Routing {
         show_blocks(app, state);
     }
 }
@@ -675,7 +673,7 @@ fn start_meters(
         // Read even when hidden, so the peaks do not pile up
         let (input_peaks, output_peaks) = meter.take();
         let deepest = meter.take_reductions();
-        if app.get_current_view() != VIEW {
+        if app.get_current_view() != View::Routing {
             shown = None;
             reductions_shown = None;
             // The panel does not stay open behind another view

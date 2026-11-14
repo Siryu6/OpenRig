@@ -76,12 +76,6 @@ const POLL_MS: u64 = 50;
 /// How long a status message stays visible
 const STATUS_SECONDS: f32 = 4.0;
 const STATUS_ACTION_SECONDS: f32 = 8.0;
-/// View indexes of the block editor, the tuner and the Live page
-#[cfg_attr(not(feature = "midi"), allow(dead_code))]
-const EDITOR_VIEW: i32 = 1;
-const TUNER_VIEW: i32 = 3;
-#[cfg_attr(not(feature = "midi"), allow(dead_code))]
-const LIVE_VIEW: i32 = 9;
 /// The tuner shows the last note this long after the string dies out
 const TUNER_HOLD: Duration = Duration::from_millis(600);
 /// Resource monitor refresh period
@@ -476,8 +470,8 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
         app.set_selected_factory_presets(model(Vec::new()));
         app.set_selected_strip_factory(model(Vec::new()));
         app.set_selected_strip_models(model(Vec::new()));
-        if app.get_current_view() == 1 {
-            app.set_current_view(0);
+        if app.get_current_view() == View::Editor {
+            app.set_current_view(View::Rack);
         }
         return;
     };
@@ -1453,7 +1447,7 @@ fn start_poll_timer(
             // Tuner: only analyse audio while the tuner page is shown
             // (locked only on a change: the audio thread skips the tuner, and
             // its mute, for a cycle when the lock is taken)
-            let tuner_visible = app.get_current_view() == TUNER_VIEW || remote_tuner();
+            let tuner_visible = app.get_current_view() == View::Tuner || remote_tuner();
             if tuner_shown.replace(tuner_visible) != tuner_visible {
                 state.tuner.locked().set_active(tuner_visible);
             }

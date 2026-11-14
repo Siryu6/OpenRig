@@ -20,12 +20,8 @@ use pedalboard::tone3000::library::{self, Filter, List, Model, Tone};
 use pedalboard::tone3000::limiter;
 use pedalboard::tone3000::{self, AuthError, ConnectEvent, Connection, DeviceCode, Settings};
 
-use crate::{model, spawn, App, Features, T3kModel, T3kTone};
+use crate::{model, spawn, App, Features, T3kModel, T3kTone, View};
 
-/// View index of the settings page
-const SETTINGS_VIEW: i32 = 7;
-/// View index of the library page
-const LIBRARY_VIEW: i32 = 8;
 /// Tab index of the search results, after the lists
 const SEARCH_TAB: usize = List::ALL.len();
 
@@ -392,8 +388,8 @@ fn fail(weak: &slint::Weak<App>, shared: &Arc<Shared>, error: AuthError) {
             }
             apply(&app, &settings);
             // Only the library needs the account: other pages stay
-            if app.get_current_view() == LIBRARY_VIEW {
-                app.set_current_view(SETTINGS_VIEW);
+            if app.get_current_view() == View::Tone3000 {
+                app.set_current_view(View::Settings);
             }
         }
         crate::show_status(&app, error.to_string().into());

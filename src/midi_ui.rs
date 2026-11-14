@@ -24,7 +24,7 @@ use pedalboard::{
 };
 
 #[cfg(feature = "midi")]
-use crate::{live_ui, show_status, EDITOR_VIEW};
+use crate::{live_ui, show_status, View};
 use crate::{report, App};
 
 /// The activity LED stays lit this long after a message
@@ -209,7 +209,7 @@ fn on_message(app: &App, state: &AppState, message: MidiMessage) {
     let settings = state.midi_settings();
 
     // Learning in the editor: controllers go to the control being learned
-    if app.get_midi_learning() && app.get_current_view() == EDITOR_VIEW {
+    if app.get_midi_learning() && app.get_current_view() == View::Editor {
         if let MidiMessage::Control {
             channel,
             controller,

@@ -330,6 +330,7 @@ mod tests {
     #[cfg(feature = "headless")]
     #[test]
     fn the_encoder_leaves_its_own_settings_alone() {
+        use crate::View;
         use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
         use slint::platform::{Key, Platform, WindowAdapter, WindowEvent};
 
@@ -383,9 +384,9 @@ mod tests {
         // Every stop, past the last: a press, a turn (adjusting it when it
         // is a stepper), a press again
         for stop in 0..12 {
-            app.set_current_view(0);
+            app.set_current_view(View::Rack);
             settle();
-            app.set_current_view(12);
+            app.set_current_view(View::Hardware);
             settle();
             for _ in 0..stop {
                 key(Key::RightArrow);

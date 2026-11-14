@@ -11,7 +11,7 @@ use pedalboard::audio::spectrum::{Analyzer, BlockTap, WINDOW};
 use pedalboard::state::AppState;
 
 use crate::plugin_view::{self, area, freq, VIEW};
-use crate::{dynamics_ui, id, scope_ui, App, Spectrum, EDITOR_VIEW};
+use crate::{dynamics_ui, id, scope_ui, App, Spectrum, View};
 
 /// Frames
 const FRAME_MS: u64 = 40;
@@ -62,7 +62,7 @@ pub(crate) fn start(app: &App, state: &Arc<AppState>) -> slint::Timer {
             let dyn_shown = app.get_selected_dyn().shown;
             let scope = app.get_selected_scope();
             let watched = id(app.get_selected_instance_id()).filter(|_| {
-                app.get_current_view() == EDITOR_VIEW && (eq_shown || dyn_shown || scope.shown)
+                app.get_current_view() == View::Editor && (eq_shown || dyn_shown || scope.shown)
             });
             if watched != shown.as_ref().map(|s| s.block) {
                 tap.watch(watched);
