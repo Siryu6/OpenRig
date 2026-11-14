@@ -164,6 +164,9 @@ Limits:
   PNG, larger ones as JPEG (quality 80). `PEDALBOARD_REMOTE_FRAMES=png` or
   `jpeg` forces one. A frame is a 14-byte header (format, position, window
   size) and the picture; pointer and key events come back as JSON.
+- Pictures are encoded on a thread of their own: the UI thread only draws
+  and copies the changed areas. While a frame is being encoded, the UI keeps
+  drawing and the next frame takes everything that changed meanwhile.
 - Flow control: the page acknowledges each frame once drawn. At most 32 KiB
   of frames are on the way to a page; past that, frames are held back and
   their area is sent again, as it is then, once the page caught up. A slow

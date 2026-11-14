@@ -9,6 +9,7 @@
 //! `FRAME_MS` apart, and only what changed. Input from the client cuts
 //! the wait short: the frame showing its effect leaves as soon as the UI
 //! has handled it (no closer than `INPUT_FRAME_MS` to the last one).
+//! Pictures are encoded on a thread of their own (see Encoder).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -19,7 +20,7 @@ use std::time::{Duration, Instant};
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
 use slint::platform::{EventLoopProxy, Platform, PointerEventButton, WindowAdapter, WindowEvent};
 use slint::{LogicalPosition, PhysicalSize, PlatformError, Rgb8Pixel};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use pedalboard::remote::frames::{self, Encoding, Rect};
 use pedalboard::remote::protocol::{Command, PointerKind};
@@ -122,12 +123,186 @@ impl Platform for HeadlessPlatform {
 struct Screen {
     window: Rc<MinimalSoftwareWindow>,
     pixels: Vec<Rgb8Pixel>,
-    rgb: Vec<u8>,
     size: (u32, u32),
     last: Instant,
     encoding: Encoding,
-    /// Bytes and frames sent, time spent, logged every minute
-    stats: (usize, usize, Duration, Instant),
+    encoder: Encoder,
+    stats: Stats,
+}
+
+/// Frames and bytes sent, time spent on the UI thread and in the encoder,
+/// logged every minute
+struct Stats {
+    frames: usize,
+    bytes: usize,
+    ui: Duration,
+    ui_max: Duration,
+    encode: Duration,
+    encode_max: Duration,
+    since: Instant,
+}
+
+impl Stats {
+    fn new() -> Self {
+        Self {
+            frames: 0,
+            bytes: 0,
+            ui: Duration::ZERO,
+            ui_max: Duration::ZERO,
+            encode: Duration::ZERO,
+            encode_max: Duration::ZERO,
+            since: Instant::now(),
+        }
+    }
+
+    fn encoded(&mut self, done: &Done) {
+        self.frames += done.frames;
+        self.bytes += done.bytes;
+        self.encode += done.spent;
+        self.encode_max = self.encode_max.max(done.spent);
+    }
+
+    fn drawn(&mut self, spent: Duration) {
+        self.ui += spent;
+        self.ui_max = self.ui_max.max(spent);
+        if self.since.elapsed() > Duration::from_secs(60) {
+            let ms = |d: Duration| d.as_millis() as u64;
+            info!(
+                frames = self.frames,
+                kib = self.bytes / 1024,
+                ui_ms = ms(self.ui),
+                ui_max_ms = ms(self.ui_max),
+                encode_ms = ms(self.encode),
+                encode_max_ms = ms(self.encode_max),
+                seconds = self.since.elapsed().as_secs(),
+                "Remote screen stream"
+            );
+            *self = Self::new();
+        }
+    }
+}
+
+/// A frame for the encoder: the changed rectangles of the window and
+/// their pixels, packed one after the other (rows of each in order)
+struct Job {
+    pixels: Vec<Rgb8Pixel>,
+    rects: Vec<Rect>,
+    window: (usize, usize),
+    encoding: Encoding,
+    remote: Arc<Remote>,
+}
+
+/// A job done: its buffers, to reuse, and what it cost
+struct Done {
+    pixels: Vec<Rgb8Pixel>,
+    rects: Vec<Rect>,
+    frames: usize,
+    bytes: usize,
+    spent: Duration,
+}
+
+/// Encode a job and send its frames. `rgb` is the encoder's own buffer.
+fn encode(job: Job, rgb: &mut Vec<u8>) -> Done {
+    let started = Instant::now();
+    let (mut frames, mut bytes, mut offset) = (0, 0, 0);
+    for &rect in &job.rects {
+        let n = rect.width * rect.height;
+        let Some(pixels) = job.pixels.get(offset..offset + n) else {
+            break;
+        };
+        offset += n;
+        rgb.clear();
+        rgb.extend(pixels.iter().flat_map(|p| [p.r, p.g, p.b]));
+        if let Some(frame) = frames::encode_packed(rgb, job.window, rect, job.encoding) {
+            bytes += frame.len();
+            frames += 1;
+            job.remote.publish_frame(frame);
+        }
+    }
+    Done {
+        pixels: job.pixels,
+        rects: job.rects,
+        frames,
+        bytes,
+        spent: started.elapsed(),
+    }
+}
+
+/// Encodes frames on a thread of its own, so a large picture (a page
+/// change in a big window takes tens of ms) never holds up the UI. One
+/// job at a time: while it runs, the UI keeps drawing into its window and
+/// the next frame takes all that changed meanwhile. Its buffers come back
+/// with each job done, so the memory stays that of one frame.
+struct Encoder {
+    worker: Option<(mpsc::Sender<Job>, mpsc::Receiver<Done>)>,
+    /// Buffers of the next job: None while a job runs
+    idle: Option<(Vec<Rgb8Pixel>, Vec<Rect>)>,
+    /// Encoder buffer when there is no thread (encoding on the UI thread)
+    rgb: Vec<u8>,
+}
+
+impl Encoder {
+    fn new() -> Self {
+        let (jobs, job_receiver) = mpsc::channel::<Job>();
+        let (done_sender, done) = mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("remote-encode".into())
+            .spawn(move || {
+                let mut rgb = Vec::new();
+                for job in job_receiver {
+                    if done_sender.send(encode(job, &mut rgb)).is_err() {
+                        break;
+                    }
+                    // Wake the UI loop: changes may wait for the next frame
+                    let _ = slint::invoke_from_event_loop(|| {});
+                }
+            });
+        let worker = match spawned {
+            Ok(_) => Some((jobs, done)),
+            Err(e) => {
+                warn!("No encoder thread, encoding on the UI thread: {e}");
+                None
+            }
+        };
+        Self {
+            worker,
+            idle: Some((Vec::new(), Vec::new())),
+            rgb: Vec::new(),
+        }
+    }
+
+    /// The buffers for a new job, None while one runs
+    fn ready(&mut self, stats: &mut Stats) -> Option<(Vec<Rgb8Pixel>, Vec<Rect>)> {
+        if self.idle.is_none() {
+            let (_, done) = self.worker.as_ref()?;
+            match done.try_recv() {
+                Ok(done) => {
+                    stats.encoded(&done);
+                    self.idle = Some((done.pixels, done.rects));
+                }
+                Err(mpsc::TryRecvError::Empty) => return None,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    warn!("Encoder thread gone, encoding on the UI thread");
+                    self.worker = None;
+                    self.idle = Some((Vec::new(), Vec::new()));
+                }
+            }
+        }
+        self.idle.take()
+    }
+
+    fn start(&mut self, job: Job, stats: &mut Stats) {
+        let job = match &self.worker {
+            Some((jobs, _)) => match jobs.send(job) {
+                Ok(()) => return,
+                Err(mpsc::SendError(job)) => job,
+            },
+            None => job,
+        };
+        let done = encode(job, &mut self.rgb);
+        stats.encoded(&done);
+        self.idle = Some((done.pixels, done.rects));
+    }
 }
 
 impl Screen {
@@ -136,11 +311,11 @@ impl Screen {
         Self {
             window,
             pixels: Vec::new(),
-            rgb: Vec::new(),
             size: (size.width, size.height),
             last: Instant::now() - Duration::from_secs(1),
             encoding: Encoding::from_env(),
-            stats: (0, 0, Duration::ZERO, Instant::now()),
+            encoder: Encoder::new(),
+            stats: Stats::new(),
         }
     }
 
@@ -151,18 +326,22 @@ impl Screen {
         if !remote.stream_wanted() {
             return None;
         }
+        let since = self.last.elapsed();
+        let period = Duration::from_millis(FRAME_MS);
+        let gap = frame_gap(INPUT.with(Cell::get));
+        if since < gap {
+            return Some(gap - since);
+        }
+        // The encoder wakes the loop when it is done with the last frame
+        let Some((mut packed, mut rects)) = self.encoder.ready(&mut self.stats) else {
+            return Some(period);
+        };
         if let Some((w, h)) = remote.take_stream_size() {
             if (w, h) != self.size {
                 info!(width = w, height = h, "Remote screen resized");
                 self.window.set_size(PhysicalSize::new(w, h));
                 self.size = (w, h);
             }
-        }
-        let since = self.last.elapsed();
-        let period = Duration::from_millis(FRAME_MS);
-        let gap = frame_gap(INPUT.with(Cell::get));
-        if since < gap {
-            return Some(gap - since);
         }
         INPUT.with(|i| i.set(false));
         let keyframe = remote.take_keyframe();
@@ -177,32 +356,31 @@ impl Screen {
             self.window.request_redraw();
         }
         let started = Instant::now();
-        let mut rects: Vec<Rect> = Vec::new();
+        rects.clear();
         let pixels = &mut self.pixels;
         let drawn = self.window.draw_if_needed(|renderer| {
             let region = renderer.render(pixels, w);
-            rects = region
-                .iter()
-                .map(|(origin, size)| Rect {
-                    x: origin.x.max(0) as usize,
-                    y: origin.y.max(0) as usize,
-                    width: size.width as usize,
-                    height: size.height as usize,
-                })
-                .collect();
+            rects.extend(region.iter().map(|(origin, size)| Rect {
+                x: origin.x.max(0) as usize,
+                y: origin.y.max(0) as usize,
+                width: size.width as usize,
+                height: size.height as usize,
+            }));
         });
         if keyframe {
-            rects = vec![Rect {
+            rects.clear();
+            rects.push(Rect {
                 x: 0,
                 y: 0,
                 width: w,
                 height: h,
-            }];
+            });
         }
         if let Some(rect) = repaint.filter(|_| !keyframe) {
             rects.push(rect);
         }
         if !drawn && !keyframe && repaint.is_none() {
+            self.encoder.idle = Some((packed, rects));
             // Nothing changed: look again soon (an animation may be running)
             return Some(if self.window.has_active_animations() {
                 period
@@ -211,43 +389,34 @@ impl Screen {
             });
         }
         self.last = Instant::now();
-        if rects.is_empty() {
-            return Some(period);
-        }
-        // Only the areas sent: the rest of the window is not read
-        self.rgb.resize(w * h * 3, 0);
+        // Only the areas sent leave the window: copies of their rows
+        packed.clear();
+        rects.retain_mut(|rect| match frames::clip(*rect, (w, h)) {
+            Some(clipped) => {
+                *rect = clipped;
+                true
+            }
+            None => false,
+        });
         for rect in &rects {
-            let x2 = (rect.x + rect.width).min(w);
-            for row in rect.y..(rect.y + rect.height).min(h) {
-                let line = row * w;
-                for (i, p) in self.pixels[line + rect.x.min(x2)..line + x2]
-                    .iter()
-                    .enumerate()
-                {
-                    let o = (line + rect.x + i) * 3;
-                    self.rgb[o..o + 3].copy_from_slice(&[p.r, p.g, p.b]);
-                }
+            for row in rect.y..rect.y + rect.height {
+                let start = row * w + rect.x;
+                packed.extend_from_slice(&self.pixels[start..start + rect.width]);
             }
         }
-        for rect in rects {
-            if let Some(frame) = frames::encode(&self.rgb, (w, h), rect, self.encoding) {
-                self.stats.0 += frame.len();
-                self.stats.1 += 1;
-                remote.publish_frame(frame);
-            }
+        if rects.is_empty() {
+            self.encoder.idle = Some((packed, rects));
+        } else {
+            let job = Job {
+                pixels: packed,
+                rects,
+                window: (w, h),
+                encoding: self.encoding,
+                remote,
+            };
+            self.encoder.start(job, &mut self.stats);
         }
-        self.stats.2 += started.elapsed();
-        if self.stats.3.elapsed() > Duration::from_secs(60) {
-            let (bytes, count, spent, since) = self.stats;
-            info!(
-                frames = count,
-                kib = bytes / 1024,
-                encode_ms = spent.as_millis() as u64,
-                seconds = since.elapsed().as_secs(),
-                "Remote screen stream"
-            );
-            self.stats = (0, 0, Duration::ZERO, Instant::now());
-        }
+        self.stats.drawn(started.elapsed());
         Some(period)
     }
 }
