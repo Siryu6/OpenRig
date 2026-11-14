@@ -134,16 +134,25 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// A helper that answers the first request with `answer`
+    /// A helper that answers the first request with `answer`. The FIFO is
+    /// open (read and write, so it never blocks) before this returns: the
+    /// request finds a reader at once, and the helper never waits forever.
     #[allow(clippy::unwrap_used)]
     fn helper(dir: &Path, answer: &'static str) -> std::thread::JoinHandle<String> {
+        use std::io::BufRead;
         let fifo = dir.join("request");
         let c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
         // SAFETY: `c` is a valid NUL-terminated path for the call
         assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&fifo)
+            .unwrap();
         let dir = dir.to_path_buf();
         std::thread::spawn(move || {
-            let line = std::fs::read_to_string(&fifo).unwrap();
+            let mut line = String::new();
+            std::io::BufReader::new(file).read_line(&mut line).unwrap();
             let id = line.split(' ').next().unwrap().to_string();
             std::fs::write(dir.join("status"), format!("{id} {answer}\n")).unwrap();
             line
@@ -154,16 +163,7 @@ mod tests {
     fn eject_asks_the_helper() {
         let dir = dir("done");
         let helper = helper(&dir, "done");
-        // The helper opens the FIFO for reading first
-        let mut sent = Err(anyhow::anyhow!("not sent"));
-        for _ in 0..50 {
-            sent = eject_with(&dir, Path::new("/media/MY_STICK"), Duration::from_secs(5));
-            if sent.is_ok() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        sent.unwrap();
+        eject_with(&dir, Path::new("/media/MY_STICK"), Duration::from_secs(10)).unwrap();
         assert!(helper
             .join()
             .unwrap()
@@ -176,18 +176,7 @@ mod tests {
     fn eject_reports_the_helper_error() {
         let dir = dir("error");
         let helper = helper(&dir, "error The drive is in use, try again");
-        let mut result = Err(anyhow::anyhow!("not sent"));
-        for _ in 0..50 {
-            result = eject_with(&dir, Path::new("/media/STICK"), Duration::from_secs(5));
-            if result
-                .as_ref()
-                .err()
-                .is_none_or(|e| !e.to_string().contains("not running"))
-            {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        let result = eject_with(&dir, Path::new("/media/STICK"), Duration::from_secs(10));
         helper.join().unwrap();
         assert_eq!(
             result.unwrap_err().to_string(),
