@@ -82,6 +82,8 @@ slint = { version = "1.18", default-features = false, features = ["std", "compat
 
 # Audio
 jack = "0.13"
+# The latency callback, which `jack` does not wrap (same version as its own)
+jack-sys = "0.5"
 lv2_raw = { version = "0.3", optional = true }  # Same major as the one lilv uses, so LV2Feature types match
 
 # Concurrency

@@ -21,6 +21,7 @@ use crossbeam_channel::{Receiver, Sender, TrySendError};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
+use super::latency::{OutputLatency, OutputSource};
 use super::master::{self, Limiter, MasterProc, MasterTarget, OutputEq};
 use crate::plugins::chain::{pan_gains, ramp};
 
@@ -669,6 +670,60 @@ impl OutputRouter {
             let reduction =
                 proc.process(&self.target.masters[port], &mut outputs[port..port + width]);
             meter.record_reduction(port, reduction);
+        }
+    }
+}
+
+impl OutputRouter {
+    /// Latency of output `port`: of what it plays (the main mix, late by
+    /// `chain` frames, a send, late by `sends`, or an input), plus the
+    /// lookahead of its limiter (real-time safe)
+    pub fn output_latency(
+        &self,
+        port: usize,
+        chain: usize,
+        sends: &[Option<(usize, usize)>],
+    ) -> OutputLatency {
+        let silent = OutputLatency {
+            min: 0,
+            max: 0,
+            input: self.chain_input(),
+            source: OutputSource::Silent,
+        };
+        let Some(target) = self.target.ports.get(port).filter(|t| !t.is_silent()) else {
+            return silent;
+        };
+        // The strip starting on this output, or the pair it is the right
+        // side of
+        let widths = &self.target.widths;
+        let start = if widths.get(port).is_some_and(|&w| w > 0) {
+            Some(port)
+        } else {
+            port.checked_sub(1).filter(|&p| widths.get(p) == Some(&2))
+        };
+        let lookahead = start
+            .filter(|&s| self.target.masters.get(s).is_some_and(|m| m.limiter))
+            .and_then(|s| self.masters.get(s))
+            .map_or(0, MasterProc::latency);
+        let (min, max, input, source) = match target.input {
+            Some(input) => (0, 0, input as usize, OutputSource::Input),
+            None => {
+                let (min, max) = match target.bus {
+                    0 => (chain, chain),
+                    bus => sends
+                        .get(bus as usize - 1)
+                        .copied()
+                        .flatten()
+                        .unwrap_or((0, 0)),
+                };
+                (min, max, self.chain_input(), OutputSource::Effects)
+            }
+        };
+        OutputLatency {
+            min: (min + lookahead) as u32,
+            max: (max + lookahead) as u32,
+            input,
+            source,
         }
     }
 }

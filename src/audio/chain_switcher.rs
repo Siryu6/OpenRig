@@ -414,6 +414,21 @@ impl ChainSwitcher {
         }
     }
 
+    /// Chain heard once the switch in progress, if any, is over
+    fn heard(&self) -> &EffectChain {
+        self.next.as_ref().unwrap_or(&self.active)
+    }
+
+    /// Frames the effects are late by (real-time safe)
+    pub fn latency(&self) -> usize {
+        self.heard().latency()
+    }
+
+    /// Shortest and longest frames each send bus is late by (real-time safe)
+    pub fn send_latency(&self) -> [Option<(usize, usize)>; crate::audio::routing::MAX_SENDS] {
+        self.heard().send_latency()
+    }
+
     #[cfg(test)]
     pub fn is_crossfading(&self) -> bool {
         self.crossfade_state.is_active()

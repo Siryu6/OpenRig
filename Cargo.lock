@@ -3854,6 +3854,7 @@ dependencies = [
  "gpiocdev",
  "hound",
  "jack",
+ "jack-sys",
  "jpeg-encoder",
  "libc",
  "lilv",
