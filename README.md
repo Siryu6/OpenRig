@@ -114,7 +114,7 @@ cargo build --no-default-features --features winit,lv2,midi   # without NAM nor 
 cargo build --no-default-features --features winit,lv2,nam,midi   # without TONE3000 Connect nor openrig.eu (no HTTPS client)
 cargo build --no-default-features        # no liblilv, NAM, MIDI nor display: demo plugins, tests
 cargo build --release --features kms     # + full screen without X11 / Wayland (libinput, libgbm, EGL)
-cargo build --release --no-default-features --features kms,lv2,nam,tone3000,midi,gpio,splash,update,store,rigs-online   # as in the Pi image
+cargo build --release --no-default-features --features kms,headless,lv2,nam,tone3000,midi,gpio,splash,update,store,rigs-online,remote   # as in the Pi image
 cargo test
 ```
 
@@ -316,8 +316,7 @@ GPL-3.0-or-later (see [LICENSE](LICENSE)). The UI toolkit,
 [Slint](https://slint.dev), is used under its GPL-3.0 license (its
 royalty-free license does not cover embedded devices). Bundled third-party
 code keeps its own license: NeuralAudio (MIT, with NAM Core and RTNeural),
-the patched lilv bindings (MIT) and the patched Slint linuxkms backend
-(GPL-3.0) in `third_party/`. The OS image adds, among Buildroot's packages,
+and the patched Slint linuxkms backend (GPL-3.0) in `third_party/`. The OS image adds, among Buildroot's packages,
 rtpmidid (daemon GPL-3.0-or-later, library LGPL-2.1-or-later) and avahi
 (LGPL-2.1-or-later) for network MIDI. The TONE3000 logos in `ui/assets/tone3000/`
 are trademarks of TONE3000, not covered by the GPL, and only used for the

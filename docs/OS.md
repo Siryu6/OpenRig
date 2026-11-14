@@ -52,8 +52,8 @@ Other targets, for one board: `make -C os rpi5-menuconfig`,
 then the image), `rpi5-clean`. `make -C os help` lists them.
 
 The app is built with `--no-default-features --features
-kms,lv2,nam,tone3000,midi,splash,update,store,rigs-online` (plus `gpio` on the Pi): no X11 /
-Wayland. Its
+kms,headless,lv2,nam,tone3000,midi,splash,update,store,rigs-online,remote` (plus
+`gpio` on the Pi): no X11 / Wayland. Its
 dependencies are vendored from `Cargo.lock` at build time; the image's rustc
 is 1.99 (`RUST_BIN_VERSION` in `os/Makefile`, newer than Buildroot's own),
 the app's `rust-version`. Update the lockfile with `cargo update
