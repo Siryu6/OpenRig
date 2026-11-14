@@ -81,9 +81,9 @@ lilv = { version = "0.3.1", optional = true }
 slint = { version = "1.18", default-features = false, features = ["std", "compat-1-18"] }
 
 # Audio
-jack = "0.13"
+jack = "0.14"
 # The latency callback, which `jack` does not wrap (same version as its own)
-jack-sys = "0.5"
+jack-sys = "0.7"
 lv2_raw = { version = "0.3", optional = true }  # Same major as the one lilv uses, so LV2Feature types match
 
 # Concurrency
@@ -134,8 +134,8 @@ lzma-rs = { version = "0.3", optional = true }
 # Web remote: HTTP / WebSocket server on one thread, password hashes
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "ws", "json", "query"], optional = true }
 tokio = { version = "1", features = ["rt", "net", "time", "sync", "macros"], optional = true }
-argon2 = { version = "0.5", features = ["std"], optional = true }
-getrandom = { version = "0.3", optional = true }
+argon2 = { version = "0.6", optional = true }
+getrandom = { version = "0.4", optional = true }
 # Frames of the full editor streamed to the browser
 jpeg-encoder = { version = "0.7", optional = true }
 
