@@ -54,6 +54,28 @@ component ListField inherits Rectangle {
     }
 }
 
+// One straight connector segment of the rack (the layout only makes
+// horizontal and vertical ones), drawn as a rectangle: `thickness` wide,
+// with square ends sticking out by half of it like a square line cap.
+// Not a Path: Slint's software renderer draws a path in full when any part
+// of its box is redrawn, so a canvas-wide path painted wires over blocks
+// outside the redrawn area (seen on the remote display).
+component Wire inherits Rectangle {
+    in property <Connector> line;
+    in property <float> dx;     // canvas position of layout (0, 0)
+    in property <float> dy;
+    in property <length> thickness;
+    in property <bool> square-ends;
+    private property <bool> horizontal: root.line.y1 == root.line.y2;
+    private property <length> side: root.thickness / 2;
+    private property <length> end: root.square-ends ? root.side : 0px;
+
+    x: (min(root.line.x1, root.line.x2) + root.dx) * 1px - (root.horizontal ? root.end : root.side);
+    y: (min(root.line.y1, root.line.y2) + root.dy) * 1px - (root.horizontal ? root.side : root.end);
+    width: abs(root.line.x2 - root.line.x1) * 1px + 2 * (root.horizontal ? root.end : root.side);
+    height: abs(root.line.y2 - root.line.y1) * 1px + 2 * (root.horizontal ? root.side : root.end);
+}
+
 // Signal-chain view: scrollable canvas with nodes laid out by the backend,
 // and the quick controls of the selected block at the bottom.
 export component PluginRack {
@@ -211,36 +233,24 @@ export component PluginRack {
 
                     // Connectors: a single line carries a mono signal, a
                     // double line (wide line hollowed out) a stereo one
-                    for c in root.connectors: Path {
+                    for c in root.connectors: Wire {
                         visible: root.stereo-mode ? !c.is-mono && !(c.wide && c.is-stereo) : !c.is-stereo;
-                        width: canvas.width;
-                        height: canvas.height;
-                        viewbox-x: 0;
-                        viewbox-y: 0;
-                        viewbox-width: canvas.width / 1px;
-                        viewbox-height: canvas.height / 1px;
-                        stroke: root.cable;
-                        stroke-width: c.wide && root.stereo-mode ? 10px : 2px;
+                        line: c;
+                        dx: root.origin-x;
+                        dy: canvas-area.origin-y;
+                        thickness: c.wide && root.stereo-mode ? 10px : 2px;
                         // Square ends close the corners of branch lines
-                        stroke-line-cap: c.wide && root.stereo-mode ? square : butt;
-                        fill: transparent;
-                        commands: "M " + (c.x1 + root.origin-x) + " " + (c.y1 + canvas-area.origin-y)
-                            + " L " + (c.x2 + root.origin-x) + " " + (c.y2 + canvas-area.origin-y);
+                        square-ends: c.wide && root.stereo-mode;
+                        background: root.cable;
                     }
-                    for c in root.connectors: Path {
+                    for c in root.connectors: Wire {
                         visible: root.stereo-mode && c.wide && !c.is-mono && !c.is-stereo;
-                        width: canvas.width;
-                        height: canvas.height;
-                        viewbox-x: 0;
-                        viewbox-y: 0;
-                        viewbox-width: canvas.width / 1px;
-                        viewbox-height: canvas.height / 1px;
-                        stroke: Theme.background;
-                        stroke-width: 6px;
-                        stroke-line-cap: square;
-                        fill: transparent;
-                        commands: "M " + (c.x1 + root.origin-x) + " " + (c.y1 + canvas-area.origin-y)
-                            + " L " + (c.x2 + root.origin-x) + " " + (c.y2 + canvas-area.origin-y);
+                        line: c;
+                        dx: root.origin-x;
+                        dy: canvas-area.origin-y;
+                        thickness: 6px;
+                        square-ends: true;
+                        background: Theme.background;
                     }
 
                     // Stereo output line (horizontal): two parallel lines, open
