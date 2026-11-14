@@ -3,9 +3,11 @@
 //! IP, and a pedalboard has no account).
 
 use anyhow::{anyhow, bail, Context, Result};
-use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::fs::File;
+use std::io::Read;
 use std::path::Path;
+
+use crate::download::{hex, save_verified};
 use std::time::Duration;
 
 /// A download slower than this on average is given up
@@ -58,49 +60,11 @@ pub fn download(
     size: u64,
     sha256: &str,
     path: &Path,
-    mut progress: impl FnMut(u64, u64),
+    progress: impl FnMut(u64, u64),
 ) -> Result<()> {
-    let part = path.with_extension("part");
-    let result = (|| {
-        let timeout = 60 + size / MIN_RATE;
-        let mut body = open(url, Duration::from_secs(timeout))?
-            .into_reader()
-            .take(size.saturating_add(1));
-        let mut file =
-            File::create(&part).with_context(|| format!("Cannot write {}", part.display()))?;
-        let mut hash = ring::digest::Context::new(&ring::digest::SHA256);
-        let mut buffer = vec![0u8; 64 * 1024];
-        let mut received = 0u64;
-        loop {
-            let n = body.read(&mut buffer).context("Download interrupted")?;
-            if n == 0 {
-                break;
-            }
-            received += n as u64;
-            if received > size {
-                bail!("The download is larger than the catalog says");
-            }
-            file.write_all(&buffer[..n])
-                .context("Not enough space for the plugin")?;
-            hash.update(&buffer[..n]);
-            progress(received, size);
-        }
-        if received != size {
-            bail!("Download incomplete ({received} of {size} bytes)");
-        }
-        if hex(hash.finish().as_ref()) != sha256.to_ascii_lowercase() {
-            bail!("The download is damaged or was replaced (checksum mismatch)");
-        }
-        file.sync_all()
-            .with_context(|| format!("Cannot write {}", part.display()))?;
-        fs::rename(&part, path).with_context(|| format!("Cannot write {}", path.display()))?;
-        Ok(())
-    })();
-    if result.is_err() {
-        // Not there when the download failed before creating it
-        let _ = fs::remove_file(&part);
-    }
-    result
+    let timeout = 60 + size / MIN_RATE;
+    let body = open(url, Duration::from_secs(timeout))?.into_reader();
+    save_verified(body, size, sha256, path, "the plugin", progress)
 }
 
 /// SHA-256 of a file, in hex
@@ -122,8 +86,4 @@ pub fn sha256_file(path: &Path) -> Result<String> {
 
 pub fn sha256(bytes: &[u8]) -> String {
     hex(ring::digest::digest(&ring::digest::SHA256, bytes).as_ref())
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
