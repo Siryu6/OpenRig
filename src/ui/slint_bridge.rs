@@ -4,6 +4,7 @@
 use crate::sync::MutexExt;
 use chrono::{Local, TimeZone};
 
+use crate::audio::split_chain::walk;
 use crate::audio::ChainNode;
 use crate::monitor::Levels;
 use crate::plugins::scanner::{self, PluginCategory, PortInfo};
@@ -304,11 +305,7 @@ pub fn preset_views(state: &AppState) -> Vec<PresetView> {
             plugin_count: p
                 .chain
                 .as_ref()
-                .map(|c| {
-                    let mut count = 0;
-                    count_plugins(&c.nodes, &mut count);
-                    count
-                })
+                .map(|c| walk(&c.nodes).filter(|n| !n.is_split()).count())
                 .unwrap_or(p.plugins.len()),
             created: format_date(p.created_at),
             modified: format_date(p.modified_at),
@@ -318,22 +315,6 @@ pub fn preset_views(state: &AppState) -> Vec<PresetView> {
             description: p.description,
         })
         .collect()
-}
-
-fn count_plugins(nodes: &[ChainNode], count: &mut usize) {
-    for node in nodes {
-        match node {
-            ChainNode::Plugin { .. } => *count += 1,
-            ChainNode::Split {
-                top_chain,
-                bottom_chain,
-                ..
-            } => {
-                count_plugins(top_chain, count);
-                count_plugins(bottom_chain, count);
-            }
-        }
-    }
 }
 
 pub fn scene_views(state: &AppState) -> Vec<SceneView> {

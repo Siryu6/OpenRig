@@ -2,6 +2,23 @@
 // Field names / types are part of the public API (Rust generates structs
 // from them): do not rename or remove fields.
 
+// The page App shows (`current-view`)
+export enum View {
+    rack,
+    editor,
+    browser,
+    tuner,
+    presets,
+    looper,
+    setlists,
+    settings,
+    tone3000,     // the TONE3000 library
+    live,
+    routing,
+    store,
+    hardware,     // opened from the settings
+}
+
 // Positioned layout node from the backend layout engine.
 // Coordinates are in "layout units": main line at y = 0, split branches one
 // or more rows of 64 above (top) / below (bottom) their split, depending on
@@ -21,8 +38,7 @@ export struct PositionedNode {
     pan-a: float,        // Mix split in stereo: branch position, -1 left … 1 right
     pan-b: float,
     kind: string,        // drawing: "amp" | "combo" | "cab" | "pedal" | "space" | ""
-    tint: color,         // colour chosen in the editor (when tinted)
-    tinted: bool,
+    tint: color,         // the user's colour, else the family's
     t3k: bool,           // loads a TONE3000 download: shows the T3K mark
     picture: image,      // its store picture, drawn instead of the gear
     has-picture: bool,

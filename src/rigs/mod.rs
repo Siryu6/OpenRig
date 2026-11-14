@@ -8,8 +8,8 @@
 //!   or downloaded, then install it and turn it into a preset with paths
 //!   of this pedalboard.
 //!
-//! Rigs live in `<data>/rigs`; removable drives mounted by the system
-//! are listed too.
+//! Rigs live in `<data>/rigs`; the USB drives (`crate::drives`) are
+//! listed too.
 
 pub mod export;
 pub mod import;
@@ -64,69 +64,6 @@ pub fn catalog_plugins(
             plugin_id: plugin.id.clone(),
         })
         .collect()
-}
-
-/// Folder of the drives, instead of the system's places
-pub const MEDIA_DIR_ENV: &str = "PEDALBOARD_MEDIA_DIR";
-
-/// Removable drives mounted by the system, where rigs and backups can be
-/// copied to and read from: `/media/<drive>` (the OpenRig OS, see
-/// `crate::drives`), `/media/<user>/<drive>`, `/run/media/<user>/<drive>`
-/// (Linux desktops), `/Volumes/<drive>` (macOS). Empty elsewhere (Windows).
-/// `PEDALBOARD_MEDIA_DIR` names a folder whose subfolders are taken as
-/// drives instead (a system that mounts drives there, tests).
-pub fn removable_drives() -> Vec<PathBuf> {
-    let mut drives = Vec::new();
-    if let Some(media) = std::env::var_os(MEDIA_DIR_ENV).filter(|m| !m.is_empty()) {
-        drives = subdirs(Path::new(&media));
-        drives.sort();
-        return drives;
-    }
-    if cfg!(target_os = "macos") {
-        drives.extend(subdirs(Path::new("/Volumes")));
-        // The system disk is listed there as a link to /
-        drives.retain(|d| std::fs::canonicalize(d).is_ok_and(|c| c != Path::new("/")));
-    } else if cfg!(target_os = "linux") {
-        for root in ["/media", "/run/media"] {
-            for dir in subdirs(Path::new(root)) {
-                // /media/<drive> on some systems, /media/<user>/<drive> on others
-                if is_mount_point(&dir) {
-                    drives.push(dir);
-                } else {
-                    drives.extend(subdirs(&dir).into_iter().filter(|d| is_mount_point(d)));
-                }
-            }
-        }
-    }
-    drives.sort();
-    drives
-}
-
-fn subdirs(dir: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.is_dir())
-        .collect()
-}
-
-/// A folder on another device than its parent
-#[cfg(unix)]
-fn is_mount_point(dir: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    let (Ok(own), Some(Ok(parent))) = (std::fs::metadata(dir), dir.parent().map(std::fs::metadata))
-    else {
-        return false;
-    };
-    own.dev() != parent.dev()
-}
-
-#[cfg(not(unix))]
-fn is_mount_point(_dir: &Path) -> bool {
-    false
 }
 
 /// A rig file found in a folder

@@ -24,7 +24,7 @@ pub mod protocol;
 mod server;
 mod web;
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::{broadcast, watch};
@@ -38,10 +38,10 @@ pub use server::Server;
 pub const DEFAULT_PORT: u16 = 80;
 pub const FALLBACK_PORT: u16 = 8080;
 
-/// Runs a command on the UI thread
 /// The frames of one picture of the full editor
-pub type Picture = Arc<[Vec<u8>]>;
+pub type Picture = Arc<[frames::Frame]>;
 
+/// Runs a command on the UI thread
 pub type Dispatcher = Box<dyn Fn(Command) + Send + Sync>;
 
 /// Facts shown on the status page
@@ -67,13 +67,8 @@ pub struct Remote {
     clients: AtomicUsize,
     tuner_clients: AtomicUsize,
     stream_clients: AtomicUsize,
-    /// A client needs a whole picture (it just connected, or missed frames)
-    keyframe: AtomicBool,
-    /// Areas a client did not get (it was behind): sent again, from the
-    /// window as it is now
-    repaint: Mutex<frames::Areas>,
-    /// Window size the last streaming client asked for
-    stream_size: Mutex<Option<(u32, u32)>>,
+    /// What the pages asked of the next picture
+    requests: Mutex<frames::Requests>,
     dispatcher: Mutex<Option<Arc<Dispatcher>>>,
     status: Mutex<Status>,
     /// Names of the pedal accepted in the Host header
@@ -101,9 +96,7 @@ impl Remote {
             clients: AtomicUsize::new(0),
             tuner_clients: AtomicUsize::new(0),
             stream_clients: AtomicUsize::new(0),
-            keyframe: AtomicBool::new(false),
-            repaint: Mutex::new(frames::Areas::default()),
-            stream_size: Mutex::new(None),
+            requests: Mutex::new(frames::Requests::default()),
             dispatcher: Mutex::new(None),
             status: Mutex::new(status),
             names: net::local_names(&hostname),
@@ -159,25 +152,27 @@ impl Remote {
         self.stream_clients.load(Ordering::Relaxed) > 0
     }
 
-    /// Window size wanted by the last client that asked, once
-    pub fn take_stream_size(&self) -> Option<(u32, u32)> {
-        self.stream_size.locked().take()
+    /// What the pages asked of the next picture since the last one (and
+    /// clear it)
+    pub fn take_requests(&self) -> frames::Requests {
+        std::mem::take(&mut *self.requests.locked())
     }
 
-    /// Whether the next frame must be the whole window (and clear it)
-    pub fn take_keyframe(&self) -> bool {
-        self.keyframe.swap(false, Ordering::Relaxed)
+    /// A window of this size (a new size sends the whole window)
+    fn request_size(&self, width: u32, height: u32) {
+        self.requests.locked().size = Some((width, height));
     }
 
-    /// Areas to send again, if a client missed some (and clear them)
-    pub fn take_repaint(&self) -> frames::Areas {
-        std::mem::take(&mut *self.repaint.locked())
+    /// The whole window in the next picture
+    fn request_keyframe(&self) {
+        self.requests.locked().keyframe = true;
     }
 
+    /// These areas again in the next picture, as they are then
     fn request_repaint(&self, areas: &frames::Areas) {
-        let mut repaint = self.repaint.locked();
+        let mut requests = self.requests.locked();
         for &rect in areas.rects() {
-            repaint.add(rect);
+            requests.repaint.add(rect);
         }
     }
 
@@ -200,7 +195,7 @@ impl Remote {
 
     /// The frame messages of one picture of the full editor (see
     /// protocol::frame_header): they go to a page together
-    pub fn publish_picture(&self, frames: Vec<Vec<u8>>) {
+    pub fn publish_picture(&self, frames: Vec<frames::Frame>) {
         if !frames.is_empty() {
             let _ = self.frames.send(Arc::from(frames));
         }

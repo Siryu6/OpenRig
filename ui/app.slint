@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import {
-    PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, SavedLoopInfo, ResourceStatus,
+    View, PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, SavedLoopInfo, ResourceStatus,
     T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile, RoutingOutput, RoutingBlock, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot, SystemSetting, NetMidiDevice
 } from "types.slint";
 // Pages
@@ -21,6 +21,7 @@ import { Tone3000View } from "pages/tone3000_view.slint";
 import { OutputMaster, RoutingView } from "pages/routing_view.slint";
 import { HardwareView } from "pages/hardware_view.slint";
 import { Features } from "features.slint";
+import { Drives } from "drives.slint";
 import { RemoteControl } from "remote.slint";
 import { Encoder } from "encoder.slint";
 import { TextEdit, TextEditing } from "components/virtual_keyboard.slint";
@@ -35,8 +36,8 @@ import { NetMidiPrompt } from "components/netmidi_prompt.slint";
 import { PlotEvents } from "components/plot.slint";
 
 // Re-export the data types used by the Rust side
-export { Backup, BackupFile, BackupPart, ChoiceSearch, Encoder, Features, RemoteControl, PlotEvents, OutputMaster, Rigs, RigFileInfo, RigItem, RigsOnline, OnlineRig, OnlineDep, TextEdit, TextEditing, Theme }
-export { PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, SavedLoopInfo, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot, SystemSetting }
+export { Backup, BackupFile, BackupPart, ChoiceSearch, Drives, Encoder, Features, RemoteControl, PlotEvents, OutputMaster, Rigs, RigFileInfo, RigItem, RigsOnline, OnlineRig, OnlineDep, TextEdit, TextEditing, Theme }
+export { View, PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, SavedLoopInfo, ResourceStatus, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot, SystemSetting }
 
 // A control the encoder stops on: its name, its row in a list
 struct EncoderStop {
@@ -56,11 +57,8 @@ export component App inherits Window {
     min-height: 480px;
 
     // ---------------------------------------------------------------- state
-    // 0 = rack, 1 = editor, 2 = browser, 3 = tuner, 4 = presets, 5 = looper, 6 = setlists,
-    // 7 = settings, 8 = TONE3000 library, 9 = live, 10 = routing, 11 = store,
-    // 12 = hardware (from the settings)
-    // (Rust: TUNER_VIEW and LIVE_VIEW in main.rs)
-    in-out property <int> current-view: 0;
+    // The page shown (View in types.slint, shared with Rust)
+    in-out property <View> current-view: View.rack;
     in-out property <int> selected-plugin: 0;       // index into positioned-nodes
     private property <string> selected-split-type: root.selected-plugin >= 0 && root.selected-plugin < root.positioned-nodes.length
         ? root.positioned-nodes[root.selected-plugin].split-type : "";
@@ -86,12 +84,12 @@ export component App inherits Window {
     // Page switcher, opened by a long press on a main page
     private property <bool> pages-open: false;
     private property <int> pages-index: 0;
-    private property <[int]> page-views: [0, 4, 9, 3, 5, 7];
+    private property <[View]> page-views: [View.rack, View.presets, View.live, View.tuner, View.looper, View.settings];
     // The encoder's focus is only highlighted while the encoder is in use
     // (Encoder.active): from its first turn or press, until it rests a
     // while. On the pages where the focus is otherwise hidden, that first
     // turn or press only shows it
-    private property <bool> focus-hidden: !Encoder.active && (root.page-slots > 0 || root.current-view == 1);
+    private property <bool> focus-hidden: !Encoder.active && (root.page-slots > 0 || root.current-view == View.editor);
     function encoder-used() {
         Encoder.active = true;
         encoder-rest.restart();
@@ -105,12 +103,12 @@ export component App inherits Window {
     }
     // Focus on the presets, Live, looper and tuner pages
     private property <int> page-focus: 0;
-    private property <int> page-slots: root.current-view == 4 ? root.presets.length
-        : root.current-view == 9 ? root.live-tiles.length + 3
-        : root.current-view == 5 ? 17
-        : root.current-view == 3 ? 2
-        : root.current-view == 7 ? root.hardware-start + 1
-        : root.current-view == 12 ? root.hw-i2c-start + (Features.gpio ? 1 : 0) + (Features.gpio && root.hardware-i2c ? 3 : 0) : 0;
+    private property <int> page-slots: root.current-view == View.presets ? root.presets.length
+        : root.current-view == View.live ? root.live-tiles.length + 3
+        : root.current-view == View.looper ? 17
+        : root.current-view == View.tuner ? 2
+        : root.current-view == View.settings ? root.hardware-start + 1
+        : root.current-view == View.hardware ? root.hw-i2c-start + (Features.gpio ? 1 : 0) + (Features.gpio && root.hardware-i2c ? 3 : 0) : 0;
     // Settings → Audio & system: the list open (row, -1 none) and the
     // choice the encoder is on
     private property <int> system-picker: -1;
@@ -298,7 +296,6 @@ export component App inherits Window {
     in property <bool> tempo-clock: false;       // the tempo comes from a MIDI clock
     in-out property <bool> midi-learning: false; // block editor: learning a controller
     in property <int> midi-learn-target: -2;     // -2 none, -1 on/off, n parameter n
-    in property <int> midi-learn-cc: -1;         // controller moved first
     in property <string> midi-learn-message: "";
     in property <bool> midi-learn-assigned: false; // the touched control has a controller
     in property <int> midi-learn-heel: 0;        // its range, percent: at CC 0…
@@ -364,8 +361,8 @@ export component App inherits Window {
     private property <bool> update-pending: Features.update
         && (root.update-status == "ready" || root.update-status == "installed");
 
-    // Routing (view 10, opened from ⋮; back goes where it was opened)
-    private property <int> routing-return-view: 0;
+    // Routing (opened from ⋮; back goes where it was opened)
+    private property <View> routing-return-view: View.rack;
     in-out property <bool> routing-available: false;
     in-out property <string> routing-summary: "";
     in-out property <int> routing-inputs: 1;
@@ -398,7 +395,7 @@ export component App inherits Window {
     in-out property <string> t3k-target-name: "";
     in-out property <[string]> t3k-gear-ids: [];
     in-out property <[string]> t3k-gear-names: [];
-    private property <int> t3k-return-view: 0;
+    private property <View> t3k-return-view: View.rack;
     // Setlists page: 0 = list, 1 = footswitch slots
     private property <int> setlist-view-mode: 0;
 
@@ -444,8 +441,7 @@ export component App inherits Window {
     callback apply-factory-preset(int, int);         // instance-id, position of the preset
 
     callback add-split(string);                      // "ab", "mix" or "lr"
-    callback add-plugin-to-split-top(int, string);   // split instance-id, plugin uri
-    callback add-plugin-to-split-bottom(int, string);// split instance-id, plugin uri
+    callback add-plugin-to-split(int, bool, string); // split instance-id, top lane, plugin uri
     callback toggle-split-ab(int);                   // split instance-id
     callback set-split-mix-ratio(int, float);        // split instance-id, ratio
     callback set-split-type(int, string);            // split instance-id, "ab", "mix" or "lr"
@@ -642,7 +638,7 @@ export component App inherits Window {
             root.focused-parameter = 0;
             root.adjusting = false;
             root.arranging = false;
-            root.current-view = 1;
+            root.current-view = View.editor;
         }
     }
 
@@ -650,30 +646,28 @@ export component App inherits Window {
         root.split-insertion-mode = mode;
         root.target-split-index = split-id;
         root.browser-selected-index = 0;
-        root.current-view = 2;
+        root.current-view = View.browser;
     }
 
     function add-plugin(uri: string) {
-        if (root.split-insertion-mode == 1) {
-            root.add-plugin-to-split-top(root.target-split-index, uri);
-        } else if (root.split-insertion-mode == 2) {
-            root.add-plugin-to-split-bottom(root.target-split-index, uri);
+        if (root.split-insertion-mode != 0) {
+            root.add-plugin-to-split(root.target-split-index, root.split-insertion-mode == 1, uri);
         } else {
             root.add-plugin-to-chain(uri);
         }
         root.split-insertion-mode = 0;
         root.target-split-index = -1;
-        root.current-view = 0;
+        root.current-view = View.rack;
     }
 
     // Open the TONE3000 library; from a block editor (target-id >= 0),
     // only the block's gear is offered and models can be loaded in it
     function open-tone3000(target-id: int) {
-        if (root.current-view != 8) {
+        if (root.current-view != View.tone3000) {
             root.t3k-return-view = root.current-view;
         }
         root.t3k-detail-open = false;
-        root.current-view = 8;
+        root.current-view = View.tone3000;
         root.t3k-open(target-id);
     }
 
@@ -693,15 +687,15 @@ export component App inherits Window {
     // The value a page's encoder adjusts: tempo, looper tempo / bar / click
     // level / level, reference pitch
     function page-value() -> float {
-        root.current-view == 9 ? root.tempo
-            : root.current-view == 5 ? (root.page-focus == 9 ? root.tempo : root.page-focus == 11 ? root.looper-beats-per-bar
+        root.current-view == View.live ? root.tempo
+            : root.current-view == View.looper ? (root.page-focus == 9 ? root.tempo : root.page-focus == 11 ? root.looper-beats-per-bar
                 : root.page-focus == 15 ? root.looper-click-level : root.looper-level)
             : root.tuner-reference-pitch
     }
 
     // Encoder steps per unit of the page value (levels move by 5 %)
     function page-scale() -> float {
-        root.current-view == 5 && (root.page-focus == 15 || root.page-focus == 16) ? 20 : 1
+        root.current-view == View.looper && (root.page-focus == 15 || root.page-focus == 16) ? 20 : 1
     }
 
     function set-looper-settings(beats: int, count-in: bool, quantize: bool, click: bool, click-level: float) {
@@ -714,16 +708,16 @@ export component App inherits Window {
     }
 
     function set-page-value(v: float) {
-        if (root.current-view == 9 || (root.current-view == 5 && root.page-focus == 9)) {
+        if (root.current-view == View.live || (root.current-view == View.looper && root.page-focus == 9)) {
             root.set-tempo(max(40, min(240, v)));
-        } else if (root.current-view == 5 && root.page-focus == 11) {
+        } else if (root.current-view == View.looper && root.page-focus == 11) {
             root.set-looper-settings(v, root.looper-count-in, root.looper-quantize, root.looper-click, root.looper-click-level);
-        } else if (root.current-view == 5 && root.page-focus == 15) {
+        } else if (root.current-view == View.looper && root.page-focus == 15) {
             root.set-looper-settings(root.looper-beats-per-bar, root.looper-count-in, root.looper-quantize, root.looper-click, v);
-        } else if (root.current-view == 5) {
+        } else if (root.current-view == View.looper) {
             root.looper-level = max(0, min(1, v));
             root.looper-level-changed(root.looper-level);
-        } else if (root.current-view == 3) {
+        } else if (root.current-view == View.tuner) {
             root.tuner-reference-pitch = max(430, min(450, v));
             root.tuner-reference-pitch-changed(root.tuner-reference-pitch);
         }
@@ -731,18 +725,18 @@ export component App inherits Window {
 
     function page-press() {
         let i = root.page-focus;
-        if (root.current-view == 4) {
+        if (root.current-view == View.presets) {
             if (i < root.presets.length) {
                 root.load-preset(root.presets[i].id);
-                root.current-view = 0;
+                root.current-view = View.rack;
             }
-        } else if (root.current-view == 9 && i < root.live-tiles.length) {
+        } else if (root.current-view == View.live && i < root.live-tiles.length) {
             root.live-tile-pressed(i);
-        } else if (root.current-view == 9 && i == root.live-tiles.length + 1) {
+        } else if (root.current-view == View.live && i == root.live-tiles.length + 1) {
             root.tap-tempo();
-        } else if (root.current-view == 9 && i == root.live-tiles.length + 2) {
+        } else if (root.current-view == View.live && i == root.live-tiles.length + 2) {
             root.live-mode-changed(root.live-mode == "scenes" ? "stomp" : root.live-mode == "stomp" ? "setlist" : "scenes");
-        } else if (root.current-view == 5 && i < 9) {
+        } else if (root.current-view == View.looper && i < 9) {
             if (i == 0) {
                 root.looper-record();
             } else if (i == 1) {
@@ -767,15 +761,15 @@ export component App inherits Window {
                 root.looper-show-loops = true;
                 root.looper-loops-opened();
             }
-        } else if (root.current-view == 5 && i == 10) {
+        } else if (root.current-view == View.looper && i == 10) {
             root.tap-tempo();
-        } else if (root.current-view == 5 && i == 12) {
+        } else if (root.current-view == View.looper && i == 12) {
             root.set-looper-settings(root.looper-beats-per-bar, !root.looper-count-in, root.looper-quantize, root.looper-click, root.looper-click-level);
-        } else if (root.current-view == 5 && i == 13) {
+        } else if (root.current-view == View.looper && i == 13) {
             root.set-looper-settings(root.looper-beats-per-bar, root.looper-count-in, !root.looper-quantize, root.looper-click, root.looper-click-level);
-        } else if (root.current-view == 5 && i == 14) {
+        } else if (root.current-view == View.looper && i == 14) {
             root.set-looper-settings(root.looper-beats-per-bar, root.looper-count-in, root.looper-quantize, !root.looper-click, root.looper-click-level);
-        } else if (root.current-view == 3 && i == 0) {
+        } else if (root.current-view == View.tuner && i == 0) {
             root.tuner-mute-enabled = !root.tuner-mute-enabled;
             root.tuner-mute-toggled(root.tuner-mute-enabled);
         } else {
@@ -860,7 +854,7 @@ export component App inherits Window {
 
     // Closes the Wi-Fi network showing its actions, the encoder on its row
     function close-wifi-network() {
-        if (root.wifi-open-shown && root.current-view == 7) {
+        if (root.wifi-open-shown && root.current-view == View.settings) {
             root.page-focus = root.wifi-lead + root.wifi-open-index;
         }
         root.wifi-open-ssid = "";
@@ -985,7 +979,7 @@ export component App inherits Window {
                 root.t3k-confirm-disconnect = true;
             }
         } else if (s.what == "hardware") {
-            root.current-view = 12;
+            root.current-view = View.hardware;
         } else if (s.what != "") {
             // Steppers and segments: sample rate, MIDI channel, new
             // network MIDI devices, DSP cores
@@ -1052,23 +1046,23 @@ export component App inherits Window {
     }
 
     function open-pages() {
-        root.pages-index = root.current-view == 4 ? 1 : root.current-view == 9 ? 2 : root.current-view == 3 ? 3
-            : root.current-view == 5 ? 4 : root.current-view == 7 ? 5 : 0;
+        root.pages-index = root.current-view == View.presets ? 1 : root.current-view == View.live ? 2 : root.current-view == View.tuner ? 3
+            : root.current-view == View.looper ? 4 : root.current-view == View.settings ? 5 : 0;
         root.pages-open = true;
     }
 
     function open-routing() {
-        if (root.current-view != 10) {
+        if (root.current-view != View.routing) {
             root.routing-return-view = root.current-view;
         }
-        root.current-view = 10;
+        root.current-view = View.routing;
     }
 
     // Label of the back button leading to view v
-    function view-name(v: int) -> string {
-        return v == 1 ? root.selected-plugin-name : v == 2 ? "Effects" : v == 3 ? "Tuner"
-            : v == 4 ? "Presets" : v == 5 ? "Looper" : v == 6 ? "Setlists" : v == 7 ? "Settings"
-            : v == 8 ? "TONE3000" : v == 9 ? "Live" : v == 11 ? "Store" : v == 12 ? "Hardware" : "Rack";
+    function view-name(v: View) -> string {
+        return v == View.editor ? root.selected-plugin-name : v == View.browser ? "Effects" : v == View.tuner ? "Tuner"
+            : v == View.presets ? "Presets" : v == View.looper ? "Looper" : v == View.setlists ? "Setlists" : v == View.settings ? "Settings"
+            : v == View.tone3000 ? "TONE3000" : v == View.live ? "Live" : v == View.store ? "Store" : v == View.hardware ? "Hardware" : "Rack";
     }
 
     function open-page(index: int) {
@@ -1098,7 +1092,7 @@ export component App inherits Window {
         root.t3k-editing-key = false;
         root.t3k-confirm-disconnect = false;
         // Learning only makes sense in the block editor
-        if (root.current-view != 1 && root.midi-learning) {
+        if (root.current-view != View.editor && root.midi-learning) {
             root.midi-learn-toggled(false);
         }
     }
@@ -1115,23 +1109,24 @@ export component App inherits Window {
     // ------------------------------------------------------------------ UI
     VerticalLayout {
         TopBar {
-            active-tab: root.current-view <= 2 || root.current-view == 11 ? "rack" :
-                root.current-view == 3 ? "tuner" :
-                root.current-view == 4 || root.current-view == 6 ? "presets" :
-                root.current-view == 5 ? "looper" :
-                root.current-view == 9 ? "live" : "";
-            current-view-name: root.current-view == 1 ? root.selected-plugin-name :
-                root.current-view == 7 ? "Settings" :
-                root.current-view == 8 ? "TONE3000" :
-                root.current-view == 10 ? "Routing" :
-                root.current-view == 12 ? "Hardware" :
-                root.current-view == 11 ? (root.catalog-open >= 0 ? "Plugin" : "Store") : "Add effect";
+            active-tab: root.current-view == View.rack || root.current-view == View.editor || root.current-view == View.browser
+                || root.current-view == View.store ? "rack" :
+                root.current-view == View.tuner ? "tuner" :
+                root.current-view == View.presets || root.current-view == View.setlists ? "presets" :
+                root.current-view == View.looper ? "looper" :
+                root.current-view == View.live ? "live" : "";
+            current-view-name: root.current-view == View.editor ? root.selected-plugin-name :
+                root.current-view == View.settings ? "Settings" :
+                root.current-view == View.tone3000 ? "TONE3000" :
+                root.current-view == View.routing ? "Routing" :
+                root.current-view == View.hardware ? "Hardware" :
+                root.current-view == View.store ? (root.catalog-open >= 0 ? "Plugin" : "Store") : "Add effect";
             preset-name: root.current-preset-name;
             scene-name: root.live-scene-name;
             tempo: root.tempo;
-            back-label: root.current-view == 10 ? root.view-name(root.routing-return-view)
-                : root.current-view == 12 ? "Settings" : root.current-view == 11 ? (root.catalog-open >= 0 ? "Store" : "Effects") : "Rack";
-            show-back-button: root.current-view == 1 || root.current-view == 2 || root.current-view == 7 || root.current-view == 8 || root.current-view == 10 || root.current-view == 11 || root.current-view == 12;
+            back-label: root.current-view == View.routing ? root.view-name(root.routing-return-view)
+                : root.current-view == View.hardware ? "Settings" : root.current-view == View.store ? (root.catalog-open >= 0 ? "Store" : "Effects") : "Rack";
+            show-back-button: root.current-view == View.editor || root.current-view == View.browser || root.current-view == View.settings || root.current-view == View.tone3000 || root.current-view == View.routing || root.current-view == View.store || root.current-view == View.hardware;
             audio-running: root.audio-running;
             resources: root.resources;
             menu-badge: root.update-pending;
@@ -1140,28 +1135,28 @@ export component App inherits Window {
                 root.show-resources = true;
             }
             back-clicked => {
-                if (root.current-view == 11 && root.catalog-open >= 0) {
+                if (root.current-view == View.store && root.catalog-open >= 0) {
                     root.catalog-open = -1;
                 } else {
-                    root.current-view = root.current-view == 8 ? root.t3k-return-view
-                        : root.current-view == 10 ? root.routing-return-view
-                        : root.current-view == 12 ? 7 : root.current-view == 11 ? 2 : 0;
+                    root.current-view = root.current-view == View.tone3000 ? root.t3k-return-view
+                        : root.current-view == View.routing ? root.routing-return-view
+                        : root.current-view == View.hardware ? View.settings : root.current-view == View.store ? View.browser : View.rack;
                 }
             }
             rack-clicked => {
-                root.current-view = 0;
+                root.current-view = View.rack;
             }
             tuner-clicked => {
-                root.current-view = 3;
+                root.current-view = View.tuner;
             }
             looper-clicked => {
-                root.current-view = 5;
+                root.current-view = View.looper;
             }
             presets-clicked => {
-                root.current-view = 4;
+                root.current-view = View.presets;
             }
             live-clicked => {
-                root.current-view = 9;
+                root.current-view = View.live;
             }
             menu-clicked => {
                 root.context-menu-items = root.main-menu(Features.tone3000, Features.update, Features.power,
@@ -1177,7 +1172,7 @@ export component App inherits Window {
             vertical-stretch: 1;
             background: Theme.background;
 
-            if root.current-view == 0: PluginRack {
+            if root.current-view == View.rack: PluginRack {
                 levels: root.levels;
                 positioned-nodes: root.positioned-nodes;
                 connectors: root.connectors;
@@ -1253,11 +1248,8 @@ export component App inherits Window {
                     root.context-menu-y = Theme.top-bar-height + Theme.space-md + Theme.touch-target + 4px;
                     root.show-context-menu = true;
                 }
-                add-plugin-to-split-top-clicked(id) => {
-                    root.open-browser(1, id);
-                }
-                add-plugin-to-split-bottom-clicked(id) => {
-                    root.open-browser(2, id);
+                add-plugin-to-split-clicked(id, top) => {
+                    root.open-browser(top ? 1 : 2, id);
                 }
                 toggle-ab-clicked(id) => {
                     root.toggle-split-ab(id);
@@ -1285,7 +1277,7 @@ export component App inherits Window {
                 }
             }
 
-            if root.current-view == 1: PluginEditor {
+            if root.current-view == View.editor: PluginEditor {
                 instance-id: root.selected-instance-id;
                 plugin-name: root.selected-plugin-name;
                 category: root.selected-plugin-category;
@@ -1319,7 +1311,7 @@ export component App inherits Window {
                 remove-confirmed => {
                     root.remove-node-by-id(root.selected-instance-id);
                     root.selected-instance-id = -1;
-                    root.current-view = 0;
+                    root.current-view = View.rack;
                 }
                 uses-file: root.selected-uses-file;
                 file: root.selected-file;
@@ -1347,7 +1339,6 @@ export component App inherits Window {
                 midi-available: root.midi-available;
                 midi-learning: root.midi-learning;
                 midi-learn-target: root.midi-learn-target;
-                midi-learn-cc: root.midi-learn-cc;
                 midi-learn-message: root.midi-learn-message;
                 midi-learn-assigned: root.midi-learn-assigned;
                 midi-learn-heel: root.midi-learn-heel;
@@ -1394,7 +1385,7 @@ export component App inherits Window {
                 }
             }
 
-            if root.current-view == 2: PluginBrowser {
+            if root.current-view == View.browser: PluginBrowser {
                 plugins: root.available-plugins;
                 selected-index: root.browser-selected-index;
                 demo-plugins: root.demo-plugins;
@@ -1406,12 +1397,12 @@ export component App inherits Window {
                 }
                 open-store => {
                     root.catalog-open = -1;
-                    root.current-view = 11;
+                    root.current-view = View.store;
                     root.catalog-opened();
                 }
             }
 
-            if root.current-view == 11: CatalogView {
+            if root.current-view == View.store: CatalogView {
                 items: root.catalog-items;
                 families: root.catalog-families;
                 query: root.catalog-query;
@@ -1441,7 +1432,7 @@ export component App inherits Window {
                 }
             }
 
-            if root.current-view == 3: TunerView {
+            if root.current-view == View.tuner: TunerView {
                 focused: root.page-focus;
                 adjusting: root.adjusting;
                 frequency: root.tuner-frequency;
@@ -1460,7 +1451,7 @@ export component App inherits Window {
                 }
             }
 
-            if root.current-view == 4: PresetManager {
+            if root.current-view == View.presets: PresetManager {
                 focused: root.page-focus;
                 presets: root.presets;
                 current-preset-name: root.current-preset-name;
@@ -1468,11 +1459,11 @@ export component App inherits Window {
 
                 show-setlists(mode) => {
                     root.setlist-view-mode = mode;
-                    root.current-view = 6;
+                    root.current-view = View.setlists;
                 }
                 preset-selected(id) => {
                     root.load-preset(id);
-                    root.current-view = 0;
+                    root.current-view = View.rack;
                 }
                 save-preset(name) => {
                     root.save-preset(name);
@@ -1484,11 +1475,11 @@ export component App inherits Window {
                     root.delete-preset(id);
                 }
                 close => {
-                    root.current-view = 0;
+                    root.current-view = View.rack;
                 }
             }
 
-            if root.current-view == 5: LooperView {
+            if root.current-view == View.looper: LooperView {
                 focused: root.page-focus;
                 adjusting: root.adjusting;
                 state: root.looper-state;
@@ -1567,10 +1558,10 @@ export component App inherits Window {
                 }
             }
 
-            if root.current-view == 6: SceneManager {
+            if root.current-view == View.setlists: SceneManager {
                 view-mode <=> root.setlist-view-mode;
                 show-presets => {
-                    root.current-view = 4;
+                    root.current-view = View.presets;
                 }
                 scenes: root.scenes;
                 scene-slots: root.scene-slots;
@@ -1596,11 +1587,11 @@ export component App inherits Window {
                     root.footswitch-pressed(slot);
                 }
                 close => {
-                    root.current-view = 0;
+                    root.current-view = View.rack;
                 }
             }
 
-            if root.current-view == 8: Tone3000View {
+            if root.current-view == View.tone3000: Tone3000View {
                 tab: root.t3k-tab;
                 gear: root.t3k-gear;
                 tones: root.t3k-tones;
@@ -1655,17 +1646,17 @@ export component App inherits Window {
                 use-model(path) => {
                     root.set-model(root.t3k-target-id, path);
                     root.t3k-detail-open = false;
-                    root.current-view = 1;
+                    root.current-view = View.editor;
                 }
                 add-model(uri, path) => {
                     // The backend selects the new block
                     root.t3k-add-model(uri, path);
                     root.t3k-detail-open = false;
-                    root.current-view = 1;
+                    root.current-view = View.editor;
                 }
             }
 
-            if root.current-view == 9: LiveView {
+            if root.current-view == View.live: LiveView {
                 focused: root.page-focus;
                 adjusting: root.adjusting;
                 mode: root.live-mode;
@@ -1699,11 +1690,11 @@ export component App inherits Window {
                 }
                 open-setlists => {
                     root.setlist-view-mode = 1;
-                    root.current-view = 6;
+                    root.current-view = View.setlists;
                 }
             }
 
-            if root.current-view == 10: RoutingView {
+            if root.current-view == View.routing: RoutingView {
                 available: root.routing-available;
                 summary: root.routing-summary;
                 inputs: root.routing-inputs;
@@ -1736,7 +1727,7 @@ export component App inherits Window {
                 }
             }
 
-            if root.current-view == 12: HardwareView {
+            if root.current-view == View.hardware: HardwareView {
                 footswitch-count: root.footswitch-count;
                 tap-switch: root.tap-switch;
                 tap-switch-changed(on) => {
@@ -1772,9 +1763,9 @@ export component App inherits Window {
                 encoder-adjusting: root.adjusting;
             }
 
-            if root.current-view == 7: SettingsView {
+            if root.current-view == View.settings: SettingsView {
                 open-hardware => {
-                    root.current-view = 12;
+                    root.current-view = View.hardware;
                 }
                 midi-available: root.midi-available;
                 midi-devices: root.midi-devices;
@@ -1978,7 +1969,7 @@ export component App inherits Window {
             } else if (id == "updates" || id == "about") {
                 root.update-dialog = true;
             } else if (id == "settings") {
-                root.current-view = 7;
+                root.current-view = View.settings;
             } else if (id == "power") {
                 root.power-action = "";
                 root.power-dialog = true;
@@ -2125,14 +2116,14 @@ export component App inherits Window {
                     // Not behind it
                 } else if (root.focus-hidden) {
                     // Shows where the focus is
-                } else if (root.current-view == 1 && root.adjusting && root.arranging) {
+                } else if (root.current-view == View.editor && root.adjusting && root.arranging) {
                     // Moves the picked parameter, the focus with it
                     root.arrange-parameter(root.selected-instance-id,
                         root.selected-parameters[root.focused-parameter].index, d);
                     root.focused-parameter = max(0, min(root.selected-parameters.length - 1, root.focused-parameter + d));
-                } else if (root.current-view == 1 && root.adjusting) {
+                } else if (root.current-view == View.editor && root.adjusting) {
                     root.adjust(d);
-                } else if (root.current-view == 1 && root.arranging && root.focused-parameter < root.selected-parameters.length) {
+                } else if (root.current-view == View.editor && root.arranging && root.focused-parameter < root.selected-parameters.length) {
                     let stop = max(0, root.focused-parameter * 2 + root.arrange-stop + d);
                     if (stop >= root.selected-parameters.length * 2) {
                         root.focused-parameter = root.arrange-slot;
@@ -2141,24 +2132,24 @@ export component App inherits Window {
                         root.focused-parameter = floor(stop / 2);
                         root.arrange-stop = mod(stop, 2);
                     }
-                } else if (root.current-view == 7 && root.system-picker >= 0) {
+                } else if (root.current-view == View.settings && root.system-picker >= 0) {
                     root.system-picker-index = max(0, min(root.system-settings[root.system-picker].choices.length - 1,
                         root.system-picker-index + d));
-                } else if (root.current-view == 7 && root.adjusting) {
+                } else if (root.current-view == View.settings && root.adjusting) {
                     root.settings-adjust(d);
-                } else if (root.current-view == 12 && root.adjusting) {
+                } else if (root.current-view == View.hardware && root.adjusting) {
                     let s = root.hardware-stop;
                     root.hardware-step(s.what, s.index, d);
                 } else if (root.adjusting) {
                     root.set-page-value(round(root.page-value() * root.page-scale() + d) / root.page-scale());
                 } else if (root.page-slots > 0) {
                     root.page-focus = max(0, min(root.page-slots - 1, root.page-focus + d));
-                } else if (root.current-view == 1) {
+                } else if (root.current-view == View.editor) {
                     root.focused-parameter = max(0, min(root.remove-slot, root.focused-parameter + d));
                     // Back into the parameters while arranging: on the last one's strip
                     root.arrange-stop = root.arranging && root.focused-parameter < root.selected-parameters.length ? 1 : 0;
                     root.remove-armed = false;
-                } else if (root.current-view == 0) {
+                } else if (root.current-view == View.rack) {
                     // The blocks, then the add button
                     let n = root.positioned-nodes.length;
                     let next = max(0, min(n, (root.add-focused ? n : root.selected-plugin) + d));
@@ -2166,7 +2157,7 @@ export component App inherits Window {
                         root.select-node-at(next);
                     }
                     root.add-focused = next == n;
-                } else if (root.current-view == 2) {
+                } else if (root.current-view == View.browser) {
                     root.browser-selected-index = max(0, min(root.available-plugins.length - 1, root.browser-selected-index + d));
                 }
                 root.encoder-used();
@@ -2180,11 +2171,11 @@ export component App inherits Window {
                     // Not behind it
                 } else if (root.focus-hidden) {
                     // Shows the focus before acting on it
-                } else if (root.current-view == 0 && root.add-focused) {
+                } else if (root.current-view == View.rack && root.add-focused) {
                     root.open-browser(0, -1);
-                } else if (root.current-view == 0) {
+                } else if (root.current-view == View.rack) {
                     root.open-node(root.selected-plugin);
-                } else if (root.current-view == 1) {
+                } else if (root.current-view == View.editor) {
                     if (root.adjusting) {
                         root.adjusting = false;
                     } else if (root.arranging && root.focused-parameter < root.selected-parameters.length) {
@@ -2213,19 +2204,19 @@ export component App inherits Window {
                         root.remove-armed = false;
                         root.remove-node-by-id(root.selected-instance-id);
                         root.selected-instance-id = -1;
-                        root.current-view = 0;
+                        root.current-view = View.rack;
                     } else {
                         root.remove-armed = true;
                     }
-                } else if (root.current-view == 7) {
+                } else if (root.current-view == View.settings) {
                     root.settings-press();
-                } else if (root.current-view == 12) {
+                } else if (root.current-view == View.hardware) {
                     root.hardware-press();
                 } else if (root.adjusting) {
                     root.adjusting = false;
                 } else if (root.page-slots > 0) {
                     root.page-press();
-                } else if (root.current-view == 2) {
+                } else if (root.current-view == View.browser) {
                     if (root.browser-selected-index >= 0 && root.browser-selected-index < root.available-plugins.length) {
                         root.add-plugin(root.available-plugins[root.browser-selected-index].uri);
                     }
@@ -2245,7 +2236,7 @@ export component App inherits Window {
             // External encoders 1-6 on the knob strip, from a computer
             // keyboard: a s d f g h turn right (shifted: left), z x c v b n
             // press (shifted: long press)
-            if (root.current-view == 0) {
+            if (root.current-view == View.rack) {
                 let lower = event.text.to-lowercase();
                 let turn = self.strip-key(lower, "a", "s", "d", "f", "g", "h");
                 let press = self.strip-key(lower, "z", "x", "c", "v", "b", "n");
@@ -2273,52 +2264,52 @@ export component App inherits Window {
                     root.power-dialog = false;
                 } else if (root.update-dialog) {
                     root.update-dialog = false;
-                } else if (root.current-view == 1 && root.arranging) {
+                } else if (root.current-view == View.editor && root.arranging) {
                     // Drops the picked parameter, else leaves Arrange
                     if (root.adjusting) {
                         root.adjusting = false;
                     } else {
                         root.arranging = false;
                     }
-                } else if (root.current-view == 1 && root.adjusting) {
+                } else if (root.current-view == View.editor && root.adjusting) {
                     // Back to the value before
                     root.set-parameter(root.selected-instance-id,
                         root.selected-parameters[root.focused-parameter].index, root.adjust-from);
                     root.adjusting = false;
-                } else if (root.current-view == 7 && root.system-picker >= 0) {
+                } else if (root.current-view == View.settings && root.system-picker >= 0) {
                     root.system-picker = -1;
-                } else if ((root.current-view == 7 || root.current-view == 12) && root.adjusting) {
+                } else if ((root.current-view == View.settings || root.current-view == View.hardware) && root.adjusting) {
                     // Audio & system: the steps stay pending, Cancel takes
                     // them back; elsewhere they are applied as they come
                     root.adjusting = false;
-                } else if (root.current-view == 7 && root.wifi-open-shown && (root.settings-stop.what == "wifi-action"
+                } else if (root.current-view == View.settings && root.wifi-open-shown && (root.settings-stop.what == "wifi-action"
                         || root.settings-stop.what == "wifi-forget"
                         || (root.settings-stop.what == "wifi-network" && root.settings-stop.index == root.wifi-open-index))) {
                     // Closes the network's actions
                     root.close-wifi-network();
-                } else if (root.current-view == 7 && root.t3k-confirm-disconnect
+                } else if (root.current-view == View.settings && root.t3k-confirm-disconnect
                         && (root.settings-stop.what == "t3k-keep" || root.settings-stop.what == "t3k-disconnect")) {
                     root.t3k-confirm-disconnect = false;
                     root.page-focus = root.t3k-start;
                 } else if (root.adjusting) {
                     root.set-page-value(root.adjust-from);
                     root.adjusting = false;
-                } else if (root.current-view == 8) {
+                } else if (root.current-view == View.tone3000) {
                     root.current-view = root.t3k-return-view;
-                } else if (root.current-view == 10) {
+                } else if (root.current-view == View.routing) {
                     root.current-view = root.routing-return-view;
-                } else if (root.current-view == 12) {
-                    root.current-view = 7;
-                } else if (root.current-view == 11) {
+                } else if (root.current-view == View.hardware) {
+                    root.current-view = View.settings;
+                } else if (root.current-view == View.store) {
                     if (root.catalog-open >= 0) {
                         root.catalog-open = -1;
                     } else {
-                        root.current-view = 2;
+                        root.current-view = View.browser;
                     }
-                } else if (root.current-view == 6) {
-                    root.current-view = 4;
-                } else if (root.current-view == 1 || root.current-view == 2) {
-                    root.current-view = 0;
+                } else if (root.current-view == View.setlists) {
+                    root.current-view = View.presets;
+                } else if (root.current-view == View.editor || root.current-view == View.browser) {
+                    root.current-view = View.rack;
                 } else {
                     root.open-pages();
                 }

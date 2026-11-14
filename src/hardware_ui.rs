@@ -2,12 +2,12 @@
 //! encoders wired to the board.
 //! Changes apply at once: the inputs are opened again on their new GPIOs.
 
-use std::cell::{RefCell, RefMut};
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use slint::{ComponentHandle, ModelRc, VecModel, Weak};
-use tracing::{error, warn};
+use tracing::error;
 
 use pedalboard::hardware::{
     Encoder, Hardware, I2cEncoders, I2cModule, ENCODER_STEPS, MAX_FOOTSWITCHES, MAX_PIN,
@@ -20,16 +20,6 @@ struct Board {
     hardware: Hardware,
     #[cfg(feature = "gpio")]
     gpio: Option<crate::gpio::Gpio>,
-}
-
-/// The board, for a callback; `None` (logged) when a callback run from
-/// inside another (a Slint re-entry) would borrow it twice
-fn borrow(board: &RefCell<Board>) -> Option<RefMut<'_, Board>> {
-    let borrowed = board.try_borrow_mut().ok();
-    if borrowed.is_none() {
-        warn!("Hardware settings in use, change skipped");
-    }
-    borrowed
 }
 
 pub fn setup(app: &App, state: &Arc<AppState>) {
@@ -141,36 +131,28 @@ fn step(hardware: &mut Hardware, what: &str, index: i32, delta: i32) {
         }
         "encoder-steps" => {
             if let Some(encoder) = &mut hardware.encoder {
-                let at = ENCODER_STEPS
-                    .iter()
-                    .position(|&s| s == encoder.steps)
-                    .unwrap_or(0) as i32;
-                let at = (at + delta).clamp(0, ENCODER_STEPS.len() as i32 - 1);
-                encoder.steps = ENCODER_STEPS[at as usize];
+                encoder.steps = step_in(&ENCODER_STEPS, encoder.steps, delta);
             }
         }
         "i2c-module" | "i2c-steps" | "i2c-reverse" => {
             let Some(i2c) = &mut hardware.i2c_encoders else {
                 return;
             };
-            let next = |at: Option<usize>, len: usize| {
-                (at.unwrap_or(0) as i32 + delta).clamp(0, len as i32 - 1) as usize
-            };
             match what {
-                "i2c-module" => {
-                    let at = I2cModule::ALL.iter().position(|&m| m == i2c.module);
-                    i2c.module = I2cModule::ALL[next(at, I2cModule::ALL.len())];
-                }
-                "i2c-steps" => {
-                    let steps = pedalboard::i2c_encoders::STEPS;
-                    i2c.steps =
-                        steps[next(steps.iter().position(|&s| s == i2c.steps), steps.len())];
-                }
+                "i2c-module" => i2c.module = step_in(&I2cModule::ALL, i2c.module, delta),
+                "i2c-steps" => i2c.steps = step_in(&ENCODER_STEPS, i2c.steps, delta),
                 _ => i2c.reverse = delta > 0,
             }
         }
         _ => {}
     }
+}
+
+/// The item `delta` places from `current` in `items` (from the first when
+/// `current` is not there), kept within the list
+fn step_in<T: Copy + PartialEq>(items: &[T], current: T, delta: i32) -> T {
+    let at = items.iter().position(|&i| i == current).unwrap_or(0) as i32;
+    items[(at + delta).clamp(0, items.len() as i32 - 1) as usize]
 }
 
 /// Change a copy of the hardware with `f`, then save and apply it
@@ -181,7 +163,7 @@ fn edit(
     f: impl FnOnce(&mut Hardware),
 ) {
     let Some(app) = app.upgrade() else { return };
-    let Some(mut board) = borrow(board) else {
+    let Some(mut board) = crate::borrow_page(board, "Hardware settings") else {
         return;
     };
     let mut hardware = board.hardware.clone();
@@ -299,6 +281,8 @@ mod tests {
         assert_eq!(h.encoder.unwrap().steps, 1);
         step(&mut h, "encoder-steps", 0, 1);
         assert_eq!(h.encoder.unwrap().steps, 2);
+        // A value off the list starts from the first
+        assert_eq!(step_in(&ENCODER_STEPS, 3, 1), 2);
     }
 
     #[test]
@@ -330,6 +314,7 @@ mod tests {
     #[cfg(feature = "headless")]
     #[test]
     fn the_encoder_leaves_its_own_settings_alone() {
+        use crate::View;
         use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
         use slint::platform::{Key, Platform, WindowAdapter, WindowEvent};
 
@@ -383,9 +368,9 @@ mod tests {
         // Every stop, past the last: a press, a turn (adjusting it when it
         // is a stepper), a press again
         for stop in 0..12 {
-            app.set_current_view(0);
+            app.set_current_view(View::Rack);
             settle();
-            app.set_current_view(12);
+            app.set_current_view(View::Hardware);
             settle();
             for _ in 0..stop {
                 key(Key::RightArrow);

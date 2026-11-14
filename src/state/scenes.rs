@@ -9,8 +9,9 @@
 
 use anyhow::{anyhow, Result};
 
-use super::app_state::{collect_ids, find_in, find_in_mut, node_id};
+use super::app_state::find_in_mut;
 use super::EffectChainState;
+use crate::audio::split_chain::walk;
 use crate::audio::ChainNode;
 use crate::plugins::chain::is_panned;
 use crate::plugins::ChainCommand;
@@ -55,15 +56,14 @@ fn set_enabled(
 impl EffectChainState {
     /// The live state of the chain, as a scene
     pub fn capture_scene(&self, name: String) -> SceneSnapshot {
-        let mut ids = Vec::new();
-        collect_ids(&self.nodes, &mut ids);
         let mut scene = SceneSnapshot {
             name,
             ..Default::default()
         };
-        for id in ids {
-            match find_in(&self.nodes, id) {
-                Some(ChainNode::Plugin { enabled, .. }) => {
+        for node in walk(&self.nodes) {
+            let id = node.instance_id();
+            match node {
+                ChainNode::Plugin { enabled, .. } => {
                     scene.enabled.insert(id, *enabled);
                     if let Some(values) = self.params.get(&id) {
                         scene.params.insert(id, values.clone());
@@ -72,13 +72,13 @@ impl EffectChainState {
                         scene.params_by_symbol.insert(id, values.clone());
                     }
                 }
-                Some(ChainNode::Split {
+                ChainNode::Split {
                     enabled,
                     ab_select_a,
                     mix_ratio,
                     pan,
                     ..
-                }) => {
+                } => {
                     scene.enabled.insert(id, *enabled);
                     scene.splits.insert(
                         id,
@@ -89,7 +89,6 @@ impl EffectChainState {
                         },
                     );
                 }
-                None => {}
             }
         }
         scene
@@ -149,8 +148,7 @@ impl EffectChainState {
         if self.scenes.iter().all(Option::is_none) && self.scene == 0 {
             return Vec::new();
         }
-        let mut ids = Vec::new();
-        collect_ids(&self.nodes, &mut ids);
+        let ids: Vec<usize> = walk(&self.nodes).map(ChainNode::instance_id).collect();
         let mut scenes = self.scenes.clone();
         scenes.resize(SCENE_COUNT, None);
         if let Some(current) = scenes.get_mut(self.scene) {
@@ -181,15 +179,14 @@ impl EffectChainState {
             return Ok(SceneSwitch::default());
         };
         let mut switch = SceneSwitch::default();
-        let mut ids = Vec::new();
-        collect_ids(&self.nodes, &mut ids);
+        let ids: Vec<usize> = walk(&self.nodes).map(ChainNode::instance_id).collect();
         let stereo = self.stereo_mode;
         for id in ids {
             let params = self.params.get_mut(&id);
             let Some(node) = find_in_mut(&mut self.nodes, id) else {
                 continue;
             };
-            let instance_id = node_id(node);
+            let instance_id = node.instance_id();
             match node {
                 ChainNode::Plugin { enabled, .. } => {
                     set_enabled(enabled, target.enabled.get(&id), instance_id, &mut switch);
@@ -274,7 +271,7 @@ impl EffectChainState {
             .count();
         self.plugins()
             .into_iter()
-            .map(node_id)
+            .map(ChainNode::instance_id)
             .filter(|id| !assigned.contains(id))
             .nth(automatic)
     }

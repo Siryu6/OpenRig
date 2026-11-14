@@ -1,10 +1,20 @@
 //! Pictures of the full editor: the rectangles of the window that changed,
 //! encoded for the browser (see protocol::frame_header).
 //!
+//! One pipeline, from the window to the pages (the app's `headless` runs
+//! it): the UI thread draws, `Sent::update` finds the areas the pages do
+//! not have yet, `Areas::pack` copies their pixels, `encode_picture` makes
+//! the frames of the picture on the encoder thread, and the server sends
+//! it whole to each page that can take it (see flow). Areas a page did not
+//! get come back in the `Requests` of the next picture.
+//!
 //! JPEG (quality 80) for large areas, PNG (lossless, fast compression) for
 //! small ones: a knob or a meter is a few hundred bytes of PNG, while a
 //! page change is ten times smaller in JPEG than in PNG and quicker to
 //! encode. `PEDALBOARD_REMOTE_FRAMES=png|jpeg` forces one.
+
+use axum::body::Bytes;
+use slint::Rgb8Pixel;
 
 use super::protocol::{frame_header, FrameFormat, FRAME_HEADER};
 
@@ -48,6 +58,16 @@ pub struct Rect {
 }
 
 impl Rect {
+    /// The whole window of `window` (width, height)
+    pub fn whole(window: (usize, usize)) -> Rect {
+        Rect {
+            x: 0,
+            y: 0,
+            width: window.0,
+            height: window.1,
+        }
+    }
+
     /// The smallest rectangle holding both
     pub fn union(self, other: Rect) -> Rect {
         let x = self.x.min(other.x);
@@ -61,56 +81,76 @@ impl Rect {
             height: y2 - y,
         }
     }
-}
 
-impl Rect {
     fn area(self) -> usize {
         self.width * self.height
     }
 
-    /// Whether they overlap or share an edge
-    fn touches(self, other: Rect) -> bool {
-        self.x <= other.x + other.width
-            && other.x <= self.x + self.width
-            && self.y <= other.y + other.height
-            && other.y <= self.y + self.height
+    /// The part inside a window of `window` (width, height), None when
+    /// nothing is left
+    pub fn clip(self, window: (usize, usize)) -> Option<Rect> {
+        let x2 = (self.x + self.width).min(window.0);
+        let y2 = (self.y + self.height).min(window.1);
+        (self.x < x2 && self.y < y2).then(|| Rect {
+            x: self.x,
+            y: self.y,
+            width: x2 - self.x,
+            height: y2 - self.y,
+        })
+    }
+
+    /// The index ranges of its rows in a window `width` pixels wide
+    fn rows(self, width: usize) -> impl Iterator<Item = std::ops::Range<usize>> {
+        (self.y..self.y + self.height).map(move |y| {
+            let start = y * width + self.x;
+            start..start + self.width
+        })
     }
 }
 
-/// Areas held at most, before the closest ones merge
+/// Areas held at most: past it, the closest ones merge
 const MAX_AREAS: usize = 4;
+/// Merging two areas may add this many pixels: below, one picture costs
+/// less than two (each has a header, a PNG or JPEG header, and is
+/// acknowledged)
+const MERGE_SLACK: usize = 4096;
 
-/// Areas of the window to send again: a few rectangles. Areas that touch
-/// merge; distant ones (a meter and a knob) stay apart instead of becoming
-/// the large rectangle between them, unless there are too many.
+/// Areas of the window: a few rectangles. Close areas (a knob and its
+/// value) merge; distant ones (a meter and a knob) stay apart instead of
+/// becoming the large rectangle between them, unless there are too many.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Areas(Vec<Rect>);
 
 impl Areas {
-    pub fn add(&mut self, mut rect: Rect) {
+    pub fn add(&mut self, rect: Rect) {
         if rect.area() == 0 {
             return;
         }
-        while let Some(i) = self.0.iter().position(|r| r.touches(rect)) {
-            rect = rect.union(self.0.swap_remove(i));
-        }
         self.0.push(rect);
-        while self.0.len() > MAX_AREAS {
-            // Merge the two that add the least area
-            let mut best = (usize::MAX, 0, 1);
-            for i in 0..self.0.len() {
-                for j in i + 1..self.0.len() {
-                    let (a, b) = (self.0[i], self.0[j]);
-                    let cost = a.union(b).area().saturating_sub(a.area() + b.area());
-                    if cost < best.0 {
-                        best = (cost, i, j);
-                    }
-                }
+        // Merge the two that add the least, while that is little or there
+        // are too many
+        while let Some((cost, i, j)) = self.cheapest_merge() {
+            if cost > MERGE_SLACK && self.0.len() <= MAX_AREAS {
+                break;
             }
-            let (_, i, j) = best;
             let b = self.0.swap_remove(j);
             self.0[i] = self.0[i].union(b);
         }
+    }
+
+    /// The pixels the cheapest merge adds, and its two areas
+    fn cheapest_merge(&self) -> Option<(usize, usize, usize)> {
+        let mut best: Option<(usize, usize, usize)> = None;
+        for i in 0..self.0.len() {
+            for j in i + 1..self.0.len() {
+                let (a, b) = (self.0[i], self.0[j]);
+                let cost = a.union(b).area().saturating_sub(a.area() + b.area());
+                if best.is_none_or(|(c, _, _)| cost < c) {
+                    best = Some((cost, i, j));
+                }
+            }
+        }
+        best
     }
 
     pub fn is_empty(&self) -> bool {
@@ -120,32 +160,74 @@ impl Areas {
     pub fn rects(&self) -> &[Rect] {
         &self.0
     }
-}
 
-/// Merging two areas may add this many pixels: below, one picture costs
-/// less than two (each has a header, a PNG or JPEG header, and is
-/// acknowledged)
-const MERGE_SLACK: usize = 4096;
-
-/// Merge the areas that are close: the same pixels, in fewer pictures
-pub fn merge_close(rects: &mut Vec<Rect>) {
-    loop {
-        let mut best = (usize::MAX, 0, 0);
-        for i in 0..rects.len() {
-            for j in i + 1..rects.len() {
-                let (a, b) = (rects[i], rects[j]);
-                let cost = a.union(b).area().saturating_sub(a.area() + b.area());
-                if cost < best.0 {
-                    best = (cost, i, j);
-                }
+    /// The pixels of the areas of `window` (`width` pixels a row) into
+    /// `out`, one area after the other, rows in order
+    pub fn pack<P: Copy>(&self, window: &[P], width: usize, out: &mut Vec<P>) {
+        out.clear();
+        for rect in &self.0 {
+            for row in rect.rows(width) {
+                out.extend_from_slice(&window[row]);
             }
         }
-        let (cost, i, j) = best;
-        if cost > MERGE_SLACK {
-            return;
+    }
+}
+
+/// What the pages asked of the next picture
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Requests {
+    /// Window size wanted by the last page that asked
+    pub size: Option<(u32, u32)>,
+    /// The whole window: a page started showing the Editor, or missed
+    /// frames
+    pub keyframe: bool,
+    /// Areas a page did not get (it was behind): sent again, as they are
+    pub repaint: Areas,
+}
+
+/// The window as the pages have it: the pictures sent so far. The UI
+/// redraws whole items (a label whose model row was set again): only the
+/// pixels that changed go.
+#[derive(Debug, Default)]
+pub struct Sent<P> {
+    pixels: Vec<P>,
+    size: (usize, usize),
+}
+
+impl<P: Copy + PartialEq> Sent<P> {
+    /// The areas of `now` (the window, `size` = width and height) to send:
+    /// the parts of the areas the renderer redrew (`drawn`) that differ
+    /// from what was sent, and the areas pages asked for again. The whole
+    /// window for a keyframe or a new size. They count as sent.
+    pub fn update(
+        &mut self,
+        now: &[P],
+        size: (usize, usize),
+        drawn: &[Rect],
+        requests: &Requests,
+    ) -> Areas {
+        let mut areas = Areas::default();
+        if requests.keyframe || size != self.size || self.pixels.len() != now.len() {
+            self.pixels.clear();
+            self.pixels.extend_from_slice(now);
+            self.size = size;
+            areas.add(Rect::whole(size));
+            return areas;
         }
-        let b = rects.swap_remove(j);
-        rects[i] = rects[i].union(b);
+        for rect in drawn.iter().filter_map(|r| r.clip(size)) {
+            if let Some(rect) = changed(rect, now, &self.pixels, size.0) {
+                areas.add(rect);
+            }
+        }
+        for rect in requests.repaint.rects().iter().filter_map(|r| r.clip(size)) {
+            areas.add(rect);
+        }
+        for rect in areas.rects() {
+            for row in rect.rows(size.0) {
+                self.pixels[row.clone()].copy_from_slice(&now[row]);
+            }
+        }
+        areas
     }
 }
 
@@ -175,61 +257,40 @@ pub fn changed<P: PartialEq>(rect: Rect, now: &[P], before: &[P], width: usize) 
     })
 }
 
-/// The rectangle a frame message shows (see protocol::frame_header)
-pub fn rect_of(message: &[u8]) -> Option<Rect> {
-    let header = message.get(..FRAME_HEADER)?;
-    let field = |i: usize| usize::from(u16::from_le_bytes([header[2 + i * 2], header[3 + i * 2]]));
-    Some(Rect {
-        x: field(0),
-        y: field(1),
-        width: field(2),
-        height: field(3),
-    })
+/// One area of a picture, as sent: header then PNG or JPEG
+#[derive(Debug, Clone)]
+pub struct Frame {
+    pub rect: Rect,
+    pub message: Bytes,
 }
 
-/// The part of `rect` inside a window of `window` (width, height), None
-/// when nothing is left
-pub fn clip(rect: Rect, window: (usize, usize)) -> Option<Rect> {
-    let x2 = (rect.x + rect.width).min(window.0);
-    let y2 = (rect.y + rect.height).min(window.1);
-    (rect.x < x2 && rect.y < y2).then(|| Rect {
-        x: rect.x,
-        y: rect.y,
-        width: x2 - rect.x,
-        height: y2 - rect.y,
-    })
-}
-
-/// The message for rectangle `rect` of an RGB window (`rgb`, 3 bytes per
-/// pixel, `window` = width and height): header then picture. None when the
-/// rectangle is empty or outside the window.
-pub fn encode(
-    rgb: &[u8],
+/// The frames of a picture: `pixels` are those of `areas` (see
+/// Areas::pack) in a window of `window` (width, height). `rgb` is the
+/// caller's buffer, reused.
+pub fn encode_picture(
+    pixels: &[Rgb8Pixel],
+    areas: &Areas,
     window: (usize, usize),
-    rect: Rect,
     encoding: Encoding,
-) -> Option<Vec<u8>> {
-    let (win_w, win_h) = window;
-    let rect = clip(rect, window)?;
-    if rgb.len() < win_w * win_h * 3 {
-        return None;
+    rgb: &mut Vec<u8>,
+) -> Vec<Frame> {
+    let mut picture = Vec::with_capacity(areas.rects().len());
+    let mut offset = 0;
+    for &rect in areas.rects() {
+        let Some(area) = pixels.get(offset..offset + rect.area()) else {
+            break;
+        };
+        offset += rect.area();
+        rgb.clear();
+        rgb.extend(area.iter().flat_map(|p| [p.r, p.g, p.b]));
+        picture.extend(encode(rgb, window, rect, encoding));
     }
-    let mut pixels = Vec::with_capacity(rect.width * rect.height * 3);
-    for row in rect.y..rect.y + rect.height {
-        let start = (row * win_w + rect.x) * 3;
-        pixels.extend_from_slice(&rgb[start..start + rect.width * 3]);
-    }
-    encode_packed(&pixels, window, rect, encoding)
+    picture
 }
 
-/// The message for rectangle `rect` (inside the window, see clip) whose
-/// pixels are `rgb`: its rows one after the other, 3 bytes per pixel
-pub fn encode_packed(
-    rgb: &[u8],
-    window: (usize, usize),
-    rect: Rect,
-    encoding: Encoding,
-) -> Option<Vec<u8>> {
+/// The frame of rectangle `rect` (inside the window, see Rect::clip)
+/// whose pixels are `rgb`: its rows one after the other, 3 bytes a pixel
+pub fn encode(rgb: &[u8], window: (usize, usize), rect: Rect, encoding: Encoding) -> Option<Frame> {
     let (w, h) = (rect.width, rect.height);
     if w == 0 || h == 0 || rgb.len() != w * h * 3 {
         return None;
@@ -259,19 +320,30 @@ pub fn encode_packed(
                 .ok()?;
         }
     }
-    Some(out)
+    Some(Frame {
+        rect,
+        message: out.into(),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn r(x: usize, y: usize, width: usize, height: usize) -> Rect {
+        Rect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
     /// A window like the UI: flat colours, a gradient, some text-like noise
-    fn window(w: usize, h: usize) -> Vec<u8> {
-        let mut rgb = vec![0u8; w * h * 3];
+    fn window(w: usize, h: usize) -> Vec<Rgb8Pixel> {
+        let mut pixels = Vec::with_capacity(w * h);
         for y in 0..h {
             for x in 0..w {
-                let i = (y * w + x) * 3;
                 let v = if y < h / 4 {
                     30
                 } else if (x / 7 + y / 9) % 5 == 0 {
@@ -279,164 +351,125 @@ mod tests {
                 } else {
                     (x * 255 / w) as u8
                 };
-                rgb[i] = v;
-                rgb[i + 1] = v / 2;
-                rgb[i + 2] = 40;
+                pixels.push(Rgb8Pixel::new(v, v / 2, 40));
             }
         }
-        rgb
+        pixels
+    }
+
+    /// The frame of one area of a window
+    fn frame_of(
+        pixels: &[Rgb8Pixel],
+        window: (usize, usize),
+        rect: Rect,
+        encoding: Encoding,
+    ) -> Option<Frame> {
+        let mut areas = Areas::default();
+        areas.add(rect.clip(window)?);
+        let mut packed = Vec::new();
+        areas.pack(pixels, window.0, &mut packed);
+        encode_picture(&packed, &areas, window, encoding, &mut Vec::new())
+            .into_iter()
+            .next()
     }
 
     #[test]
     fn small_rects_png_large_jpeg() {
-        let rgb = window(800, 480);
-        let small = encode(
-            &rgb,
-            (800, 480),
-            Rect {
-                x: 10,
-                y: 20,
-                width: 40,
-                height: 30,
-            },
-            Encoding::Auto,
-        )
-        .unwrap_or_default();
+        let pixels = window(800, 480);
+        let small = frame_of(&pixels, (800, 480), r(10, 20, 40, 30), Encoding::Auto)
+            .map(|f| f.message)
+            .unwrap_or_default();
         assert_eq!(small[1], FrameFormat::Png as u8);
         assert_eq!(&small[FRAME_HEADER..FRAME_HEADER + 4], b"\x89PNG");
-        let full = encode(
-            &rgb,
-            (800, 480),
-            Rect {
-                x: 0,
-                y: 0,
-                width: 800,
-                height: 480,
-            },
-            Encoding::Auto,
-        )
-        .unwrap_or_default();
+        let full = frame_of(&pixels, (800, 480), r(0, 0, 800, 480), Encoding::Auto)
+            .map(|f| f.message)
+            .unwrap_or_default();
         assert_eq!(full[1], FrameFormat::Jpeg as u8);
         assert_eq!(&full[FRAME_HEADER..FRAME_HEADER + 2], b"\xff\xd8");
     }
 
     #[test]
-    fn clipped_to_the_window() {
-        let rgb = window(100, 50);
-        let clipped = encode(
-            &rgb,
-            (100, 50),
-            Rect {
-                x: 90,
-                y: 40,
-                width: 50,
-                height: 50,
-            },
-            Encoding::Png,
-        )
-        .unwrap_or_default();
-        assert_eq!(u16::from_le_bytes([clipped[6], clipped[7]]), 10);
-        assert_eq!(u16::from_le_bytes([clipped[8], clipped[9]]), 10);
-        assert!(encode(
-            &rgb,
-            (100, 50),
-            Rect {
-                x: 100,
-                y: 0,
-                width: 5,
-                height: 5
-            },
-            Encoding::Png
-        )
-        .is_none());
-    }
-
-    #[test]
-    fn rect_of_a_message_and_unions() {
-        let rgb = window(100, 50);
-        let rect = Rect {
-            x: 10,
-            y: 5,
-            width: 20,
-            height: 8,
+    fn frames_show_their_rectangle() {
+        let pixels = window(100, 50);
+        let rect = r(10, 5, 20, 8);
+        let Some(frame) = frame_of(&pixels, (100, 50), rect, Encoding::Png) else {
+            panic!("no frame");
         };
-        let message = encode(&rgb, (100, 50), rect, Encoding::Png).unwrap_or_default();
-        assert_eq!(rect_of(&message), Some(rect));
-        assert_eq!(rect_of(&message[..4]), None);
-        let other = Rect {
-            x: 50,
-            y: 0,
-            width: 10,
-            height: 2,
-        };
-        assert_eq!(
-            rect.union(other),
-            Rect {
-                x: 10,
-                y: 0,
-                width: 50,
-                height: 13
-            }
-        );
-    }
-
-    #[test]
-    fn packed_pixels_encode_like_the_window() {
-        let rgb = window(100, 50);
-        let rect = Rect {
-            x: 90,
-            y: 40,
-            width: 50,
-            height: 50,
-        };
-        let clipped = clip(rect, (100, 50)).unwrap_or(rect);
-        assert_eq!((clipped.width, clipped.height), (10, 10));
-        let mut packed = Vec::new();
-        for row in clipped.y..clipped.y + clipped.height {
-            let start = (row * 100 + clipped.x) * 3;
-            packed.extend_from_slice(&rgb[start..start + clipped.width * 3]);
-        }
-        assert_eq!(
-            encode_packed(&packed, (100, 50), clipped, Encoding::Png),
-            encode(&rgb, (100, 50), rect, Encoding::Png)
-        );
+        assert_eq!(frame.rect, rect);
+        let field = |i: usize| u16::from_le_bytes([frame.message[i], frame.message[i + 1]]);
+        assert_eq!([field(2), field(4), field(6), field(8)], [10, 5, 20, 8]);
+        assert_eq!([field(10), field(12)], [100, 50]);
         // Pixels that do not match the rectangle
-        assert!(encode_packed(&packed[3..], (100, 50), clipped, Encoding::Png).is_none());
-        assert!(clip(
-            Rect {
-                x: 100,
-                y: 0,
-                width: 5,
-                height: 5
-            },
-            (100, 50)
-        )
-        .is_none());
+        assert!(encode(&[0; 3], (100, 50), rect, Encoding::Png).is_none());
     }
 
     #[test]
-    fn areas_merge_when_they_touch_or_are_too_many() {
-        let r = |x, y, width, height| Rect {
-            x,
-            y,
-            width,
-            height,
-        };
+    fn clipped_to_the_window() {
+        assert_eq!(r(90, 40, 50, 50).clip((100, 50)), Some(r(90, 40, 10, 10)));
+        assert_eq!(r(100, 0, 5, 5).clip((100, 50)), None);
+        assert_eq!(r(0, 0, 0, 5).clip((100, 50)), None);
+        assert_eq!(r(10, 5, 20, 8).union(r(50, 0, 10, 2)), r(10, 0, 50, 13));
+    }
+
+    #[test]
+    fn a_picture_encodes_each_area_from_its_packed_pixels() {
+        let pixels = window(100, 50);
         let mut areas = Areas::default();
         areas.add(r(0, 0, 10, 10));
-        areas.add(r(500, 500, 10, 10));
-        assert_eq!(areas.rects().len(), 2, "far apart");
-        areas.add(r(10, 0, 10, 10));
+        areas.add(r(80, 30, 20, 20));
+        let mut packed = Vec::new();
+        areas.pack(&pixels, 100, &mut packed);
+        assert_eq!(packed.len(), 100 + 400);
+        assert_eq!(packed[100], pixels[30 * 100 + 80]);
+        let picture = encode_picture(&packed, &areas, (100, 50), Encoding::Png, &mut Vec::new());
+        assert_eq!(picture.len(), 2);
+        for (frame, &rect) in picture.iter().zip(areas.rects()) {
+            let alone = frame_of(&pixels, (100, 50), rect, Encoding::Png);
+            assert_eq!(Some(&frame.message), alone.as_ref().map(|f| &f.message));
+        }
+        // Too few pixels: the areas they cover
+        assert_eq!(
+            encode_picture(
+                &packed[..150],
+                &areas,
+                (100, 50),
+                Encoding::Png,
+                &mut Vec::new()
+            )
+            .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn close_areas_merge_far_ones_stay() {
+        let mut areas = Areas::default();
+        // A knob and its value under it, and a meter far away
+        areas.add(r(648, 701, 65, 64));
+        areas.add(r(10, 10, 8, 100));
+        areas.add(r(660, 768, 40, 20));
         assert_eq!(areas.rects().len(), 2);
-        assert!(areas.rects().contains(&r(0, 0, 20, 10)), "touching");
+        assert!(areas.rects().contains(&r(648, 701, 65, 87)));
+        assert!(areas.rects().contains(&r(10, 10, 8, 100)));
+        // Touching or inside: one area
+        let mut areas = Areas::default();
+        areas.add(r(0, 0, 10, 10));
+        areas.add(r(10, 0, 10, 10));
+        areas.add(r(2, 2, 3, 3));
         areas.add(r(0, 0, 0, 5));
-        assert_eq!(areas.rects().len(), 2, "empty");
-        for i in 0..4 {
-            areas.add(r(100 + i * 100, 300, 5, 5));
+        assert_eq!(areas.rects(), [r(0, 0, 20, 10)]);
+    }
+
+    #[test]
+    fn too_many_areas_merge() {
+        let mut areas = Areas::default();
+        for i in 0..8 {
+            areas.add(r(i * 1000, (i % 2) * 400, 5, 5));
         }
         assert_eq!(areas.rects().len(), MAX_AREAS);
         // Everything is still covered
-        for (x, y) in [(0, 0), (19, 9), (500, 500), (100, 300), (404, 304)] {
+        for i in 0..8 {
+            let (x, y) = (i * 1000 + 4, (i % 2) * 400 + 4);
             assert!(areas
                 .rects()
                 .iter()
@@ -445,75 +478,95 @@ mod tests {
     }
 
     #[test]
-    fn close_areas_merge_far_ones_stay() {
-        let r = |x, y, width, height| Rect {
-            x,
-            y,
-            width,
-            height,
-        };
-        // A knob and its value under it, and a meter far away
-        let mut rects = vec![r(648, 701, 65, 64), r(660, 768, 40, 20), r(10, 10, 8, 100)];
-        merge_close(&mut rects);
-        assert_eq!(rects.len(), 2);
-        assert!(rects.contains(&r(648, 701, 65, 87)));
-        assert!(rects.contains(&r(10, 10, 8, 100)));
-        let mut one = vec![r(0, 0, 5, 5)];
-        merge_close(&mut one);
-        assert_eq!(one, [r(0, 0, 5, 5)]);
-    }
-
-    #[test]
     fn only_what_changed_is_sent() {
         let width = 10;
         let before = vec![0u8; width * 8];
         let mut now = before.clone();
-        let rect = Rect {
-            x: 1,
-            y: 1,
-            width: 8,
-            height: 6,
-        };
+        let rect = r(1, 1, 8, 6);
         assert_eq!(changed(rect, &now, &before, width), None);
         now[2 * width + 3] = 1;
         now[4 * width + 6] = 1;
         // Outside the rectangle: not looked at
         now[7 * width + 9] = 1;
-        assert_eq!(
-            changed(rect, &now, &before, width),
-            Some(Rect {
-                x: 3,
-                y: 2,
-                width: 4,
-                height: 3,
-            })
-        );
+        assert_eq!(changed(rect, &now, &before, width), Some(r(3, 2, 4, 3)));
         now[width + 1] = 1;
         now[6 * width + 8] = 1;
         assert_eq!(changed(rect, &now, &before, width), Some(rect));
     }
 
+    #[test]
+    fn sent_tracks_what_the_pages_have() {
+        let size = (20, 10);
+        let mut now = vec![0u8; 200];
+        let mut sent = Sent::default();
+        let nothing = Requests::default();
+        // The first picture is the whole window
+        let areas = sent.update(&now, size, &[r(5, 5, 2, 2)], &nothing);
+        assert_eq!(areas.rects(), [Rect::whole(size)]);
+        // Redrawn as it was: nothing goes
+        assert!(sent
+            .update(&now, size, &[r(0, 0, 20, 10)], &nothing)
+            .is_empty());
+        // A change goes once, trimmed, and clipped to the window
+        now[3 * 20 + 18] = 7;
+        let drawn = [r(10, 0, 30, 30)];
+        assert_eq!(
+            sent.update(&now, size, &drawn, &nothing).rects(),
+            [r(18, 3, 1, 1)]
+        );
+        assert!(sent.update(&now, size, &drawn, &nothing).is_empty());
+        // A change outside the areas drawn is not looked at
+        now[0] = 1;
+        assert!(sent.update(&now, size, &drawn, &nothing).is_empty());
+        // Areas asked again go as they are, unchanged or not
+        let mut repaint = Areas::default();
+        repaint.add(r(15, 8, 10, 10));
+        let asked = Requests {
+            repaint,
+            ..Requests::default()
+        };
+        assert_eq!(
+            sent.update(&now, size, &[], &asked).rects(),
+            [r(15, 8, 5, 2)]
+        );
+        // A keyframe is the whole window
+        let keyframe = Requests {
+            keyframe: true,
+            ..Requests::default()
+        };
+        assert_eq!(
+            sent.update(&now, size, &[], &keyframe).rects(),
+            [Rect::whole(size)]
+        );
+    }
+
+    #[test]
+    fn a_new_size_sends_the_whole_window() {
+        // As many pixels, rows of another width: no comparing with the
+        // old rows, even without a keyframe
+        let mut sent = Sent::default();
+        let nothing = Requests::default();
+        let _ = sent.update(&[0u8; 200], (20, 10), &[], &nothing);
+        let mut now = vec![0u8; 200];
+        now[5] = 1;
+        let areas = sent.update(&now, (10, 20), &[r(0, 0, 1, 1)], &nothing);
+        assert_eq!(areas.rects(), [Rect::whole((10, 20))]);
+        assert!(sent
+            .update(&now, (10, 20), &[r(0, 0, 10, 20)], &nothing)
+            .is_empty());
+    }
+
     /// Sizes and times of both encodings: `cargo test --release frames -- --nocapture`
     #[test]
     fn compare_encodings() {
-        let rgb = window(1280, 800);
+        let pixels = window(1280, 800);
         for encoding in [Encoding::Png, Encoding::Jpeg] {
             let start = std::time::Instant::now();
             let n = 5;
             let mut size = 0;
             for _ in 0..n {
-                size = encode(
-                    &rgb,
-                    (1280, 800),
-                    Rect {
-                        x: 0,
-                        y: 0,
-                        width: 1280,
-                        height: 800,
-                    },
-                    encoding,
-                )
-                .map_or(0, |f| f.len());
+                size = frame_of(&pixels, (1280, 800), Rect::whole((1280, 800)), encoding)
+                    .map_or(0, |f| f.message.len());
             }
             println!(
                 "{encoding:?}: {} KiB, {:.1} ms per 1280x800 frame",

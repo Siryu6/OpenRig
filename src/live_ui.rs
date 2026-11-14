@@ -16,7 +16,7 @@ use pedalboard::midi::Step;
 use pedalboard::state::{AppState, FootswitchMode, SCENE_COUNT};
 use pedalboard::ui::slint_bridge as views;
 
-use crate::{model, report, rgb, App, LiveTile, MenuItem, LIVE_VIEW, TUNER_VIEW};
+use crate::{model, report, rgb, App, LiveTile, MenuItem, View};
 
 /// How long the tap switch is held to open the tuner
 const HOLD: Duration = Duration::from_millis(800);
@@ -29,7 +29,7 @@ struct Switches {
     down: u32,
     presses: u64,
     /// View to go back to when the tuner was opened from a switch
-    tuner_return: Option<i32>,
+    tuner_return: Option<View>,
 }
 
 thread_local! {
@@ -126,7 +126,7 @@ pub fn footswitch_down(app: &App, state: &Arc<AppState>, slot: usize) {
 
     // The tuner opened from a switch: any switch closes it
     if let Some(view) = SWITCHES.with(|s| s.borrow_mut().tuner_return.take()) {
-        if app.get_current_view() == TUNER_VIEW {
+        if app.get_current_view() == View::Tuner {
             app.set_current_view(view);
             return;
         }
@@ -141,10 +141,10 @@ pub fn footswitch_down(app: &App, state: &Arc<AppState>, slot: usize) {
                 s.down & bit != 0 && s.presses == press
             });
             let Some(app) = weak.upgrade() else { return };
-            if held && app.get_current_view() != TUNER_VIEW {
+            if held && app.get_current_view() != View::Tuner {
                 let back = app.get_current_view();
                 SWITCHES.with(|s| s.borrow_mut().tuner_return = Some(back));
-                app.set_current_view(TUNER_VIEW);
+                app.set_current_view(View::Tuner);
             }
         });
         return;
@@ -181,7 +181,7 @@ pub(crate) fn tap(app: &App, state: &AppState) {
 pub(crate) fn show_tempo(app: &App, state: &AppState, bpm: f32) {
     app.set_tempo(bpm);
     // Blocks following the tempo show the new value in the editor
-    if app.get_current_view() == 1 {
+    if app.get_current_view() == View::Editor {
         crate::refresh_chain(app, state);
     }
 }
@@ -230,13 +230,13 @@ pub(crate) fn step_scene(app: &App, state: &AppState, step: Step) {
 /// Open the tuner, or close it and go back to the page shown before
 #[cfg_attr(not(feature = "midi"), allow(dead_code))]
 pub(crate) fn toggle_tuner(app: &App) {
-    if app.get_current_view() == TUNER_VIEW {
+    if app.get_current_view() == View::Tuner {
         let back = SWITCHES.with(|s| s.borrow_mut().tuner_return.take());
-        app.set_current_view(back.unwrap_or(LIVE_VIEW));
+        app.set_current_view(back.unwrap_or(View::Live));
     } else {
         let back = app.get_current_view();
         SWITCHES.with(|s| s.borrow_mut().tuner_return = Some(back));
-        app.set_current_view(TUNER_VIEW);
+        app.set_current_view(View::Tuner);
     }
 }
 

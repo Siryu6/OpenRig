@@ -239,6 +239,7 @@ src/
 ├── wifi_ui.rs           Settings → Wi-Fi (worker thread running nmcli)
 ├── update.rs            Updates: latest GitHub release, app or system, download, request to the OS updater
 ├── update_ui.rs         ⋮ → Updates (worker thread: check, download, install)
+├── download.rs          Downloads of a known size and SHA-256 (store archives, update bundles)
 ├── menu_ui.rs           The ⋮ menu: its items, from what the build and the system offer
 ├── store/               Plugin store: signed index, downloads, safe unpacking, receipts (feature store)
 ├── catalog_ui.rs        Store page (worker threads: index, pictures, install, removal)

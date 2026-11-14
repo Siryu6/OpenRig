@@ -55,7 +55,9 @@ OpenRig OS (see [OS.md](OS.md#usb-drives)), `/media/<user>/*` and
 copy files to `<data>/rigs` instead. `PEDALBOARD_MEDIA_DIR` replaces these
 places: each of its subfolders is taken as a drive. The list follows the
 drives plugged in and pulled out, without Refresh (the app looks every two
-seconds).
+seconds). The Rigs panel and Settings → Backup always show the same drive
+(the first one, by name), and a message about a drive (", and on
+<drive>") loses that part once the drive is ejected or pulled out.
 
 ## On openrig.eu
 

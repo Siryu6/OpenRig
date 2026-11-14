@@ -12,31 +12,36 @@ use slint::ComponentHandle;
 use tracing::{info, warn};
 
 use pedalboard::backup::{self, Manifest, Options, Part};
+use pedalboard::drives::{self, Drive, Note};
 use pedalboard::state::{data_dir, AppState};
 
-use crate::{model, show_status, spawn, ui, App, Backup, BackupFile, BackupPart};
+use crate::{
+    drives_ui, model, show_status, spawn, ui, App, Backup, BackupFile, BackupPart, Drives,
+};
 
 /// A backup file found, with its manifest or why it cannot be read
 struct Found {
     path: PathBuf,
-    usb: bool,
+    /// The name of the USB drive it is on, `None` on the pedal
+    drive: Option<String>,
     manifest: Result<Manifest, String>,
 }
 
 thread_local! {
     static FOUND: RefCell<Vec<Found>> = const { RefCell::new(Vec::new()) };
-    /// The drive the message is about ("Saved on <drive>…")
-    static MESSAGE_DRIVE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    /// The message shown: dropped when it is about a drive gone ("Saved
+    /// on <drive>…")
+    static MESSAGE: RefCell<Note> = RefCell::new(Note::default());
 }
 
-/// Where backups are written and looked for: the drives, then the pedal
-fn places(data: &Path) -> Vec<(PathBuf, bool)> {
-    let mut places: Vec<(PathBuf, bool)> = pedalboard::rigs::removable_drives()
+/// Where backups are looked for: the folders of `drives`, then the pedal;
+/// with the name of the drive each is on
+fn places(data: &Path, drives: &[Drive]) -> Vec<(PathBuf, Option<String>)> {
+    let mut places: Vec<(PathBuf, Option<String>)> = drives
         .iter()
-        .flat_map(|d| pedalboard::drives::folders(d))
-        .map(|d| (d, true))
+        .flat_map(|d| d.folders().into_iter().map(|f| (f, Some(d.name()))))
         .collect();
-    places.push((data.join(backup::LOCAL_DIR), false));
+    places.push((data.join(backup::LOCAL_DIR), None));
     places
 }
 
@@ -66,23 +71,15 @@ fn plural(n: usize, word: &str) -> String {
     }
 }
 
-fn drive_name(path: &Path) -> String {
-    path.parent()
-        .and_then(|p| p.file_name())
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default()
-}
-
 fn file_row(found: &Found) -> BackupFile {
     let file_name = found
         .path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let place = if found.usb {
-        format!("USB {}", drive_name(&found.path))
-    } else {
-        "on the pedal".to_string()
+    let place = match &found.drive {
+        Some(name) => format!("USB {name}"),
+        None => "on the pedal".to_string(),
     };
     match &found.manifest {
         Ok(m) => BackupFile {
@@ -94,14 +91,14 @@ fn file_row(found: &Found) -> BackupFile {
                 place
             )
             .into(),
-            usb: found.usb,
+            usb: found.drive.is_some(),
             full: m.has(Part::Models) || m.has(Part::Plugins),
             readable: true,
         },
         Err(e) => BackupFile {
             name: file_name.into(),
             detail: e.clone().into(),
-            usb: found.usb,
+            usb: found.drive.is_some(),
             full: false,
             readable: false,
         },
@@ -111,10 +108,7 @@ fn file_row(found: &Found) -> BackupFile {
 /// What the panel shows, read off the UI thread
 struct Scan {
     found: Vec<Found>,
-    destination: String,
-    /// The drive backups go to (and Eject ejects), "" for the pedal
-    drive: String,
-    usb: bool,
+    drives: Vec<Drive>,
     large: String,
     local: String,
     undo: Option<Manifest>,
@@ -122,8 +116,9 @@ struct Scan {
 }
 
 fn scan(data: &Path) -> Scan {
+    let drives = drives::list();
     let mut found = Vec::new();
-    for (dir, usb) in places(data) {
+    for (dir, drive) in places(data, &drives) {
         let mut paths = backup::list_dir(&dir);
         // Newest first
         paths.sort();
@@ -132,26 +127,11 @@ fn scan(data: &Path) -> Scan {
             let manifest = read(&path);
             found.push(Found {
                 path,
-                usb,
+                drive: drive.clone(),
                 manifest,
             });
         }
     }
-    let drives = pedalboard::rigs::removable_drives();
-    let drive = drives
-        .first()
-        .map(|d| d.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let (usb, destination) = match drives.first() {
-        Some(d) => (true, format!("To {}", pedalboard::drives::name(d))),
-        None => (
-            false,
-            format!(
-                "No USB drive: kept on the pedal (the last {}). Download it from the remote control.",
-                backup::LOCAL_KEPT
-            ),
-        ),
-    };
     let (models, plugins) = backup::sizes(data);
     let large = format!(
         "Models {}, plugins {}",
@@ -177,9 +157,7 @@ fn scan(data: &Path) -> Scan {
     let (p, m) = backup::missing(data);
     Scan {
         found,
-        destination,
-        drive,
-        usb,
+        drives,
         large,
         local,
         undo: backup::undo_manifest(data),
@@ -190,9 +168,6 @@ fn scan(data: &Path) -> Scan {
 fn show(app: &App, scan: Scan) {
     let g = app.global::<Backup>();
     g.set_files(model(scan.found.iter().map(file_row).collect()));
-    g.set_destination(scan.destination.into());
-    g.set_usb(scan.usb);
-    g.set_drive(scan.drive.into());
     g.set_large_size(scan.large.into());
     g.set_local_note(scan.local.into());
     g.set_can_undo(scan.undo.is_some());
@@ -216,6 +191,7 @@ fn show(app: &App, scan: Scan) {
     }
     g.set_missing_detail(format!("Restored presets need {}.", parts.join(" and ")).into());
     FOUND.with(|f| *f.borrow_mut() = scan.found);
+    drives_ui::update(app, scan.drives);
 }
 
 fn refresh(app: &App) {
@@ -228,15 +204,14 @@ fn refresh(app: &App) {
 
 /// A USB drive was plugged in, ejected or pulled out: the open panel
 /// looks again (a backup being written says itself how it went)
-pub(crate) fn drives_changed(app: &App, now: &[PathBuf]) {
+pub(crate) fn drives_changed(app: &App, now: &[Drive]) {
     // "Saved on <drive>" no longer holds once the drive is gone
-    let stale = MESSAGE_DRIVE.with(|d| {
-        d.borrow()
-            .as_deref()
-            .is_some_and(|d| pedalboard::drives::gone(d, now))
+    let text = MESSAGE.with(|m| {
+        let mut m = m.borrow_mut();
+        m.drop_gone(now).then(|| m.text())
     });
-    if stale {
-        message(app, "", false);
+    if let Some(text) = text {
+        app.global::<Backup>().set_message(text.into());
     }
     let g = app.global::<Backup>();
     if g.get_open() && !g.get_busy() {
@@ -244,11 +219,12 @@ pub(crate) fn drives_changed(app: &App, now: &[PathBuf]) {
     }
 }
 
-fn message(app: &App, text: &str, error: bool) {
-    MESSAGE_DRIVE.with(|d| *d.borrow_mut() = None);
+fn message(app: &App, note: impl Into<Note>, error: bool) {
+    let note = note.into();
     let g = app.global::<Backup>();
-    g.set_message(text.into());
+    g.set_message(note.text().into());
     g.set_message_error(error);
+    MESSAGE.with(|m| *m.borrow_mut() = note);
 }
 
 /// Files of `part` in the data directory now
@@ -377,7 +353,7 @@ fn confirm(app: &App, state: &Arc<AppState>) {
                 Err(e) => {
                     warn!(error = format_args!("{e:#}"), "Backup not restored");
                     g.set_progress("".into());
-                    message(app, &format!("Not restored: {e:#}"), true);
+                    message(app, format!("Not restored: {e:#}"), true);
                 }
             }
         });
@@ -408,7 +384,7 @@ fn back_up(app: &App, state: &Arc<AppState>) {
     } else {
         Options::default()
     };
-    let shown = g.get_drive();
+    let shown = app.global::<Drives>().get_drive();
     g.set_busy(true);
     g.set_progress("Backing up…".into());
     message(app, "", false);
@@ -416,10 +392,10 @@ fn back_up(app: &App, state: &Arc<AppState>) {
     let started = spawn("backup-write", move || {
         let data = data_dir();
         // The drive the panel shows; the pedal when there was none (or it is gone)
-        let drive = pedalboard::drives::chosen(&pedalboard::rigs::removable_drives(), &shown);
+        let drive = drives::find(&shown);
         let dir = drive
-            .as_deref()
-            .map(pedalboard::drives::write_folder)
+            .as_ref()
+            .map(Drive::write_folder)
             .unwrap_or_else(|| data.join(backup::LOCAL_DIR));
         let result = backup::write_to_dir(&data, options, &dir);
         if result.is_ok() && drive.is_none() {
@@ -438,20 +414,19 @@ fn back_up(app: &App, state: &Arc<AppState>) {
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_default();
                     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                    let place = match &drive {
-                        Some(d) => format!("on {}", pedalboard::drives::name(d)),
-                        None => "on the pedal".to_string(),
-                    };
-                    message(
-                        app,
-                        &format!("Saved {place}: {name} ({})", backup::human_size(size)),
-                        false,
-                    );
-                    MESSAGE_DRIVE.with(|d| *d.borrow_mut() = drive);
+                    let size = backup::human_size(size);
+                    let mut note = Note::default();
+                    match &drive {
+                        Some(d) => {
+                            note.push_on(d, format!("Saved on {}: {name} ({size})", d.name()))
+                        }
+                        None => note.push(format!("Saved on the pedal: {name} ({size})")),
+                    }
+                    message(app, note, false);
                 }
                 Err(e) => {
                     warn!(error = format_args!("{e:#}"), "Backup not written");
-                    message(app, &format!("Not saved: {e:#}"), true);
+                    message(app, format!("Not saved: {e:#}"), true);
                 }
             }
             show(app, scan);
@@ -550,7 +525,7 @@ fn get_missing(app: &App, state: &Arc<AppState>) {
             if let Some(first) = failed.first() {
                 text.push_str(&format!(". {} failed: {first}", failed.len()));
             }
-            message(app, &text, !failed.is_empty());
+            message(app, text, !failed.is_empty());
             show(app, scan);
             if installed + downloaded > 0 {
                 show_status(app, "Downloaded: reload the preset to use them".into());
@@ -608,6 +583,7 @@ pub fn restored(app: &App, manifest: &Manifest) {
 
 pub fn setup(app: &App, state: &Arc<AppState>) {
     let g = app.global::<Backup>();
+    g.set_local_kept(backup::LOCAL_KEPT as i32);
     let weak = app.as_weak();
     g.on_opened(move || {
         let Some(app) = weak.upgrade() else { return };
@@ -652,4 +628,29 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
             get_missing(&app, &st);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn a_backup_in_the_openrig_folder_is_on_its_drive() {
+        let root = std::env::temp_dir().join(format!("pb-backup-places-{}", std::process::id()));
+        let stick = root.join("STICK");
+        std::fs::create_dir_all(stick.join(drives::FOLDER)).unwrap();
+        let data = root.join("data");
+        let places = places(&data, &[Drive::new(&stick)]);
+        // Was "USB OpenRig" for a backup in the folder of an ext4 drive
+        assert_eq!(
+            places,
+            vec![
+                (stick.clone(), Some("STICK".to_string())),
+                (stick.join(drives::FOLDER), Some("STICK".to_string())),
+                (data.join(backup::LOCAL_DIR), None),
+            ]
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }
