@@ -1,0 +1,11 @@
+// The USB drive the pages write to and Eject ejects, set by Rust
+// (src/drives_ui.rs) through `app.global::<Drives>()`: the Rigs panel and
+// Settings → Backup show the same one.
+export global Drives {
+    in-out property <string> drive: "";         // its path, "" when none is mounted
+    in-out property <string> name: "";          // its label
+    in-out property <bool> can-eject: false;    // the system ejects drives (OpenRig OS)
+    in-out property <bool> ejecting: false;
+
+    callback eject();                           // before pulling it out
+}
