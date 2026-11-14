@@ -13,8 +13,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
+use argon2::{PasswordHash, PasswordHasher, PasswordVerifier};
 use serde::{Deserialize, Serialize};
 
 use crate::sync::MutexExt;
@@ -47,11 +47,9 @@ pub fn check_password(password: &str) -> Result<()> {
 /// Salted Argon2id hash of `password`, as a PHC string
 pub fn hash_password(password: &str) -> Result<String> {
     check_password(password)?;
-    let mut salt = [0u8; 16];
-    getrandom::fill(&mut salt).map_err(|e| anyhow::anyhow!("No random numbers: {e}"))?;
-    let salt = SaltString::encode_b64(&salt).map_err(|e| anyhow::anyhow!("Salt: {e}"))?;
+    // A random salt from the system's generator
     Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password(password.as_bytes())
         .map(|h| h.to_string())
         .map_err(|e| anyhow::anyhow!("Password not hashed: {e}"))
 }
@@ -317,6 +315,14 @@ mod tests {
         assert!(!verify_password("correct horse", "not a hash"));
         // Salted: the same password hashes differently
         assert_ne!(hash, hash_password("correct horse").unwrap_or_default());
+    }
+
+    #[test]
+    fn passwords_set_before_argon2_0_6_still_match() {
+        // Hashed by argon2 0.5 (the remote password of earlier versions)
+        let old = "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$ibBMSBdQczc9WQRFzQSb3MHZeXENP+/qRLSkj8eYUu4";
+        assert!(verify_password("old password", old));
+        assert!(!verify_password("old passwore", old));
     }
 
     #[test]
