@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
 import { Spectrum, ScopeView, ScopeLive } from "../types.slint";
-import { Caption, DbLabels, FreqGrid, Handle, InOut, Plot, PlotPath, Tag } from "plot.slint";
+import { Caption, DbLabels, FreqGrid, Handle, InOut, Plot, PlotEvents, PlotPath, Tag } from "plot.slint";
 
 // What a delay, reverb, drive, modulation or cabinet block does to the sound:
 // a delay's echoes across, which drag (time, feedback), and measured on what
@@ -72,7 +72,10 @@ export component ScopeGraph inherits Rectangle {
         y: 12px;
         width: root.width - self.x - 12px;
         height: root.side;
-        wide: true;
+        // The wide plot of the view
+        sized(w, h) => {
+            PlotEvents.resized(w, h);
+        }
 
         if root.scope.right == "spectrum": Rectangle {
             FreqGrid {
@@ -124,6 +127,12 @@ export component ScopeGraph inherits Rectangle {
         plot-y: wide.y;
         plot-width: wide.width;
         plot-height: wide.height;
+        drag(x, y) => {
+            PlotEvents.drag(self.handle.name, x, y);
+        }
+        released => {
+            PlotEvents.released();
+        }
     }
     Handle {
         handle: root.scope.echo-time;
@@ -132,5 +141,11 @@ export component ScopeGraph inherits Rectangle {
         plot-y: wide.y;
         plot-width: wide.width;
         plot-height: wide.height;
+        drag(x, y) => {
+            PlotEvents.drag(self.handle.name, x, y);
+        }
+        released => {
+            PlotEvents.released();
+        }
     }
 }

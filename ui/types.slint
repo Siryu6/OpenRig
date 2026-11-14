@@ -327,7 +327,7 @@ export struct CatalogFamily {
 }
 
 // A handle on a view's plot, which the finger drags: the UI gives where to
-// (PlotEvents), Rust sets the controls it stands for
+// (PlotEvents, or OutputMaster for an output EQ), Rust sets the controls it stands for
 export struct PlotHandle {
     shown: bool,
     name: string,           // what it sets: "band 2", "threshold", "time"…

@@ -1,6 +1,7 @@
 import { Theme } from "../theme.slint";
 import { ParameterInfo, ModelChoice, FileSlot, ColorChoice, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive } from "../types.slint";
 import { EqGraph } from "../components/eq_graph.slint";
+import { PlotEvents } from "../components/plot.slint";
 import { DynamicsGraph } from "../components/dynamics_graph.slint";
 import { ScopeGraph } from "../components/scope_graph.slint";
 import { Button, Badge, Card, EmptyState, FocusHighlight, Icon, Knob, Stepper, Toggle } from "../components/controls.slint";
@@ -1045,6 +1046,18 @@ export component PluginEditor {
             spectrum: root.spectrum;
             accent: root.color-value;
             bypassed: root.bypassed;
+            sized(w, h) => {
+                PlotEvents.resized(w, h);
+            }
+            drag(i, x, y) => {
+                PlotEvents.drag(root.eq-points[i].name, x, y);
+            }
+            released => {
+                PlotEvents.released();
+            }
+            double-tapped(i) => {
+                PlotEvents.double-tapped(root.eq-points[i].name);
+            }
         }
 
         // ---------------- Parameter grid ----------------

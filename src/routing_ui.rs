@@ -22,7 +22,8 @@ use pedalboard::ui::slint_bridge::{meter_position, METER_FLOOR_DB};
 
 use pedalboard::plugins::scanner::{self, ret, send};
 
-use crate::plugin_view::{self, area, freq, line, VIEW as PLOT};
+use crate::eq_ui::EqPlot;
+use crate::plugin_view::{self, freq};
 use crate::{
     block_name, model, App, EqView, OutputMaster, PlotHandle, RoutingBlock, RoutingMaster,
     RoutingOutput,
@@ -36,10 +37,8 @@ const METER_PERIOD: Duration = Duration::from_millis(33);
 const FALL_DB_PER_S: f32 = 24.0;
 /// Wait after the last change before saving
 const SAVE_DELAY: Duration = Duration::from_secs(1);
-/// Gain axis of the output EQ curve: ± this many dB
-const EQ_RANGE: f32 = 18.0;
-/// Points of the curve
-const EQ_STEPS: usize = 160;
+/// Gain axis of the output EQ curve: ± 18 dB (its gains go to ± 12)
+const EQ_PLOT: EqPlot = EqPlot { range: 18.0 };
 /// Gain reduction meter fall, dB per second
 const REDUCTION_FALL_DB_PER_S: f32 = 20.0;
 
@@ -198,15 +197,6 @@ fn db_text(db: f32) -> String {
     format!("{}{db:.1} dB", if db > 0.0 { "+" } else { "" })
 }
 
-/// The handle of output EQ band `band`, and back (PlotEvents)
-fn band_handle(band: usize) -> String {
-    format!("out band {band}")
-}
-
-pub(crate) fn eq_band(handle: &str) -> Option<usize> {
-    handle.strip_prefix("out band ")?.parse().ok()
-}
-
 /// Show the EQ / limiter panel of the strip edited, or hide it
 fn show_master(app: &App, editor: &Editor) {
     let global = app.global::<OutputMaster>();
@@ -266,61 +256,23 @@ fn show_master(app: &App, editor: &Editor) {
     }
 }
 
-/// Height of a gain on the curve, 0 to 1 from the bottom
-fn up(db: f32) -> f32 {
-    (0.5 + db / (2.0 * EQ_RANGE)).clamp(0.0, 1.0)
-}
-
 /// The curve of an output EQ, for a plot `aspect` times wider than high,
-/// and its band points
+/// and its band points. Drawn even when off (dimmed), to show what it would
+/// do.
 fn eq_curve(eq: &OutputEq, aspect: f32) -> (EqView, Vec<PlotHandle>) {
     let bands: Vec<_> = eq
         .bands()
         .iter()
         .zip(BAND_KINDS)
-        .map(|(b, (kind, _))| b.curve(kind))
+        .map(|(b, (kind, _))| (b.curve(kind), kind.has_gain()))
         .collect();
-    let width = PLOT * aspect;
-    let xy: Vec<(f32, f32)> = freq::steps(EQ_STEPS)
-        .into_iter()
-        .map(|f| {
-            let db: f32 = bands.iter().map(|b| b.gain_at(f)).sum();
-            (freq::x(f) * width, (1.0 - up(db)) * PLOT)
-        })
-        .collect();
-    let flat = xy.iter().all(|(_, y)| (y - PLOT / 2.0).abs() < 0.05);
-    let view = EqView {
-        shown: true,
-        enabled: eq.on,
-        curve: line(xy.iter().copied()).into(),
-        // Nothing to fill under a flat curve (an empty area is drawn as a seam)
-        fill: if flat {
-            String::new()
-        } else {
-            area(xy, PLOT / 2.0)
-        }
-        .into(),
-        range: EQ_RANGE,
+    let response = |freqs: &[f32]| {
+        freqs
+            .iter()
+            .map(|&f| bands.iter().map(|(b, _)| b.gain_at(f)).sum())
+            .collect()
     };
-    let points = bands
-        .iter()
-        .zip(BAND_KINDS)
-        .enumerate()
-        .map(|(i, (b, (kind, _)))| PlotHandle {
-            shown: true,
-            name: band_handle(i).into(),
-            label: ["LC", "LS", "1", "2", "HS", "HC"][i].into(),
-            on: b.on,
-            x: freq::x(b.freq),
-            // A cut has no gain: its point sits on the curve
-            y: if kind.has_gain() {
-                up(b.gain)
-            } else {
-                up(b.gain_at(b.freq).min(0.0))
-            },
-        })
-        .collect();
-    (view, points)
+    EQ_PLOT.draw(aspect, eq.on, &bands, response)
 }
 
 /// Answer the EQ / limiter panel
@@ -385,7 +337,7 @@ fn setup_master(app: &App, context: &Context) {
                 b.on = true;
                 b.freq = frequency_at(x);
                 if BAND_KINDS[band].0.has_gain() {
-                    b.gain_db = snap((y - 0.5) * 2.0 * EQ_RANGE, 0.1);
+                    b.gain_db = snap(EQ_PLOT.gain(y), 0.1);
                 }
             }
         })
@@ -742,5 +694,28 @@ mod tests {
             summary(&routing, 4, 4),
             "4 inputs and 4 outputs. Effects on input 1, the main mix plays on no output."
         );
+    }
+
+    #[test]
+    fn the_output_eq_is_drawn_with_a_point_per_band() {
+        let mut eq = OutputEq::default();
+        let (view, points) = eq_curve(&eq, 4.0);
+        assert!(!view.enabled);
+        assert_eq!(view.range, 18.0);
+        // Flat: one segment, nothing filled
+        assert_eq!(view.curve, "M 0.0 500.0 L 4000.0 500.0 ");
+        assert_eq!(view.fill, "");
+        let labels: Vec<_> = points.iter().map(|p| p.label.to_string()).collect();
+        assert_eq!(labels, ["LC", "LS", "1", "2", "HS", "HC"]);
+
+        // Drawn even when off: what it would do
+        if let Some(b) = eq.band_mut(2) {
+            b.on = true;
+            b.gain_db = 9.0;
+        }
+        let (view, points) = eq_curve(&eq, 4.0);
+        assert_ne!(view.fill, "");
+        assert_eq!(points[2].y, EQ_PLOT.up(9.0));
+        assert!((EQ_PLOT.gain(points[2].y) - 9.0).abs() < 1e-4);
     }
 }
