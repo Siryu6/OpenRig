@@ -5,7 +5,8 @@
 
 use anyhow::{anyhow, Result};
 
-use super::app_state::{collect_ids, EffectChainState};
+use super::app_state::EffectChainState;
+use crate::audio::split_chain::walk;
 use crate::midi::{is_global, MidiAssign, MidiTarget, TOE};
 
 impl EffectChainState {
@@ -90,8 +91,7 @@ impl EffectChainState {
 
     /// Assignments to save: those of blocks still in the chain
     pub fn saved_midi(&self) -> Vec<MidiAssign> {
-        let mut ids = Vec::new();
-        collect_ids(&self.nodes, &mut ids);
+        let ids: Vec<usize> = walk(&self.nodes).map(|n| n.instance_id()).collect();
         self.midi
             .iter()
             .filter(|a| ids.contains(&a.instance_id))

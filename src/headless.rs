@@ -5,10 +5,10 @@
 //! A Slint platform of its own: one window (MinimalSoftwareWindow, which
 //! keeps its picture and reports the areas that changed), and an event
 //! loop running Slint's timers and the closures of other threads. Nothing
-//! is drawn while no client shows the full editor; then at most
-//! `FRAME_MS` apart, and only what changed. Input from the client cuts
-//! the wait short: the frame showing its effect leaves as soon as the UI
-//! has handled it (no closer than `INPUT_FRAME_MS` to the last one).
+//! is drawn while no client shows the full editor; then at most `FRAME`
+//! apart, and only what changed. Input from the client cuts the wait
+//! short: the picture showing its effect leaves as soon as the UI has
+//! handled it (no closer than `INPUT_FRAME` to the last one, see Pacer).
 //! Pictures are encoded on a thread of their own (see Encoder).
 
 use std::cell::{Cell, RefCell};
@@ -22,16 +22,16 @@ use slint::platform::{EventLoopProxy, Platform, PointerEventButton, WindowAdapte
 use slint::{LogicalPosition, PhysicalSize, PlatformError, Rgb8Pixel};
 use tracing::{debug, info, warn};
 
-use pedalboard::remote::frames::{self, Encoding, Rect};
+use pedalboard::remote::frames::{self, Areas, Encoding, Rect, Sent};
 use pedalboard::remote::protocol::{Command, PointerKind};
 use pedalboard::remote::Remote;
 
-/// Frames at most every FRAME_MS (about 30 per second): animations and
+/// Pictures at most this often (about 30 per second): animations and
 /// changes nobody asked for
-const FRAME_MS: u64 = 33;
-/// After input, the next frame waits only this long since the last one
+const FRAME: Duration = Duration::from_millis(33);
+/// After input, the next picture waits only this long since the last one
 /// (moves come at most once per browser frame, so about 60 per second)
-const INPUT_FRAME_MS: u64 = 16;
+const INPUT_FRAME: Duration = Duration::from_millis(16);
 /// Window size until a client asks for one
 pub const DEFAULT_SIZE: (u32, u32) = (1024, 600);
 
@@ -119,15 +119,17 @@ impl Platform for HeadlessPlatform {
     }
 }
 
-/// The picture of the window, streamed when clients want it
+/// The picture of the window, streamed when clients want it: drawn on
+/// the UI thread, the areas the pages do not have copied out, encoded on
+/// a thread of its own (see remote::frames for the whole pipeline)
 struct Screen {
     window: Rc<MinimalSoftwareWindow>,
     pixels: Vec<Rgb8Pixel>,
-    /// The window as last sent: Slint redraws whole items (a label whose
-    /// model row was set again), only the pixels that changed go
-    sent: Vec<Rgb8Pixel>,
     size: (u32, u32),
-    last: Instant,
+    /// Areas the renderer redrew, reused
+    drawn: Vec<Rect>,
+    sent: Sent<Rgb8Pixel>,
+    pacer: Pacer,
     encoding: Encoding,
     encoder: Encoder,
     stats: Stats,
@@ -185,20 +187,41 @@ impl Stats {
     }
 }
 
-/// A frame for the encoder: the changed rectangles of the window and
-/// their pixels, packed one after the other (rows of each in order)
+/// When the next picture may go: at most every FRAME, sooner after input
+struct Pacer {
+    /// When the last picture went
+    last: Instant,
+}
+
+impl Pacer {
+    fn new(now: Instant) -> Self {
+        Self { last: now - FRAME }
+    }
+
+    /// How long until a picture may go, None when it may now
+    fn wait(&self, now: Instant, input: bool) -> Option<Duration> {
+        let gap = if input { INPUT_FRAME } else { FRAME };
+        gap.checked_sub(now.saturating_duration_since(self.last))
+            .filter(|wait| !wait.is_zero())
+    }
+
+    fn sent(&mut self, now: Instant) {
+        self.last = now;
+    }
+}
+
+/// A picture for the encoder: the pixels of its areas (see Areas::pack)
 struct Job {
     pixels: Vec<Rgb8Pixel>,
-    rects: Vec<Rect>,
+    areas: Areas,
     window: (usize, usize),
     encoding: Encoding,
     remote: Arc<Remote>,
 }
 
-/// A job done: its buffers, to reuse, and what it cost
+/// A job done: its buffer, to reuse, and what it cost
 struct Done {
     pixels: Vec<Rgb8Pixel>,
-    rects: Vec<Rect>,
     frames: usize,
     bytes: usize,
     spent: Duration,
@@ -208,38 +231,27 @@ struct Done {
 /// reach the page together. `rgb` is the encoder's own buffer.
 fn encode(job: Job, rgb: &mut Vec<u8>) -> Done {
     let started = Instant::now();
-    let mut picture = Vec::with_capacity(job.rects.len());
-    let mut offset = 0;
-    for &rect in &job.rects {
-        let n = rect.width * rect.height;
-        let Some(pixels) = job.pixels.get(offset..offset + n) else {
-            break;
-        };
-        offset += n;
-        rgb.clear();
-        rgb.extend(pixels.iter().flat_map(|p| [p.r, p.g, p.b]));
-        picture.extend(frames::encode_packed(rgb, job.window, rect, job.encoding));
-    }
-    let (frames, bytes) = (picture.len(), picture.iter().map(Vec::len).sum());
+    let picture = frames::encode_picture(&job.pixels, &job.areas, job.window, job.encoding, rgb);
+    let frames = picture.len();
+    let bytes = picture.iter().map(|frame| frame.message.len()).sum();
     job.remote.publish_picture(picture);
     Done {
         pixels: job.pixels,
-        rects: job.rects,
         frames,
         bytes,
         spent: started.elapsed(),
     }
 }
 
-/// Encodes frames on a thread of its own, so a large picture (a page
-/// change in a big window takes tens of ms) never holds up the UI. One
-/// job at a time: while it runs, the UI keeps drawing into its window and
-/// the next frame takes all that changed meanwhile. Its buffers come back
-/// with each job done, so the memory stays that of one frame.
+/// Encodes pictures on a thread of its own, so a large one (a page change
+/// in a big window takes tens of ms) never holds up the UI. One job at a
+/// time: while it runs, the UI keeps drawing into its window and the next
+/// picture takes all that changed meanwhile. Its buffer comes back with
+/// each job done, so the memory stays that of one picture.
 struct Encoder {
     worker: Option<(mpsc::Sender<Job>, mpsc::Receiver<Done>)>,
-    /// Buffers of the next job: None while a job runs
-    idle: Option<(Vec<Rgb8Pixel>, Vec<Rect>)>,
+    /// Buffer of the next job: None while a job runs
+    idle: Option<Vec<Rgb8Pixel>>,
     /// Encoder buffer when there is no thread (encoding on the UI thread)
     rgb: Vec<u8>,
 }
@@ -269,29 +281,31 @@ impl Encoder {
         };
         Self {
             worker,
-            idle: Some((Vec::new(), Vec::new())),
+            idle: Some(Vec::new()),
             rgb: Vec::new(),
         }
     }
 
-    /// The buffers for a new job, None while one runs
-    fn ready(&mut self, stats: &mut Stats) -> Option<(Vec<Rgb8Pixel>, Vec<Rect>)> {
+    /// The buffer for a new job, None while one runs
+    fn ready(&mut self, stats: &mut Stats) -> Option<Vec<Rgb8Pixel>> {
         if self.idle.is_none() {
             let (_, done) = self.worker.as_ref()?;
             match done.try_recv() {
-                Ok(done) => {
-                    stats.encoded(&done);
-                    self.idle = Some((done.pixels, done.rects));
-                }
+                Ok(done) => self.finished(done, stats),
                 Err(mpsc::TryRecvError::Empty) => return None,
                 Err(mpsc::TryRecvError::Disconnected) => {
                     warn!("Encoder thread gone, encoding on the UI thread");
                     self.worker = None;
-                    self.idle = Some((Vec::new(), Vec::new()));
+                    self.idle = Some(Vec::new());
                 }
             }
         }
         self.idle.take()
+    }
+
+    /// The buffer back, unused
+    fn unused(&mut self, pixels: Vec<Rgb8Pixel>) {
+        self.idle = Some(pixels);
     }
 
     fn start(&mut self, job: Job, stats: &mut Stats) {
@@ -303,8 +317,12 @@ impl Encoder {
             None => job,
         };
         let done = encode(job, &mut self.rgb);
+        self.finished(done, stats);
+    }
+
+    fn finished(&mut self, done: Done, stats: &mut Stats) {
         stats.encoded(&done);
-        self.idle = Some((done.pixels, done.rects));
+        self.idle = Some(done.pixels);
     }
 }
 
@@ -314,9 +332,10 @@ impl Screen {
         Self {
             window,
             pixels: Vec::new(),
-            sent: Vec::new(),
             size: (size.width, size.height),
-            last: Instant::now() - Duration::from_secs(1),
+            drawn: Vec::new(),
+            sent: Sent::default(),
+            pacer: Pacer::new(Instant::now()),
             encoding: Encoding::from_env(),
             encoder: Encoder::new(),
             stats: Stats::new(),
@@ -324,132 +343,70 @@ impl Screen {
     }
 
     /// Draw and send what changed, when a client streams and the last
-    /// frame is old enough. Returns how long to wait for the next one.
+    /// picture is old enough. Returns how long to wait for the next one.
     fn frame(&mut self) -> Option<Duration> {
         let remote = STREAM.with(|s| s.borrow().clone())?;
         if !remote.stream_wanted() {
             return None;
         }
-        let since = self.last.elapsed();
-        let period = Duration::from_millis(FRAME_MS);
-        let gap = frame_gap(INPUT.with(Cell::get));
-        if since < gap {
-            return Some(gap - since);
+        if let Some(wait) = self.pacer.wait(Instant::now(), INPUT.with(Cell::get)) {
+            return Some(wait);
         }
-        // The encoder wakes the loop when it is done with the last frame
-        let Some((mut packed, mut rects)) = self.encoder.ready(&mut self.stats) else {
-            return Some(period);
+        // The encoder wakes the loop when it is done with the last picture
+        let Some(mut packed) = self.encoder.ready(&mut self.stats) else {
+            return Some(FRAME);
         };
-        if let Some((w, h)) = remote.take_stream_size() {
-            if (w, h) != self.size {
-                info!(width = w, height = h, "Remote screen resized");
-                self.window.set_size(PhysicalSize::new(w, h));
-                self.size = (w, h);
-            }
+        let requests = remote.take_requests();
+        if let Some((w, h)) = requests.size.filter(|&size| size != self.size) {
+            info!(width = w, height = h, "Remote screen resized");
+            self.window.set_size(PhysicalSize::new(w, h));
+            self.window.request_redraw();
+            self.size = (w, h);
         }
         INPUT.with(|i| i.set(false));
-        let keyframe = remote.take_keyframe();
-        // What a client missed, from the window as it is now
-        let repaint = remote.take_repaint();
-        if keyframe {
-            self.window.request_redraw();
-        }
         let (w, h) = (self.size.0 as usize, self.size.1 as usize);
         if self.pixels.len() != w * h {
-            self.pixels = vec![Rgb8Pixel::default(); w * h];
+            self.pixels.resize(w * h, Rgb8Pixel::default());
             self.window.request_redraw();
         }
         let started = Instant::now();
-        rects.clear();
-        let pixels = &mut self.pixels;
-        let drawn = self.window.draw_if_needed(|renderer| {
+        let (pixels, drawn) = (&mut self.pixels, &mut self.drawn);
+        drawn.clear();
+        self.window.draw_if_needed(|renderer| {
             let region = renderer.render(pixels, w);
-            rects.extend(region.iter().map(|(origin, size)| Rect {
+            drawn.extend(region.iter().map(|(origin, size)| Rect {
                 x: origin.x.max(0) as usize,
                 y: origin.y.max(0) as usize,
                 width: size.width as usize,
                 height: size.height as usize,
             }));
         });
-        if keyframe {
-            rects.clear();
-            rects.push(Rect {
-                x: 0,
-                y: 0,
-                width: w,
-                height: h,
-            });
-        }
-        let window = (w, h);
-        let clip = |rect: &mut Rect| match frames::clip(*rect, window) {
-            Some(clipped) => {
-                *rect = clipped;
-                true
-            }
-            None => false,
-        };
-        rects.retain_mut(clip);
-        if keyframe || self.sent.len() != self.pixels.len() {
-            self.sent.clone_from(&self.pixels);
-        } else {
-            let (now, sent) = (&self.pixels, &mut self.sent);
-            rects.retain_mut(|rect| match frames::changed(*rect, now, sent, w) {
-                Some(changed) => {
-                    *rect = changed;
-                    true
-                }
-                None => false,
-            });
-            for rect in &rects {
-                for row in rect.y..rect.y + rect.height {
-                    let start = row * w + rect.x;
-                    let span = start..start + rect.width;
-                    sent[span.clone()].copy_from_slice(&now[span]);
-                }
-            }
-            rects.extend_from_slice(repaint.rects());
-            rects.retain_mut(clip);
-        }
-        // Close areas go as one picture
-        frames::merge_close(&mut rects);
-        if !drawn && !keyframe && repaint.is_empty() {
-            self.encoder.idle = Some((packed, rects));
-            // Nothing changed: look again soon (an animation may be running)
+        let areas = self
+            .sent
+            .update(&self.pixels, (w, h), &self.drawn, &requests);
+        if areas.is_empty() {
+            self.encoder.unused(packed);
+            // Nothing to send: look again soon (an animation may be running)
             return Some(if self.window.has_active_animations() {
-                period
+                FRAME
             } else {
-                Duration::from_millis(FRAME_MS * 2)
+                FRAME * 2
             });
         }
-        self.last = Instant::now();
-        // Only the areas sent leave the window: copies of their rows
-        packed.clear();
-        for rect in &rects {
-            for row in rect.y..rect.y + rect.height {
-                let start = row * w + rect.x;
-                packed.extend_from_slice(&self.pixels[start..start + rect.width]);
-            }
-        }
-        if rects.is_empty() {
-            self.encoder.idle = Some((packed, rects));
-        } else {
-            let job = Job {
-                pixels: packed,
-                rects,
-                window: (w, h),
-                encoding: self.encoding,
-                remote,
-            };
-            self.encoder.start(job, &mut self.stats);
-        }
+        // Only the areas sent leave the window
+        areas.pack(&self.pixels, w, &mut packed);
+        let job = Job {
+            pixels: packed,
+            areas,
+            window: (w, h),
+            encoding: self.encoding,
+            remote,
+        };
+        self.encoder.start(job, &mut self.stats);
+        self.pacer.sent(Instant::now());
         self.stats.drawn(started.elapsed());
-        Some(period)
+        Some(FRAME)
     }
-}
-
-/// Shortest time between two frames: shorter when input waits to be seen
-fn frame_gap(input: bool) -> Duration {
-    Duration::from_millis(if input { INPUT_FRAME_MS } else { FRAME_MS })
 }
 
 /// Make the app headless: call before the UI is created
@@ -536,10 +493,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn input_shortens_the_wait_for_the_next_frame() {
-        assert_eq!(frame_gap(false), Duration::from_millis(FRAME_MS));
-        assert!(frame_gap(true) < frame_gap(false));
-        // Still a cap: never a frame per event
-        assert!(frame_gap(true) >= Duration::from_millis(8));
+    fn input_shortens_the_wait_for_the_next_picture() {
+        let start = Instant::now();
+        let mut pacer = Pacer::new(start);
+        assert_eq!(pacer.wait(start, false), None, "the first one goes at once");
+        pacer.sent(start);
+        let ms = Duration::from_millis;
+        assert_eq!(pacer.wait(start + ms(10), false), Some(FRAME - ms(10)));
+        assert_eq!(pacer.wait(start + ms(10), true), Some(INPUT_FRAME - ms(10)));
+        assert_eq!(pacer.wait(start + INPUT_FRAME, true), None);
+        assert_eq!(pacer.wait(start + FRAME, false), None);
+        // Still a cap: never a picture per event
+        assert!(INPUT_FRAME >= ms(8) && INPUT_FRAME < FRAME);
     }
 }

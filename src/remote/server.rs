@@ -23,7 +23,7 @@ use axum::{Json, Router};
 use tokio::sync::{broadcast, Semaphore};
 
 use super::flow::FlowControl;
-use super::frames;
+use super::frames::{self, Frame};
 use super::protocol::{ClientMessage, Command};
 use super::{net, web, Remote};
 
@@ -511,22 +511,22 @@ impl Client {
             }
         }
         if on {
-            remote.keyframe.store(true, Ordering::Relaxed);
+            remote.request_keyframe();
         }
     }
 
     /// Whether to send this picture now: always without acknowledgements,
     /// else while little is on the way (one picture at least)
-    fn admit(&mut self, picture: &[Vec<u8>]) -> bool {
+    fn admit(&mut self, picture: &[Frame], now: Instant) -> bool {
         if !self.acks {
             return true;
         }
-        let size = picture.iter().map(Vec::len).sum();
-        if self.flow.admit(size, picture.len(), Instant::now()) {
+        let size = picture.iter().map(|frame| frame.message.len()).sum();
+        if self.flow.admit(size, picture.len(), now) {
             return true;
         }
-        for rect in picture.iter().filter_map(|frame| frames::rect_of(frame)) {
-            self.missed.add(rect);
+        for frame in picture {
+            self.missed.add(frame.rect);
         }
         false
     }
@@ -534,19 +534,19 @@ impl Client {
     /// Whether state and meters may go now: not while the frames on the
     /// way to the page use the budget (the state waits for the latest)
     fn text_allowed(&self) -> bool {
-        !(self.acks && self.stream) || self.flow.text_allowed()
+        !self.acks || self.flow.text_allowed()
     }
 
     fn text_sent(&mut self, size: usize) {
-        if self.acks && self.stream {
+        if self.acks {
             self.flow.text_sent(size);
         }
     }
 
     /// The page drew a frame: once all are, what it missed is sent again
-    fn acked(&mut self, remote: &Remote) {
+    fn acked(&mut self, remote: &Remote, now: Instant) {
         let budget = self.flow.budget();
-        self.flow.acked(Instant::now());
+        self.flow.acked(now);
         if self.flow.budget() != budget {
             tracing::debug!(budget = self.flow.budget(), "Remote frames budget");
         }
@@ -561,13 +561,14 @@ impl Client {
         }
     }
 
-    fn handle(&mut self, remote: &Remote, text: &str) {
+    /// A message from the page, received at `now`
+    fn handle(&mut self, remote: &Remote, text: &str, now: Instant) {
         let Ok(message) = serde_json::from_str::<ClientMessage>(text) else {
             return;
         };
         match message {
             ClientMessage::Tuner { on } => self.set_tuner(remote, on),
-            ClientMessage::Ack => self.acked(remote),
+            ClientMessage::Ack => self.acked(remote, now),
             ClientMessage::Stream {
                 on,
                 width,
@@ -579,40 +580,35 @@ impl Client {
                 }
                 self.set_stream(remote, on);
                 if on && width > 0 && height > 0 {
-                    if let Some(Command::Resize { width, height }) =
-                        (Command::Resize { width, height }).sanitized()
-                    {
-                        *remote.stream_size.lock().unwrap_or_else(|e| e.into_inner()) =
-                            Some((width, height));
-                    }
+                    self.handle_command(remote, Command::Resize { width, height });
                 }
             }
-            ClientMessage::Command(command) => {
-                let Some(command) = command.sanitized() else {
-                    return;
-                };
-                if matches!(
-                    command,
-                    Command::Pointer { .. } | Command::Key { .. } | Command::Resize { .. }
-                ) && !self.stream
-                {
-                    return;
-                }
-                if let Command::Resize { width, height } = command {
-                    *remote.stream_size.lock().unwrap_or_else(|e| e.into_inner()) =
-                        Some((width, height));
-                    remote.keyframe.store(true, Ordering::Relaxed);
-                    return;
-                }
-                match command.knob() {
-                    Some(knob) => {
-                        self.knobs.insert(knob, command);
-                    }
-                    None => {
-                        self.flush(remote);
-                        remote.dispatch(command);
-                    }
-                }
+            ClientMessage::Command(command) => self.handle_command(remote, command),
+        }
+    }
+
+    fn handle_command(&mut self, remote: &Remote, command: Command) {
+        let Some(command) = command.sanitized() else {
+            return;
+        };
+        if matches!(
+            command,
+            Command::Pointer { .. } | Command::Key { .. } | Command::Resize { .. }
+        ) && !self.stream
+        {
+            return;
+        }
+        if let Command::Resize { width, height } = command {
+            remote.request_size(width, height);
+            return;
+        }
+        match command.knob() {
+            Some(knob) => {
+                self.knobs.insert(knob, command);
+            }
+            None => {
+                self.flush(remote);
+                remote.dispatch(command);
             }
         }
     }
@@ -632,7 +628,9 @@ impl Client {
         loop {
             tokio::select! {
                 incoming = socket.recv() => match incoming {
-                    Some(Ok(Message::Text(text))) => self.handle(remote, text.as_str()),
+                    Some(Ok(Message::Text(text))) => {
+                        self.handle(remote, text.as_str(), Instant::now());
+                    }
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                     Some(Ok(_)) => {}
                 },
@@ -660,18 +658,16 @@ impl Client {
                     Err(broadcast::error::RecvError::Closed) => break,
                 },
                 picture = frames.recv() => match picture {
-                    Ok(picture) if self.stream && self.admit(&picture) => {
+                    Ok(picture) if self.stream && self.admit(&picture, Instant::now()) => {
                         for frame in picture.iter() {
-                            if socket.send(Message::Binary(frame.clone().into())).await.is_err() {
+                            if socket.send(Message::Binary(frame.message.clone())).await.is_err() {
                                 return self.flush(remote);
                             }
                         }
                     }
                     Ok(_) => {}
                     // Frames missed: the next one is the whole window
-                    Err(broadcast::error::RecvError::Lagged(_)) => {
-                        remote.keyframe.store(true, Ordering::Relaxed);
-                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => remote.request_keyframe(),
                     Err(broadcast::error::RecvError::Closed) => break,
                 },
                 _ = revoked.changed() => {
@@ -689,7 +685,7 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::remote::frames::Rect;
+    use crate::remote::frames::{Frame, Rect};
 
     #[test]
     fn cookie_token() {
@@ -743,18 +739,20 @@ mod tests {
     #[test]
     fn commands_reach_the_dispatcher_and_knobs_merge() {
         let (remote, dir, seen) = remote();
+        let now = Instant::now();
         let mut client = Client::default();
         for v in [0.1, 0.2, 0.3] {
             client.handle(
                 &remote,
                 &format!(r#"{{"type":"set_parameter","block":1,"uri":"u","index":2,"value":{v}}}"#),
+                now,
             );
         }
         assert!(
             seen.lock().map(|s| s.is_empty()).unwrap_or(false),
             "merged, not sent yet"
         );
-        client.handle(&remote, r#"{"type":"tap"}"#);
+        client.handle(&remote, r#"{"type":"tap"}"#, now);
         let commands = seen.lock().map(|s| s.clone()).unwrap_or_default();
         assert_eq!(commands.len(), 2, "{commands:?}");
         assert!(
@@ -762,18 +760,35 @@ mod tests {
         );
         assert_eq!(commands[1], Command::Tap);
         // Pointer events only while streaming
-        client.handle(&remote, r#"{"type":"pointer","kind":"down","x":1,"y":1}"#);
+        client.handle(
+            &remote,
+            r#"{"type":"pointer","kind":"down","x":1,"y":1}"#,
+            now,
+        );
         assert_eq!(seen.lock().map(|s| s.len()).unwrap_or(0), 2);
         client.handle(
             &remote,
             r#"{"type":"stream","on":true,"width":10,"height":10}"#,
+            now,
         );
         assert!(remote.stream_wanted());
-        assert_eq!(remote.take_stream_size(), Some((800, 480)));
-        assert!(remote.take_keyframe());
-        client.handle(&remote, r#"{"type":"pointer","kind":"down","x":1,"y":1}"#);
+        let requests = remote.take_requests();
+        assert_eq!(requests.size, Some((800, 480)));
+        assert!(requests.keyframe);
+        // A resize: the new size, the whole window goes because it is new
+        client.handle(
+            &remote,
+            r#"{"type":"resize","width":1024,"height":600}"#,
+            now,
+        );
+        assert_eq!(remote.take_requests().size, Some((1024, 600)));
+        client.handle(
+            &remote,
+            r#"{"type":"pointer","kind":"down","x":1,"y":1}"#,
+            now,
+        );
         assert_eq!(seen.lock().map(|s| s.len()).unwrap_or(0), 3);
-        client.handle(&remote, r#"{"type":"tuner","on":true}"#);
+        client.handle(&remote, r#"{"type":"tuner","on":true}"#, now);
         assert!(remote.tuner_wanted());
         client.set_tuner(&remote, false);
         client.set_stream(&remote, false);
@@ -783,7 +798,7 @@ mod tests {
     }
 
     /// A frame message of `bytes` bytes showing `rect`
-    fn frame(rect: Rect, bytes: usize) -> Vec<u8> {
+    fn frame(rect: Rect, bytes: usize) -> Frame {
         let fit = |v: usize| u16::try_from(v).unwrap_or(u16::MAX);
         let mut message = super::super::protocol::frame_header(
             super::super::protocol::FrameFormat::Png,
@@ -792,12 +807,18 @@ mod tests {
         )
         .to_vec();
         message.resize(bytes, 0);
-        message
+        Frame {
+            rect,
+            message: message.into(),
+        }
     }
 
+    /// Every message at the same instant: no delivery rate is measured,
+    /// the budget stays as it starts (see flow for budgets over time)
     #[test]
     fn frames_held_back_while_the_page_is_behind() {
         let (remote, dir, _) = remote();
+        let now = Instant::now();
         let mut client = Client::default();
         let budget = client.flow.budget();
         let big = budget / 2 + 1;
@@ -815,44 +836,48 @@ mod tests {
         };
         // A page without acknowledgements gets everything, as before
         for _ in 0..10 {
-            assert!(client.admit(&[frame(a, big)]));
+            assert!(client.admit(&[frame(a, big)], now));
         }
         client.handle(
             &remote,
             r#"{"type":"stream","on":true,"width":800,"height":480,"acks":true}"#,
+            now,
         );
         assert!(client.acks);
         // One frame always goes, even larger than the budget
-        assert!(client.admit(&[frame(a, budget * 2)]));
-        client.handle(&remote, r#"{"type":"ack"}"#);
-        assert!(client.admit(&[frame(a, big)]));
+        assert!(client.admit(&[frame(a, budget * 2)], now));
+        client.handle(&remote, r#"{"type":"ack"}"#, now);
+        assert!(client.admit(&[frame(a, big)], now));
         // Over the budget: held back, its area remembered
-        assert!(!client.admit(&[frame(a, big)]));
-        assert!(!client.admit(&[frame(b, big)]));
+        assert!(!client.admit(&[frame(a, big)], now));
+        assert!(!client.admit(&[frame(b, big)], now));
         // A small one still fits
-        assert!(client.admit(&[frame(b, 100)]));
+        assert!(client.admit(&[frame(b, 100)], now));
         assert!(
-            remote.take_repaint().is_empty(),
+            remote.take_requests().repaint.is_empty(),
             "not before the page caught up"
         );
-        client.handle(&remote, r#"{"type":"ack"}"#);
-        assert!(remote.take_repaint().is_empty(), "one still on the way");
-        client.handle(&remote, r#"{"type":"ack"}"#);
-        assert_eq!(remote.take_repaint().rects(), [a, b]);
-        assert!(remote.take_repaint().is_empty());
+        client.handle(&remote, r#"{"type":"ack"}"#, now);
+        assert!(
+            remote.take_requests().repaint.is_empty(),
+            "one still on the way"
+        );
+        client.handle(&remote, r#"{"type":"ack"}"#, now);
+        assert_eq!(remote.take_requests().repaint.rects(), [a, b]);
+        assert!(remote.take_requests().repaint.is_empty());
         // Acknowledgements without frames change nothing
-        client.handle(&remote, r#"{"type":"ack"}"#);
+        client.handle(&remote, r#"{"type":"ack"}"#, now);
         assert_eq!(client.flow.in_flight_bytes(), 0);
         // A picture goes whole, or is held back whole
-        assert!(client.admit(&[frame(a, big), frame(b, big)]));
-        assert!(!client.admit(&[frame(a, 100), frame(b, 100)]));
-        client.handle(&remote, r#"{"type":"ack"}"#);
+        assert!(client.admit(&[frame(a, big), frame(b, big)], now));
+        assert!(!client.admit(&[frame(a, 100), frame(b, 100)], now));
+        client.handle(&remote, r#"{"type":"ack"}"#, now);
         assert!(
-            remote.take_repaint().is_empty(),
+            remote.take_requests().repaint.is_empty(),
             "half of the picture drawn"
         );
-        client.handle(&remote, r#"{"type":"ack"}"#);
-        assert_eq!(remote.take_repaint().rects(), [a, b]);
+        client.handle(&remote, r#"{"type":"ack"}"#, now);
+        assert_eq!(remote.take_requests().repaint.rects(), [a, b]);
         client.set_stream(&remote, false);
         let _ = std::fs::remove_dir_all(dir);
     }

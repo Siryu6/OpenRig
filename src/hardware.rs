@@ -15,6 +15,7 @@
 //!   `seesaw-quad` or `m5-stack8`), none by default
 
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
@@ -27,8 +28,11 @@ const FILE: &str = "hardware.json";
 pub const MAX_FOOTSWITCHES: usize = 8;
 /// GPIOs on the Raspberry Pi header (BCM numbering)
 pub const MAX_PIN: u8 = 27;
-/// Quadrature steps per detent an encoder can have
+/// Steps per detent an encoder can be set to: quadrature steps of the GPIO
+/// encoder, counts of the I2C boards
 pub const ENCODER_STEPS: [u8; 3] = [1, 2, 4];
+/// Holding an encoder's button this long is a long press (it goes back)
+pub const LONG_PRESS: Duration = Duration::from_millis(600);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hardware {
@@ -201,7 +205,7 @@ impl Hardware {
             }
         }
         if let Some(e) = &self.i2c_encoders {
-            if !crate::i2c_encoders::STEPS.contains(&e.steps) {
+            if !ENCODER_STEPS.contains(&e.steps) {
                 bail!("External encoders, counts per detent: 1, 2 or 4");
             }
         }

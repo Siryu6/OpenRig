@@ -8,6 +8,7 @@ use std::time::Duration;
 use tracing::{debug, info, warn};
 
 use super::tempo::TapTempo;
+use crate::audio::split_chain::walk;
 use crate::audio::{ChainControl, ChainNode, Looper, LooperSettings, SplitType, Tuner};
 use crate::midi::{MidiAssign, MidiSettings, MidiTarget, Step};
 use crate::plugins::scanner::PluginInfo;
@@ -175,36 +176,9 @@ pub fn data_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("pedalboard-data"))
 }
 
-pub(super) fn node_id(node: &ChainNode) -> usize {
-    match node {
-        ChainNode::Plugin { instance_id, .. } | ChainNode::Split { instance_id, .. } => {
-            *instance_id
-        }
-    }
-}
-
-pub(super) fn find_in(nodes: &[ChainNode], id: usize) -> Option<&ChainNode> {
-    for node in nodes {
-        if node_id(node) == id {
-            return Some(node);
-        }
-        if let ChainNode::Split {
-            top_chain,
-            bottom_chain,
-            ..
-        } = node
-        {
-            if let Some(found) = find_in(top_chain, id).or_else(|| find_in(bottom_chain, id)) {
-                return Some(found);
-            }
-        }
-    }
-    None
-}
-
 pub(super) fn find_in_mut(nodes: &mut [ChainNode], id: usize) -> Option<&mut ChainNode> {
     for node in nodes {
-        if node_id(node) == id {
+        if node.instance_id() == id {
             return Some(node);
         }
         if let ChainNode::Split {
@@ -225,7 +199,7 @@ pub(super) fn find_in_mut(nodes: &mut [ChainNode], id: usize) -> Option<&mut Cha
 }
 
 fn remove_in(nodes: &mut Vec<ChainNode>, id: usize) -> Option<ChainNode> {
-    if let Some(pos) = nodes.iter().position(|n| node_id(n) == id) {
+    if let Some(pos) = nodes.iter().position(|n| n.instance_id() == id) {
         return Some(nodes.remove(pos));
     }
     for node in nodes.iter_mut() {
@@ -264,7 +238,7 @@ fn container_mut(
 
 /// Position of a node: the chain it is in and its index there
 fn place_of(nodes: &[ChainNode], id: usize, parent: Option<(usize, bool)>) -> Option<ChainPlace> {
-    if let Some(index) = nodes.iter().position(|n| node_id(n) == id) {
+    if let Some(index) = nodes.iter().position(|n| n.instance_id() == id) {
         return Some(ChainPlace { parent, index });
     }
     nodes.iter().find_map(|node| match node {
@@ -277,37 +251,6 @@ fn place_of(nodes: &[ChainNode], id: usize, parent: Option<(usize, bool)>) -> Op
             .or_else(|| place_of(bottom_chain, id, Some((*instance_id, false)))),
         ChainNode::Plugin { .. } => None,
     })
-}
-
-pub(super) fn collect_ids(nodes: &[ChainNode], out: &mut Vec<usize>) {
-    for node in nodes {
-        out.push(node_id(node));
-        if let ChainNode::Split {
-            top_chain,
-            bottom_chain,
-            ..
-        } = node
-        {
-            collect_ids(top_chain, out);
-            collect_ids(bottom_chain, out);
-        }
-    }
-}
-
-fn collect_plugins<'a>(nodes: &'a [ChainNode], out: &mut Vec<&'a ChainNode>) {
-    for node in nodes {
-        match node {
-            ChainNode::Plugin { .. } => out.push(node),
-            ChainNode::Split {
-                top_chain,
-                bottom_chain,
-                ..
-            } => {
-                collect_plugins(top_chain, out);
-                collect_plugins(bottom_chain, out);
-            }
-        }
-    }
 }
 
 /// A place in the chain tree: index in the main chain (`parent` None) or in
@@ -399,14 +342,12 @@ impl EffectChainState {
     }
 
     pub fn find(&self, instance_id: usize) -> Option<&ChainNode> {
-        find_in(&self.nodes, instance_id)
+        walk(&self.nodes).find(|n| n.instance_id() == instance_id)
     }
 
     /// Plugins in processing order (depth-first, top branch before bottom)
     pub fn plugins(&self) -> Vec<&ChainNode> {
-        let mut out = Vec::new();
-        collect_plugins(&self.nodes, &mut out);
-        out
+        walk(&self.nodes).filter(|n| !n.is_split()).collect()
     }
 
     /// Number of plugins (splits not counted)
@@ -470,8 +411,9 @@ impl EffectChainState {
     pub fn remove(&mut self, instance_id: usize) -> Result<()> {
         let removed = remove_in(&mut self.nodes, instance_id)
             .ok_or_else(|| anyhow!("Node {} not found", instance_id))?;
-        let mut ids = Vec::new();
-        collect_ids(std::slice::from_ref(&removed), &mut ids);
+        let ids: Vec<usize> = walk(std::slice::from_ref(&removed))
+            .map(ChainNode::instance_id)
+            .collect();
         for &id in &ids {
             self.params.remove(&id);
             self.files.remove(&id);
@@ -495,11 +437,10 @@ impl EffectChainState {
             .place_of(instance_id)
             .ok_or_else(|| anyhow!("Node {} not found", instance_id))?;
         if let Some((split_id, _)) = place.parent {
-            let mut inside = Vec::new();
-            if let Some(node) = self.find(instance_id) {
-                collect_ids(std::slice::from_ref(node), &mut inside);
-            }
-            if inside.contains(&split_id) {
+            let inside = self.find(instance_id).is_some_and(|node| {
+                walk(std::slice::from_ref(node)).any(|n| n.instance_id() == split_id)
+            });
+            if inside {
                 return Err(anyhow!("Cannot move a split into itself"));
             }
         }
@@ -688,13 +629,16 @@ impl EffectChainState {
             stomps: chain.stomps.clone(),
             ..Self::default()
         };
-        let mut ids = Vec::new();
-        collect_ids(&state.nodes, &mut ids);
+        let ids: Vec<usize> = walk(&state.nodes).map(ChainNode::instance_id).collect();
         state.next_instance_id = ids.iter().max().map_or(0, |m| m.saturating_add(1));
 
         let scanner = host.scanner();
         let infos = state.plugin_infos(&scanner);
-        let plugins: Vec<usize> = state.plugins().into_iter().map(node_id).collect();
+        let plugins: Vec<usize> = state
+            .plugins()
+            .into_iter()
+            .map(ChainNode::instance_id)
+            .collect();
         for id in plugins {
             let saved = chain.params.get(&id).map(Vec::as_slice);
             let by_symbol = chain.params_by_symbol.get(&id);
@@ -1478,18 +1422,6 @@ impl AppState {
         self.mark_dirty();
     }
 
-    pub fn clear_chain(&self) {
-        let _ = self.edit(|c| {
-            let (stereo_mode, bpm) = (c.stereo_mode, c.bpm);
-            *c = EffectChainState {
-                stereo_mode,
-                bpm,
-                ..Default::default()
-            };
-            Ok(())
-        });
-    }
-
     /// Toggle bypass of a plugin or split; returns true if now bypassed
     pub fn toggle_bypass(&self, instance_id: usize) -> Result<bool> {
         self.tweak(|c| {
@@ -1560,11 +1492,6 @@ impl AppState {
         }
         self.mark_dirty();
         Ok((pan, rebuild))
-    }
-
-    /// Model file of a block (relative to the models directory)
-    pub fn plugin_file(&self, instance_id: usize) -> Option<String> {
-        self.effect_chain.locked().files.get(&instance_id).cloned()
     }
 
     /// Choose the model of a block (None to unload it); rebuilds the chain
@@ -2275,6 +2202,19 @@ mod tests {
         (state, dir)
     }
 
+    /// Empty the chain, keeping the stereo mode and the tempo
+    fn clear_chain(state: &AppState) {
+        let _ = state.edit(|c| {
+            let (stereo_mode, bpm) = (c.stereo_mode, c.bpm);
+            *c = EffectChainState {
+                stereo_mode,
+                bpm,
+                ..Default::default()
+            };
+            Ok(())
+        });
+    }
+
     #[test]
     fn edits_nested_splits_by_id() {
         let mut chain = EffectChainState::new();
@@ -2284,7 +2224,11 @@ mod tests {
         let b = chain.add_to_split(split, false, OD, vec![0.1]).unwrap();
         assert!(chain.add_to_split(od, true, DELAY, vec![]).is_err());
 
-        let ids: Vec<usize> = chain.plugins().into_iter().map(node_id).collect();
+        let ids: Vec<usize> = chain
+            .plugins()
+            .into_iter()
+            .map(ChainNode::instance_id)
+            .collect();
         assert_eq!(ids, vec![od, a, b]);
         assert!(!chain.toggle_split_ab(split).unwrap());
         assert_eq!(chain.set_split_mix(split, 3.0).unwrap(), 1.0);
@@ -2348,7 +2292,8 @@ mod tests {
         let b = state.add_plugin(uri).unwrap();
         let split = state.add_split(SplitType::Mix).unwrap();
         let c = state.add_plugin_to_split(split, true, uri).unwrap();
-        let ids = |nodes: &[ChainNode]| nodes.iter().map(node_id).collect::<Vec<_>>();
+        let ids =
+            |nodes: &[ChainNode]| nodes.iter().map(ChainNode::instance_id).collect::<Vec<_>>();
         let main = |index| ChainPlace {
             parent: None,
             index,
@@ -2597,16 +2542,16 @@ mod tests {
         let id = state.save_preset("Amp".into()).unwrap();
         state.save_session().unwrap();
 
-        state.clear_chain();
+        clear_chain(&state);
         state.load_preset(&id).unwrap();
         assert_eq!(
-            state.plugin_file(amp).as_deref(),
+            state.chain().files.get(&amp).map(String::as_str),
             Some("Tone3000/Plexi.nam")
         );
-        state.clear_chain();
+        clear_chain(&state);
         assert!(state.restore_session().unwrap());
         assert_eq!(
-            state.plugin_file(amp).as_deref(),
+            state.chain().files.get(&amp).map(String::as_str),
             Some("Tone3000/Plexi.nam")
         );
 
@@ -2634,8 +2579,8 @@ mod tests {
         assert!(state.undo_remove().unwrap());
         let chain = state.chain();
         // Back in its place, with its settings
-        assert_eq!(node_id(&chain.nodes[0]), first);
-        assert_eq!(node_id(&chain.nodes[1]), second);
+        assert_eq!(chain.nodes[0].instance_id(), first);
+        assert_eq!(chain.nodes[1].instance_id(), second);
         assert_eq!(chain.params[&first], [0.5]);
         assert_eq!(chain.colors[&first], "red");
         assert!(!state.undo_remove().unwrap(), "undone once only");
@@ -2683,10 +2628,10 @@ mod tests {
         let id = state.save_preset("Amp".into()).unwrap();
         state.save_session().unwrap();
 
-        state.clear_chain();
+        clear_chain(&state);
         state.load_preset(&id).unwrap();
         assert_eq!(state.param_files(fx)[MODEL], "Amps/Plexi.nam");
-        state.clear_chain();
+        clear_chain(&state);
         assert!(state.restore_session().unwrap());
         assert_eq!(state.param_files(fx)[MODEL], "Amps/Plexi.nam");
 
@@ -2762,7 +2707,7 @@ mod tests {
         state.set_parameter(id, ret::INPUT, 3.0).unwrap();
         let preset = state.save_preset("Bass".into()).unwrap();
 
-        state.clear_chain();
+        clear_chain(&state);
         state.load_preset(&preset).unwrap();
         assert_eq!(state.chain().params[&id][ret::INPUT], 3.0);
         assert_eq!(state.plugin_name(RETURN_URI), "Return");
@@ -2778,7 +2723,7 @@ mod tests {
         state.set_split_mix(split, 0.25).unwrap();
         let id = state.save_preset("Lead".into()).unwrap();
 
-        state.clear_chain();
+        clear_chain(&state);
         assert_eq!(state.chain().nodes.len(), 0);
 
         state.load_preset(&id).unwrap();

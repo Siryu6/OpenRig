@@ -5,6 +5,7 @@
 //! cell for its fork icon, the width of its widest branch, and a merge cell.
 //! Branches are placed far enough above/below the line for their own nested
 //! splits, so nothing overlaps at any depth.
+use crate::audio::split_chain::walk;
 use crate::audio::{ChainNode, SplitType};
 use crate::plugins::SignalMap;
 use crate::state::ChainPlace;
@@ -125,14 +126,6 @@ fn node_cells(node: &ChainNode) -> u32 {
 
 type Point = (f32, f32);
 
-fn node_id(node: &ChainNode) -> usize {
-    match node {
-        ChainNode::Plugin { instance_id, .. } | ChainNode::Split { instance_id, .. } => {
-            *instance_id
-        }
-    }
-}
-
 struct Builder<'a> {
     layout: ChainLayout,
     signal: &'a SignalMap,
@@ -194,7 +187,7 @@ impl Builder<'_> {
             ends = Some(match ends {
                 None => (entry, exit),
                 Some((first, previous)) => {
-                    let wide = self.signal.output(node_id(&nodes[index - 1]));
+                    let wide = self.signal.output(nodes[index - 1].instance_id());
                     self.line(previous, entry, wide);
                     (first, exit)
                 }
@@ -290,7 +283,7 @@ impl Builder<'_> {
                     self.line(centre, fork, branch_in);
                     // An empty branch carries the dry signal straight through
                     let branch_out = match branch.last() {
-                        Some(last) => self.signal.output(node_id(last)),
+                        Some(last) => self.signal.output(last.instance_id()),
                         None => branch_in,
                     };
                     match self.chain(branch, Some((*instance_id, top)), inner_x, branch_y) {
@@ -414,10 +407,14 @@ pub fn drop_slots(
     let Some(from) = chain.place_of(dragged) else {
         return Vec::new();
     };
-    let mut inside = Vec::new();
-    if let Some(node) = chain.find(dragged) {
-        collect(std::slice::from_ref(node), &mut inside);
-    }
+    let inside: Vec<usize> = chain
+        .find(dragged)
+        .map(|node| {
+            walk(std::slice::from_ref(node))
+                .map(ChainNode::instance_id)
+                .collect()
+        })
+        .unwrap_or_default();
     layout
         .slots
         .iter()
@@ -432,24 +429,6 @@ pub fn drop_slots(
         })
         .cloned()
         .collect()
-}
-
-fn collect(nodes: &[ChainNode], out: &mut Vec<usize>) {
-    for node in nodes {
-        match node {
-            ChainNode::Plugin { instance_id, .. } => out.push(*instance_id),
-            ChainNode::Split {
-                instance_id,
-                top_chain,
-                bottom_chain,
-                ..
-            } => {
-                out.push(*instance_id);
-                collect(top_chain, out);
-                collect(bottom_chain, out);
-            }
-        }
-    }
 }
 
 /// The slot under a drop at (`x`, `y`) in layout units: the nearest one

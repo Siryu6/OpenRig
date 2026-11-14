@@ -24,7 +24,7 @@ use pedalboard::{
 };
 
 #[cfg(feature = "midi")]
-use crate::{live_ui, show_status, EDITOR_VIEW};
+use crate::{live_ui, show_status, View};
 use crate::{report, App};
 
 /// The activity LED stays lit this long after a message
@@ -209,7 +209,7 @@ fn on_message(app: &App, state: &AppState, message: MidiMessage) {
     let settings = state.midi_settings();
 
     // Learning in the editor: controllers go to the control being learned
-    if app.get_midi_learning() && app.get_current_view() == EDITOR_VIEW {
+    if app.get_midi_learning() && app.get_current_view() == View::Editor {
         if let MidiMessage::Control {
             channel,
             controller,
@@ -361,7 +361,6 @@ fn reset_learning(app: &App, message: &str) {
         m.learn_target = None;
     });
     app.set_midi_learn_target(NO_TARGET);
-    app.set_midi_learn_cc(-1);
     app.set_midi_learn_assigned(false);
     app.set_midi_learn_message(message.into());
 }
@@ -412,7 +411,6 @@ fn learn_controller(app: &App, state: &AppState, controller: u8) -> bool {
             MIDI.with(|m| m.borrow_mut().learn_controller = Some(controller));
             app.set_midi_learn_target(NO_TARGET);
             app.set_midi_learn_assigned(false);
-            app.set_midi_learn_cc(i32::from(controller));
             app.set_midi_learn_message(
                 format!("CC {}: now touch the control it drives.", controller).into(),
             );
