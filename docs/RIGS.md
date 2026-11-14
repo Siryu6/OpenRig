@@ -50,7 +50,8 @@ image).
 USB drives are found where the desktop mounts them: `/media/<user>/*` and
 `/run/media/<user>/*` on Linux, `/Volumes/*` on macOS. The OpenRig OS
 image does not mount drives by itself yet, so there, and on Windows, copy
-files to `<data>/rigs` instead.
+files to `<data>/rigs` instead. `PEDALBOARD_MEDIA_DIR` replaces these places: each of its
+subfolders is taken as a drive.
 
 ## On openrig.eu
 
