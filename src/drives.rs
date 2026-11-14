@@ -41,6 +41,11 @@ pub fn chosen(drives: &[PathBuf], shown: &str) -> Option<PathBuf> {
     drives.iter().find(|d| d.as_os_str() == shown).cloned()
 }
 
+/// `drive` was ejected or pulled out: not in `drives` (the drives now)
+pub fn gone(drive: &Path, drives: &[PathBuf]) -> bool {
+    !drives.iter().any(|d| d == drive)
+}
+
 /// The name of a drive, as the pages show it (its label)
 pub fn name(drive: &Path) -> String {
     drive
@@ -123,6 +128,9 @@ mod tests {
         assert_eq!(chosen(&drives, ""), None);
         assert_eq!(chosen(&[], "/media/A"), None);
         assert_eq!(name(Path::new("/media/MY STICK")), "MY STICK");
+        assert!(!gone(Path::new("/media/A"), &drives));
+        assert!(gone(Path::new("/media/C"), &drives));
+        assert!(gone(Path::new("/media/A"), &[]));
     }
 
     #[test]

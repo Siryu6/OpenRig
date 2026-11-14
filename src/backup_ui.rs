@@ -25,6 +25,8 @@ struct Found {
 
 thread_local! {
     static FOUND: RefCell<Vec<Found>> = const { RefCell::new(Vec::new()) };
+    /// The drive the message is about ("Saved on <drive>…")
+    static MESSAGE_DRIVE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 
 /// Where backups are written and looked for: the drives, then the pedal
@@ -225,7 +227,16 @@ fn refresh(app: &App) {
 
 /// A USB drive was plugged in, ejected or pulled out: the open panel
 /// looks again (a backup being written says itself how it went)
-pub(crate) fn drives_changed(app: &App) {
+pub(crate) fn drives_changed(app: &App, now: &[PathBuf]) {
+    // "Saved on <drive>" no longer holds once the drive is gone
+    let stale = MESSAGE_DRIVE.with(|d| {
+        d.borrow()
+            .as_deref()
+            .is_some_and(|d| pedalboard::drives::gone(d, now))
+    });
+    if stale {
+        message(app, "", false);
+    }
     let g = app.global::<Backup>();
     if g.get_open() && !g.get_busy() {
         refresh(app);
@@ -233,6 +244,7 @@ pub(crate) fn drives_changed(app: &App) {
 }
 
 fn message(app: &App, text: &str, error: bool) {
+    MESSAGE_DRIVE.with(|d| *d.borrow_mut() = None);
     let g = app.global::<Backup>();
     g.set_message(text.into());
     g.set_message_error(error);
@@ -424,16 +436,16 @@ fn back_up(app: &App, state: &Arc<AppState>) {
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_default();
                     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                    let place = if drive.is_some() {
-                        "on the USB drive"
-                    } else {
-                        "on the pedal"
+                    let place = match &drive {
+                        Some(d) => format!("on {}", pedalboard::drives::name(d)),
+                        None => "on the pedal".to_string(),
                     };
                     message(
                         app,
                         &format!("Saved {place}: {name} ({})", backup::human_size(size)),
                         false,
                     );
+                    MESSAGE_DRIVE.with(|d| *d.borrow_mut() = drive);
                 }
                 Err(e) => {
                     warn!(error = format_args!("{e:#}"), "Backup not written");

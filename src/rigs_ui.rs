@@ -6,6 +6,7 @@
 //! downloading run on worker threads.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use slint::{ComponentHandle, Weak};
@@ -22,6 +23,9 @@ use crate::{model, show_status, spawn, ui, App, RigFileInfo, RigItem, Rigs};
 struct Page {
     files: Vec<RigFile>,
     plan: Option<Plan>,
+    /// The drive the note speaks of, and what it says of it
+    /// (", and on <drive>"): dropped when the drive goes
+    note_drive: Option<(PathBuf, String)>,
 }
 
 thread_local! {
@@ -102,12 +106,29 @@ fn opened(app: &App, state: &Arc<AppState>) {
     rigs.set_author(state.rig_author().into());
     if !rigs.get_busy() {
         rigs.set_note("".into());
+        with_page(|p| p.note_drive = None);
     }
     list(&app.as_weak());
 }
 
 /// A USB drive was plugged in, ejected or pulled out: list again
-pub(crate) fn drives_changed(app: &App) {
+pub(crate) fn drives_changed(app: &App, now: &[PathBuf]) {
+    let stale = with_page(|p| {
+        if p.note_drive
+            .as_ref()
+            .is_some_and(|(d, _)| pedalboard::drives::gone(d, now))
+        {
+            p.note_drive.take()
+        } else {
+            None
+        }
+    })
+    .flatten();
+    if let Some((_, said)) = stale {
+        let rigs = app.global::<Rigs>();
+        let note = rigs.get_note().replace(&said, "");
+        rigs.set_note(note.into());
+    }
     list(&app.as_weak());
 }
 
@@ -256,6 +277,7 @@ fn export_current(app: &App, state: &Arc<AppState>, usb: bool) {
     let shown = rigs.get_drive();
     rigs.set_busy(true);
     rigs.set_note("Exporting…".into());
+    with_page(|p| p.note_drive = None);
     let (weak, st) = (app.as_weak(), state.clone());
     let started = spawn("rigs-export", move || {
         let result = (|| {
@@ -266,12 +288,15 @@ fn export_current(app: &App, state: &Arc<AppState>, usb: bool) {
                 "Saved as {}",
                 path.file_name().unwrap_or_default().to_string_lossy()
             );
+            let mut on_drive = None;
             if usb {
                 match pedalboard::drives::chosen(&rigs::removable_drives(), &shown) {
                     Some(drive) => match rigs::write(&drive, &exported.rig) {
                         Ok(copy) => {
                             info!(path = %copy.display(), "Rig copied to a drive");
-                            note.push_str(", and on the USB drive");
+                            let said = format!(", and on {}", pedalboard::drives::name(&drive));
+                            note.push_str(&said);
+                            on_drive = Some((drive, said));
                         }
                         Err(e) => {
                             warn!(error = format_args!("{e:#}"), "Rig not copied to the drive");
@@ -291,18 +316,19 @@ fn export_current(app: &App, state: &Arc<AppState>, usb: bool) {
                     plural(exported.dropped.len(), "file")
                 ));
             }
-            anyhow::Ok(note)
+            anyhow::Ok((note, on_drive))
         })();
         ui(&weak, move |app| {
             let rigs = app.global::<Rigs>();
             rigs.set_busy(false);
-            let note = match result {
-                Ok(note) => note,
+            let (note, on_drive) = match result {
+                Ok(done) => done,
                 Err(e) => {
                     warn!(error = format_args!("{e:#}"), "Rig not exported");
-                    format!("Not exported: {e:#}")
+                    (format!("Not exported: {e:#}"), None)
                 }
             };
+            with_page(|p| p.note_drive = on_drive);
             show_status(app, note.clone().into());
             rigs.set_note(note.into());
             list(&app.as_weak());
