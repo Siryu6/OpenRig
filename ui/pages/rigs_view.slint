@@ -1,6 +1,7 @@
 import { Theme } from "../theme.slint";
 import { Badge, Button, EmptyState, Icon, SectionHeader, Segmented, Toggle } from "../components/controls.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
+import { Drives } from "../drives.slint";
 import { RigsOnline, RigsOnlineOverlays, RigsOnlinePane } from "rigs_online.slint";
 
 export { RigsOnline }
@@ -27,10 +28,6 @@ export global Rigs {
     in-out property <string> preset-name: "";   // what Export exports
     in-out property <bool> include-midi: false;
     in-out property <string> author: "";         // written in exported rigs
-    in-out property <bool> usb: false;           // a removable drive is mounted
-    in-out property <bool> can-eject: false;     // the system ejects drives (OpenRig OS)
-    in-out property <bool> ejecting: false;
-    in-out property <string> drive: "";          // the drive To USB and Eject use
     in-out property <string> note: "";           // last export / list message
     in-out property <bool> busy: false;          // exporting or installing
     // The rig opened for import
@@ -45,7 +42,6 @@ export global Rigs {
 
     callback opened();
     callback export(bool); // to the USB drive too
-    callback eject(string); // the drive, before pulling it out
     callback set-author(string);
     callback open-file(int);
     callback install();
@@ -263,7 +259,7 @@ export component RigsPanel inherits Rectangle {
                             }
                         }
                     }
-                    if Rigs.usb: VerticalLayout {
+                    if Drives.drive != "": VerticalLayout {
                         alignment: center;
                         horizontal-stretch: 0;
                         Button {
@@ -275,16 +271,16 @@ export component RigsPanel inherits Rectangle {
                             }
                         }
                     }
-                    if Rigs.usb && Rigs.can-eject: VerticalLayout {
+                    if Drives.drive != "" && Drives.can-eject: VerticalLayout {
                         alignment: center;
                         horizontal-stretch: 0;
                         Button {
                             icon: "eject";
                             text: "Eject";
                             variant: "ghost";
-                            enabled: !Rigs.busy && !Rigs.ejecting;
+                            enabled: !Rigs.busy && !Drives.ejecting;
                             clicked => {
-                                Rigs.eject(Rigs.drive);
+                                Drives.eject();
                             }
                         }
                     }
