@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use super::routing::MAX_PORTS;
+use super::routing::{MAX_PORTS, MAX_SENDS};
 use crate::sync::MutexExt;
 
 /// Longest delay a path can be compensated by; a plugin reporting more is
@@ -40,7 +40,8 @@ pub fn frames_to_ms(frames: usize, sample_rate: f32) -> f32 {
 /// Delay of a whole number of frames, up to [`max_latency`]. Allocated when
 /// built, then real-time safe. A new delay is reached by crossfading the
 /// old and the new read positions; one asked for during a crossfade waits
-/// for it to end.
+/// for it to end. A line that has only held silence (just built or
+/// cleared) takes the first delay asked for at once.
 pub struct DelayLine {
     buffer: Box<[f32]>,
     mask: usize,
@@ -54,6 +55,8 @@ pub struct DelayLine {
     /// Crossfade from `delay` to `next`, 0 to 1 (0: none running)
     fade: f32,
     step: f32,
+    /// Nothing went through since the line was built or cleared
+    fresh: bool,
 }
 
 impl DelayLine {
@@ -71,6 +74,7 @@ impl DelayLine {
             wanted: 0,
             fade: 0.0,
             step: 1.0 / (sample_rate * FADE_MS / 1000.0).max(1.0),
+            fresh: true,
         }
     }
 
@@ -84,23 +88,21 @@ impl DelayLine {
         self.wanted
     }
 
-    /// Go to `delay` frames (clamped to the longest), with a crossfade
+    /// Go to `delay` frames (clamped to the longest), with a crossfade,
+    /// or at once on a fresh line
     pub fn set(&mut self, delay: usize) {
         self.wanted = delay.min(self.max);
+        if self.fresh {
+            (self.delay, self.next, self.fade) = (self.wanted, self.wanted, 0.0);
+        }
     }
 
-    /// Go to `delay` frames at once: for a line that is built or silent
-    pub fn jump(&mut self, delay: usize) {
-        self.set(delay);
-        self.delay = self.wanted;
-        self.next = self.wanted;
-        self.fade = 0.0;
-    }
-
-    /// Forget the past: the next frames come after silence
+    /// Forget the past: the next frames come after silence, and the next
+    /// delay is taken at once
     pub fn clear(&mut self) {
         self.buffer.fill(0.0);
-        self.jump(self.wanted);
+        self.fresh = true;
+        self.set(self.wanted);
     }
 
     #[inline]
@@ -111,6 +113,7 @@ impl DelayLine {
     /// Push one frame, return the one `delay` frames old
     #[inline]
     pub fn tick(&mut self, input: f32) -> f32 {
+        self.fresh = false;
         self.buffer[self.pos] = input;
         if self.fade == 0.0 && self.wanted != self.delay {
             self.next = self.wanted;
@@ -136,6 +139,7 @@ impl DelayLine {
     pub fn process(&mut self, buffer: &mut [f32]) {
         if self.delay == 0 && self.wanted == 0 && self.fade == 0.0 {
             // No delay: only keep the past, for when one comes
+            self.fresh &= buffer.is_empty();
             for &sample in buffer.iter() {
                 self.buffer[self.pos] = sample;
                 self.pos = (self.pos + 1) & self.mask;
@@ -172,6 +176,25 @@ impl BlockLatency {
     pub fn get(&self, instance_id: usize) -> Option<u32> {
         let slots = self.slots.locked();
         Some(slots.get(&instance_id)?.load(Ordering::Relaxed))
+    }
+}
+
+/// Frames the effects put the signal out late by: the main mix, and the
+/// shortest and longest of each send bus (None for a bus no send feeds)
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EffectsLatency {
+    pub chain: usize,
+    pub sends: [Option<(usize, usize)>; MAX_SENDS],
+}
+
+impl EffectsLatency {
+    /// Shortest and longest frames bus `bus` is late by: 0 is the main
+    /// mix, then the sends; nothing on a bus no send feeds
+    pub fn bus(&self, bus: usize) -> (usize, usize) {
+        match bus.checked_sub(1) {
+            None => (self.chain, self.chain),
+            Some(send) => self.sends.get(send).copied().flatten().unwrap_or((0, 0)),
+        }
     }
 }
 
@@ -273,13 +296,35 @@ mod tests {
     #[test]
     fn delays_by_whole_frames() {
         let mut line = DelayLine::new(48_000.0);
-        line.jump(3);
+        // Fresh: at once
+        line.set(3);
         let mut buffer = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
         line.process(&mut buffer);
         assert_eq!(buffer, [0.0, 0.0, 0.0, 1.0, 2.0, 3.0]);
         // Past the longest delay: clamped
-        line.jump(1_000_000);
+        line.clear();
+        line.set(1_000_000);
         assert_eq!(line.target(), max_latency(48_000.0));
+    }
+
+    #[test]
+    fn a_fresh_line_takes_its_first_delay_at_once() {
+        let mut line = DelayLine::new(48_000.0);
+        line.set(2);
+        let mut buffer = [1.0, 0.0, 0.0, 0.0];
+        line.process(&mut buffer);
+        assert_eq!(buffer, [0.0, 0.0, 1.0, 0.0]);
+        // Once used, a new delay crossfades: still mostly the old one
+        line.set(1);
+        let mut buffer = [1.0, 0.0, 0.0, 0.0];
+        line.process(&mut buffer);
+        assert!(buffer[1] < 0.1 && buffer[2] > 0.9, "{buffer:?}");
+        // Cleared: silence, then the next delay at once
+        line.clear();
+        line.set(3);
+        let mut buffer = [1.0, 0.0, 0.0, 0.0, 0.0];
+        line.process(&mut buffer);
+        assert_eq!(buffer, [0.0, 0.0, 0.0, 1.0, 0.0]);
     }
 
     #[test]

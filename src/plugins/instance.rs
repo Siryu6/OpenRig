@@ -304,7 +304,8 @@ impl PluginInstance {
     }
 
     /// Run the plugin once on silence, off the audio thread, so that it
-    /// gives its latency before it plays (LV2 only reports it from a run)
+    /// gives its latency before it plays (LV2 only reports it from a run).
+    /// Its dry delay lines, fresh, take that latency at once.
     fn settle_latency(&mut self) {
         if self.latency_port.is_some() {
             for input in &mut self.audio_in {
@@ -312,11 +313,6 @@ impl PluginInstance {
             }
             self.reset_atoms();
             self.run(self.max_block);
-            if let Some(dry) = &mut self.dry {
-                for line in dry.iter_mut() {
-                    line.jump(self.latency);
-                }
-            }
         }
     }
 
@@ -829,7 +825,7 @@ impl PluginInstance {
         let left = &mut left[..len];
         let mut right = right.map(|r| &mut r[..len]);
         let stereo_in = stereo_in && right.is_some();
-        if self.bypassed && self.wet <= 0.0 && (!self.trails || self.quiet >= self.quiet_limit) {
+        if self.is_idle() {
             // Not run: queued notes would play late
             self.midi_len = 0;
             // Still as late as when it runs
@@ -1027,6 +1023,12 @@ impl PluginInstance {
     #[cfg(test)]
     pub fn is_bypassed(&self) -> bool {
         self.bypassed
+    }
+
+    /// True when bypassed and not running: faded out, and its tail (if
+    /// any) died out
+    pub fn is_idle(&self) -> bool {
+        self.bypassed && self.wet <= 0.0 && (!self.trails || self.quiet >= self.quiet_limit)
     }
 
     /// Bypass immediately, without crossfade (when building a chain, or

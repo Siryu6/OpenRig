@@ -135,8 +135,9 @@ What OpenRig does, in more technical detail than the
   mix changes are applied live without rebuilding. The JACK callback does no
   allocation and takes no blocking lock.
 - **Plugin guard**: a plugin that takes more than half of the audio period
-  for about 0.3 s, or three quarters of it a few times in quick succession,
-  is switched off (bypassed) so it cannot freeze the board. So is a plugin
+  for about 0.3 s, three quarters of it a few times in quick succession, or
+  more than the whole period five times within a few seconds, is switched
+  off (bypassed) so it cannot freeze the board. So is a plugin
   that keeps putting out invalid samples (NaN); a single bad block is
   silenced. A toast says why ("Delay was switched off: it used too much
   CPU"); switch the block back on to try again.

@@ -1,7 +1,10 @@
 use crate::sync::MutexExt;
 use anyhow::{Context, Result};
 use crossbeam_channel::Sender;
-use jack::{Client, ClientOptions, Control, NotificationHandler, ProcessHandler, ProcessScope};
+use jack::{
+    Client, ClientOptions, Control, LatencyType, NotificationHandler, Port, ProcessHandler,
+    ProcessScope, Unowned,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -13,6 +16,7 @@ use super::routing::{OutputRouter, PortMeter, Routing, RoutingControl, MAX_PORTS
 use super::{ChainSwitcher, Looper, Tuner, TunerResult};
 use crate::monitor::{DspMeter, LevelMeter};
 use crate::plugins::chain::ChainIo;
+use crate::plugins::guard::silence_non_finite;
 use crate::plugins::Lv2Host;
 
 /// Preset/chain switch crossfade
@@ -36,7 +40,7 @@ pub struct ActiveJack {
     /// Latency of the effects and of each output
     pub latency: Arc<LatencyReport>,
     /// Tells JACK when the latency changes. After `client`: dropped once
-    /// the client is closed, as the latency callback reads it
+    /// the client is deactivated, then closes it (its ports hold it open)
     _latency_watch: LatencyWatch,
 }
 
@@ -123,11 +127,11 @@ impl JackClientBuilder {
         let latency = Arc::new(LatencyReport::default());
         let latency_ports = Box::new(LatencyPorts {
             report: latency.clone(),
-            inputs: in_ports.iter().map(|p| p.raw() as usize).collect(),
-            outputs: out_ports.iter().map(|p| p.raw() as usize).collect(),
+            inputs: unowned(&client, &in_ports)?,
+            outputs: unowned(&client, &out_ports)?,
         });
-        // SAFETY: a client not yet active; the ports outlive the callback's
-        // data, which outlives the client (see `ActiveJack`)
+        // SAFETY: a client not yet active; the callback's data lives until
+        // the client is closed, which its ports delay (see `LatencyPorts`)
         let set = unsafe {
             jack_sys::jack_set_latency_callback(
                 client.raw(),
@@ -251,39 +255,47 @@ impl ActiveJack {
     /// on the first output playing the effects. None when none does.
     pub fn round_trip_latency(&self) -> Option<u32> {
         let ports = &self._latency_watch._ports;
-        let (index, own) = (0..ports.outputs.len())
-            .map(|i| (i, self.latency.output(i)))
+        let (output, own) = ports
+            .outputs
+            .iter()
+            .enumerate()
+            .map(|(i, port)| (port, self.latency.output(i)))
             .find(|(_, own)| own.source == OutputSource::Effects)?;
         let capture = ports
             .inputs
             .get(own.input)
-            .map_or(0, |&input| get_range(input, jack_sys::JackCaptureLatency).1);
-        let playback = get_range(ports.outputs[index], jack_sys::JackPlaybackLatency).1;
+            .map_or(0, |input| range(input, LatencyType::Capture).1);
+        let playback = range(output, LatencyType::Playback).1;
         Some(capture + own.max + playback)
     }
 }
 
-/// What the latency callback reads: the latencies, and the raw pointers of
-/// the ports (`jack_port_t`), valid while the client is open
+/// What the latency callback reads: the latencies, and the pedalboard's
+/// ports. Each port holds the client open, so the client closes only once
+/// this is dropped: the callback never outlives it.
 struct LatencyPorts {
     report: Arc<LatencyReport>,
-    inputs: Vec<usize>,
-    outputs: Vec<usize>,
+    inputs: Vec<Port<Unowned>>,
+    outputs: Vec<Port<Unowned>>,
 }
 
-type RawPort = *mut jack_sys::jack_port_t;
-
-fn get_range(port: usize, mode: jack_sys::jack_latency_callback_mode_t) -> (u32, u32) {
-    let mut range = jack_sys::jack_latency_range_t { min: 0, max: 0 };
-    // SAFETY: a port of the open client
-    unsafe { jack_sys::jack_port_get_latency_range(port as RawPort, mode, &mut range) };
-    (range.min, range.max)
+/// Handles of `ports` that another thread can read (the process callback
+/// owns the ports themselves)
+fn unowned<PS>(client: &Client, ports: &[Port<PS>]) -> Result<Vec<Port<Unowned>>> {
+    ports
+        .iter()
+        .map(|port| {
+            let name = port.name().context("Port without a name")?;
+            client
+                .port_by_name(&name)
+                .with_context(|| format!("Port {name} not found"))
+        })
+        .collect()
 }
 
-fn set_range(port: usize, mode: jack_sys::jack_latency_callback_mode_t, (min, max): (u32, u32)) {
-    let mut range = jack_sys::jack_latency_range_t { min, max };
-    // SAFETY: a port of the open client, in its latency callback
-    unsafe { jack_sys::jack_port_set_latency_range(port as RawPort, mode, &mut range) };
+/// Latency range of `port`; nothing for a port gone
+fn range(port: &Port<Unowned>, mode: LatencyType) -> (u32, u32) {
+    port.get_latency_range(mode).unwrap_or((0, 0))
 }
 
 /// JACK asks for the latency of the ports: an output is as late as the
@@ -299,28 +311,31 @@ unsafe extern "C" fn latency_callback(
         return;
     };
     let report = &ports.report;
+    // A port gone has no latency to set
     if mode == jack_sys::JackCaptureLatency {
-        for (index, &port) in ports.outputs.iter().enumerate() {
+        let mode = LatencyType::Capture;
+        for (index, port) in ports.outputs.iter().enumerate() {
             let own = report.output(index);
             let (min, max) = ports
                 .inputs
                 .get(own.input)
-                .map_or((0, 0), |&input| get_range(input, mode));
-            set_range(port, mode, (min + own.min, max + own.max));
+                .map_or((0, 0), |input| range(input, mode));
+            let _ = port.set_latency_range(mode, (min + own.min, max + own.max));
         }
     } else {
-        for (index, &port) in ports.inputs.iter().enumerate() {
-            let mut range: Option<(u32, u32)> = None;
-            for (out, &out_port) in ports.outputs.iter().enumerate() {
+        let mode = LatencyType::Playback;
+        for (index, port) in ports.inputs.iter().enumerate() {
+            let mut fed: Option<(u32, u32)> = None;
+            for (out, out_port) in ports.outputs.iter().enumerate() {
                 let own = report.output(out);
                 if own.source == OutputSource::Silent || own.input != index {
                     continue;
                 }
-                let (min, max) = get_range(out_port, mode);
+                let (min, max) = range(out_port, mode);
                 let (min, max) = (min + own.min, max + own.max);
-                range = Some(range.map_or((min, max), |(a, b)| (a.min(min), b.max(max))));
+                fed = Some(fed.map_or((min, max), |(a, b)| (a.min(min), b.max(max))));
             }
-            set_range(port, mode, range.unwrap_or((0, 0)));
+            let _ = port.set_latency_range(mode, fed.unwrap_or((0, 0)));
         }
     }
 }
@@ -329,7 +344,8 @@ unsafe extern "C" fn latency_callback(
 struct LatencyWatch {
     /// The client while it is open; None tells the thread to stop
     client: Arc<Mutex<Option<usize>>>,
-    // Read by the latency callback until the client is closed
+    // Read by the latency callback; holds the client open (dropped after
+    // `Drop` stopped the thread)
     _ports: Box<LatencyPorts>,
 }
 
@@ -348,8 +364,9 @@ impl LatencyWatch {
                     let version = report.version();
                     if version != seen {
                         seen = version;
-                        // SAFETY: the client is open while the lock is held
-                        // (`Drop` takes it before the client closes)
+                        // SAFETY: the client is open while the lock is held:
+                        // `Drop` takes it before `_ports`, which keep the
+                        // client open, are dropped
                         unsafe {
                             jack_sys::jack_recompute_total_latencies(
                                 raw as *mut jack_sys::jack_client_t,
@@ -477,17 +494,12 @@ impl ProcessHandler for PedalboardProcessor {
         if let Ok(mut looper) = self.looper.try_lock() {
             looper.process(left, right);
         }
-        // A plugin or model gone wrong (NaN, infinity) would send garbage,
-        // possibly at full scale, to the speakers: silence instead
-        if !left.iter().chain(right.iter()).all(|s| s.is_finite()) {
-            left.fill(0.0);
-            right.fill(0.0);
-        }
-        for bus in self.sends.iter_mut().flatten() {
-            let bus = &mut bus[..n];
-            if !bus.iter().all(|s| s.is_finite()) {
-                bus.fill(0.0);
-            }
+        // Each block's output is checked by its guard; this is the last
+        // check before the speakers, for what no block puts out (a sum
+        // that overflows, the looper)
+        silence_non_finite(&mut [&mut *left, &mut *right]);
+        for [l, r] in &mut self.sends {
+            silence_non_finite(&mut [&mut l[..n], &mut r[..n]]);
         }
         let passed = |i: u8| inputs.get(..heard)?.get(i as usize).copied();
         // The main mix, then each send
@@ -515,11 +527,10 @@ impl ProcessHandler for PedalboardProcessor {
         self.levels.record(input, left, right);
 
         // Latency of the effects and of every output, for JACK and the UI
-        let chain = self.chain_switcher.latency();
-        let sends = self.chain_switcher.send_latency();
-        self.latency.set_chain(chain);
+        let effects = self.chain_switcher.latency();
+        self.latency.set_chain(effects.chain);
         for port in 0..count {
-            let latency = self.router.output_latency(port, chain, &sends);
+            let latency = self.router.output_latency(port, &effects);
             self.latency.set_output(port, latency);
         }
 
