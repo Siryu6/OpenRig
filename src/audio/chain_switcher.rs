@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
 use super::dsp_pool;
+use super::latency::EffectsLatency;
 use crate::midi::RawMidi;
 use crate::plugins::chain::{ChainCommand, ChainIo, ChainSpec, EffectChain};
 use crate::plugins::Lv2Host;
@@ -419,14 +420,9 @@ impl ChainSwitcher {
         self.next.as_ref().unwrap_or(&self.active)
     }
 
-    /// Frames the effects are late by (real-time safe)
-    pub fn latency(&self) -> usize {
-        self.heard().latency()
-    }
-
-    /// Shortest and longest frames each send bus is late by (real-time safe)
-    pub fn send_latency(&self) -> [Option<(usize, usize)>; crate::audio::routing::MAX_SENDS] {
-        self.heard().send_latency()
+    /// Frames the main mix and the send buses are late by (real-time safe)
+    pub fn latency(&self) -> EffectsLatency {
+        self.heard().effects_latency()
     }
 
     #[cfg(test)]

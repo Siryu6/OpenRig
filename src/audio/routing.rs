@@ -21,7 +21,7 @@ use crossbeam_channel::{Receiver, Sender, TrySendError};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use super::latency::{OutputLatency, OutputSource};
+use super::latency::{EffectsLatency, OutputLatency, OutputSource};
 use super::master::{self, Limiter, MasterProc, MasterTarget, OutputEq};
 use crate::plugins::chain::{pan_gains, ramp};
 
@@ -675,15 +675,10 @@ impl OutputRouter {
 }
 
 impl OutputRouter {
-    /// Latency of output `port`: of what it plays (the main mix, late by
-    /// `chain` frames, a send, late by `sends`, or an input), plus the
-    /// lookahead of its limiter (real-time safe)
-    pub fn output_latency(
-        &self,
-        port: usize,
-        chain: usize,
-        sends: &[Option<(usize, usize)>],
-    ) -> OutputLatency {
+    /// Latency of output `port`: of what it plays (the main mix or a
+    /// send, as late as `effects` says, or an input), plus the lookahead
+    /// of its limiter (real-time safe)
+    pub fn output_latency(&self, port: usize, effects: &EffectsLatency) -> OutputLatency {
         let silent = OutputLatency {
             min: 0,
             max: 0,
@@ -708,14 +703,7 @@ impl OutputRouter {
         let (min, max, input, source) = match target.input {
             Some(input) => (0, 0, input as usize, OutputSource::Input),
             None => {
-                let (min, max) = match target.bus {
-                    0 => (chain, chain),
-                    bus => sends
-                        .get(bus as usize - 1)
-                        .copied()
-                        .flatten()
-                        .unwrap_or((0, 0)),
-                };
+                let (min, max) = effects.bus(target.bus as usize);
                 (min, max, self.chain_input(), OutputSource::Effects)
             }
         };
@@ -984,6 +972,49 @@ mod tests {
         let mix = routing.mix(1, 2, RATE);
         assert_eq!(mix.widths[..2], [2, 0]);
         assert!(mix.masters[0].limiter);
+    }
+
+    #[test]
+    fn each_output_is_as_late_as_what_it_plays() {
+        let mut send = strip(2, false, Source::Send(1));
+        send.limiter.on = false;
+        let routing = Routing {
+            input: 1,
+            strips: vec![
+                Strip::main(0, true),
+                send,
+                strip(3, false, Source::Input(0)),
+            ],
+        };
+        let (router, _) = OutputRouter::new(&routing, 2, 5, RATE);
+        let lookahead = MasterProc::new(RATE).latency() as u32;
+        assert!(lookahead > 0);
+        let mut effects = EffectsLatency {
+            chain: 100,
+            ..Default::default()
+        };
+        effects.sends[1] = Some((10, 30));
+        let latency = |port| router.output_latency(port, &effects);
+        // The main pair, both sides through the pair's limiter
+        for port in [0, 1] {
+            let out = latency(port);
+            assert_eq!((out.min, out.max), (100 + lookahead, 100 + lookahead));
+            assert_eq!((out.input, out.source), (1, OutputSource::Effects));
+        }
+        // Send 2, without a limiter
+        let out = latency(2);
+        assert_eq!(
+            (out.min, out.max, out.source),
+            (10, 30, OutputSource::Effects)
+        );
+        // Input 1 straight through, limited
+        let out = latency(3);
+        assert_eq!((out.min, out.max), (lookahead, lookahead));
+        assert_eq!((out.input, out.source), (0, OutputSource::Input));
+        // Nothing on output 5
+        assert_eq!(latency(4).source, OutputSource::Silent);
+        // A send no block feeds is not late
+        assert_eq!(effects.bus(1), (0, 0));
     }
 
     #[test]
