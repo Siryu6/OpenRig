@@ -64,6 +64,14 @@ pub enum ChainNode {
 }
 
 impl ChainNode {
+    pub fn instance_id(&self) -> usize {
+        match self {
+            ChainNode::Plugin { instance_id, .. } | ChainNode::Split { instance_id, .. } => {
+                *instance_id
+            }
+        }
+    }
+
     /// Whether this node is a split
     pub fn is_split(&self) -> bool {
         matches!(self, ChainNode::Split { .. })
@@ -75,5 +83,93 @@ impl ChainNode {
             ChainNode::Plugin { enabled, .. } => *enabled,
             ChainNode::Split { enabled, .. } => *enabled,
         }
+    }
+}
+
+/// Every node of `nodes`, splits included, in processing order: a split,
+/// then its top branch, then its bottom branch
+pub fn walk(nodes: &[ChainNode]) -> Walk<'_> {
+    Walk {
+        stack: vec![nodes.iter()],
+    }
+}
+
+/// Iterator of [`walk`]
+pub struct Walk<'a> {
+    /// The branches being walked, innermost last
+    stack: Vec<std::slice::Iter<'a, ChainNode>>,
+}
+
+impl<'a> Iterator for Walk<'a> {
+    type Item = &'a ChainNode;
+
+    fn next(&mut self) -> Option<&'a ChainNode> {
+        loop {
+            let Some(node) = self.stack.last_mut()?.next() else {
+                self.stack.pop();
+                continue;
+            };
+            if let ChainNode::Split {
+                top_chain,
+                bottom_chain,
+                ..
+            } = node
+            {
+                self.stack.push(bottom_chain.iter());
+                self.stack.push(top_chain.iter());
+            }
+            return Some(node);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plugin(id: usize) -> ChainNode {
+        ChainNode::Plugin {
+            instance_id: id,
+            uri: String::new(),
+            enabled: true,
+            num_inputs: 1,
+            num_outputs: 1,
+        }
+    }
+
+    fn split(id: usize, top: Vec<ChainNode>, bottom: Vec<ChainNode>) -> ChainNode {
+        ChainNode::Split {
+            instance_id: id,
+            split_type: SplitType::Ab,
+            enabled: true,
+            top_chain: top,
+            bottom_chain: bottom,
+            ab_select_a: true,
+            mix_ratio: 0.5,
+            pan: [0.0; 2],
+            num_inputs: 1,
+            num_outputs: 1,
+        }
+    }
+
+    #[test]
+    fn walk_follows_the_processing_order() {
+        let nodes = vec![
+            plugin(1),
+            split(
+                2,
+                vec![plugin(3), split(4, vec![], vec![plugin(5)])],
+                vec![plugin(6)],
+            ),
+            split(7, vec![], vec![]),
+            plugin(8),
+        ];
+        let ids: Vec<usize> = walk(&nodes).map(ChainNode::instance_id).collect();
+        assert_eq!(ids, [1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(walk(&[]).count(), 0);
+        let inside: Vec<usize> = walk(std::slice::from_ref(&nodes[1]))
+            .map(ChainNode::instance_id)
+            .collect();
+        assert_eq!(inside, [2, 3, 4, 5, 6]);
     }
 }

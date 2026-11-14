@@ -2,6 +2,8 @@
 
 pub mod audio;
 pub mod backup;
+#[cfg(any(feature = "update", feature = "store"))]
+pub mod download;
 pub mod drives;
 pub mod hardware;
 pub mod i2c_encoders;

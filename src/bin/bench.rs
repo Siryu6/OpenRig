@@ -20,7 +20,7 @@ use std::time::Instant;
 
 use anyhow::{anyhow, bail, Context, Result};
 
-use pedalboard::audio::split_chain::{ChainNode, SplitType};
+use pedalboard::audio::split_chain::{walk, ChainNode, SplitType};
 use pedalboard::plugins::scanner::NAM_URI;
 use pedalboard::plugins::{ChainSpec, EffectChain, Lv2Host};
 
@@ -86,9 +86,9 @@ fn main() -> Result<()> {
         other => bail!("unknown rig {other}"),
     };
     let mut files = HashMap::new();
-    collect_ids(&nodes, &mut |id| {
-        files.insert(id, model.clone());
-    });
+    for node in walk(&nodes).filter(|n| !n.is_split()) {
+        files.insert(node.instance_id(), model.clone());
+    }
     let spec = ChainSpec {
         nodes,
         files,
@@ -158,22 +158,6 @@ fn main() -> Result<()> {
         cpu / times.len() as f64
     );
     Ok(())
-}
-
-fn collect_ids(nodes: &[ChainNode], f: &mut impl FnMut(usize)) {
-    for node in nodes {
-        match node {
-            ChainNode::Plugin { instance_id, .. } => f(*instance_id),
-            ChainNode::Split {
-                top_chain,
-                bottom_chain,
-                ..
-            } => {
-                collect_ids(top_chain, f);
-                collect_ids(bottom_chain, f);
-            }
-        }
-    }
 }
 
 /// CPU time of this thread, in µs

@@ -49,13 +49,7 @@ thread_local! {
 }
 
 fn with_page<R>(f: impl FnOnce(&mut Page) -> R) -> Option<R> {
-    PAGE.with(|p| match p.try_borrow_mut() {
-        Ok(mut page) => Some(f(&mut page)),
-        Err(_) => {
-            warn!("openrig.eu page in use, update skipped");
-            None
-        }
-    })
+    PAGE.with(|p| crate::borrow_page(p, "openrig.eu page").map(|mut page| f(&mut page)))
 }
 
 /// The client of the site: with the account when there is one

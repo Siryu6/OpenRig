@@ -15,10 +15,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
-/// Holding a button this long is a long press (as the GPIO encoder)
-pub const LONG_PRESS: Duration = Duration::from_millis(600);
-/// Counts per detent the boards can be set to
-pub const STEPS: [u8; 3] = [1, 2, 4];
+use crate::hardware::LONG_PRESS;
 
 /// An I2C bus: plain writes and reads to a 7-bit address (an address that
 /// does not answer is an error)

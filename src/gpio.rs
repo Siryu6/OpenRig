@@ -20,7 +20,7 @@
 use anyhow::{Context, Result};
 use gpiocdev::line::{Bias, EdgeDetection, EdgeKind, Value};
 use gpiocdev::{Chip, Request};
-use pedalboard::hardware::{Hardware, Line};
+use pedalboard::hardware::{Hardware, Line, LONG_PRESS};
 use slint::platform::{Key, WindowEvent};
 use slint::ComponentHandle;
 use std::path::Path;
@@ -34,9 +34,6 @@ use crate::App;
 use pedalboard::state::AppState;
 
 const DEBOUNCE: Duration = Duration::from_millis(30);
-/// Holding the encoder's button this long goes back (Escape) instead of
-/// pressing (Return, on release)
-const LONG_PRESS: Duration = Duration::from_millis(600);
 /// Quadrature transitions: index = previous AB state << 2 | new AB state
 const QUADRATURE: [i8; 16] = [0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0];
 

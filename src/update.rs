@@ -14,8 +14,7 @@
 //! Every call here blocks on the network or on the installer: call them off
 //! the UI thread.
 
-use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -23,6 +22,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 use tracing::warn;
 
+use crate::download::save_verified;
 use crate::system_config::{request_state, send_request};
 
 /// Latest release of the official repository
@@ -316,10 +316,13 @@ fn fetch(url: &str, body_timeout: Duration) -> Result<ureq::http::Response<ureq:
 pub fn download(
     download: &Download,
     dir: &Path,
-    mut progress: impl FnMut(u64, u64),
+    progress: impl FnMut(u64, u64),
 ) -> Result<PathBuf> {
     if !valid_file_name(&download.file) {
         bail!("Invalid file name: {}", download.file);
+    }
+    if download.size > MAX_DOWNLOAD_BYTES {
+        bail!("The update is too large");
     }
     fs::create_dir_all(dir).with_context(|| format!("Cannot create {}", dir.display()))?;
     // Leftovers of an earlier attempt: what stays only takes space
@@ -331,59 +334,21 @@ pub fn download(
         }
     }
     let path = dir.join(&download.file);
-    let part = dir.join(format!("{}.part", download.file));
-    let result = (|| {
-        // ureq has no idle timeout: a stalled download fails once it is
-        // below MIN_DOWNLOAD_RATE on average, rather than after an hour
-        let timeout = 60 + download.size / MIN_DOWNLOAD_RATE;
-        let response = fetch(&download.url, Duration::from_secs(timeout))?;
-        let mut body = response
-            .into_body()
-            .into_reader()
-            .take(MAX_DOWNLOAD_BYTES + 1);
-        let mut file =
-            File::create(&part).with_context(|| format!("Cannot write {}", part.display()))?;
-        let mut hash = ring::digest::Context::new(&ring::digest::SHA256);
-        let mut buffer = vec![0u8; 64 * 1024];
-        let mut received = 0u64;
-        loop {
-            let n = body.read(&mut buffer).context("Download interrupted")?;
-            if n == 0 {
-                break;
-            }
-            file.write_all(&buffer[..n])
-                .context("Not enough space for the update")?;
-            hash.update(&buffer[..n]);
-            received += n as u64;
-            if received > MAX_DOWNLOAD_BYTES {
-                bail!("The update is too large");
-            }
-            progress(received, download.size.max(received));
-        }
-        if received != download.size {
-            bail!(
-                "Download incomplete ({received} of {} bytes)",
-                download.size
-            );
-        }
-        let digest = hex(hash.finish().as_ref());
-        if digest != download.sha256 {
-            bail!("The download is damaged (checksum mismatch)");
-        }
-        file.sync_all()
-            .with_context(|| format!("Cannot write {}", part.display()))?;
-        fs::rename(&part, &path).with_context(|| format!("Cannot write {}", path.display()))?;
-        Ok(path.clone())
-    })();
-    if result.is_err() {
-        // Not there when the download failed before creating it
-        let _ = fs::remove_file(&part);
-    }
-    result
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    // ureq has no idle timeout: a stalled download fails once it is
+    // below MIN_DOWNLOAD_RATE on average, rather than after an hour
+    let timeout = 60 + download.size / MIN_DOWNLOAD_RATE;
+    let body = fetch(&download.url, Duration::from_secs(timeout))?
+        .into_body()
+        .into_reader();
+    save_verified(
+        body,
+        download.size,
+        &download.sha256,
+        &path,
+        "the update",
+        progress,
+    )?;
+    Ok(path)
 }
 
 /// State of an installation, from the root installer's status file
