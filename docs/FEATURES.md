@@ -74,9 +74,8 @@ What OpenRig does, in more technical detail than the
   license and link in `tone.json`, and can be loaded straight into the block.
   Opened from a block, the library lists the tones of the block's format
   ("All NAM" or "All IRs") and offers every gear filter; it never opens on
-  a gear the user did not pick. "Use" loads a downloaded model in it when the
-  block can play its format (any IR in Cabinet or Space, any NAM model in
-  Amp, Amp + Cab or Pedal), else the library says why;
+  a gear the user did not pick. "Use" loads a downloaded model in it (any
+  IR in Cabinet or Space, any NAM model in Amp, Amp + Cab or Pedal);
   "Add" puts a downloaded model in a new block of its type.
   A block playing a TONE3000 tone carries the T3K mark, and its editor
   shows the tone picture.

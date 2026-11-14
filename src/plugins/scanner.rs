@@ -411,6 +411,10 @@ pub enum FileKind {
 }
 
 impl FileKind {
+    const ALL: [FileKind; 2] = [FileKind::Neural, FileKind::ImpulseResponse];
+
+    /// Extensions of the files of this kind; the first is the one of a
+    /// TONE3000 download
     pub fn extensions(self) -> &'static [&'static str] {
         match self {
             FileKind::Neural => &["nam", "json", "aidax"],
@@ -418,14 +422,9 @@ impl FileKind {
         }
     }
 
-    /// Engine that loads a TONE3000 format ("nam", "ir"); `None` for the
-    /// formats no block loads (AIDA-X, Proteus…)
-    pub fn of_format(format: &str) -> Option<FileKind> {
-        match format {
-            "nam" => Some(FileKind::Neural),
-            "ir" => Some(FileKind::ImpulseResponse),
-            _ => None,
-        }
+    /// Extension of a TONE3000 download of this kind
+    pub fn extension(self) -> &'static str {
+        self.extensions()[0]
     }
 
     /// TONE3000 format of the files of this kind
@@ -436,12 +435,24 @@ impl FileKind {
         }
     }
 
-    /// "a NAM model", "an impulse response (IR)"
-    fn description(self) -> &'static str {
+    /// Whether this build has the engine (NAM needs the `nam` feature)
+    fn available(self) -> bool {
         match self {
-            FileKind::Neural => "a NAM model",
-            FileKind::ImpulseResponse => "an impulse response (IR)",
+            FileKind::Neural => cfg!(feature = "nam"),
+            FileKind::ImpulseResponse => true,
         }
+    }
+
+    /// Kind of a TONE3000 format ("nam", "ir"), whether or not this build
+    /// plays it: download paths do not depend on the build. `None` for the
+    /// formats no block loads (AIDA-X, Proteus…)
+    pub fn of_format(format: &str) -> Option<FileKind> {
+        Self::ALL.into_iter().find(|k| k.format() == format)
+    }
+
+    /// Kind of a TONE3000 format when a block of this build plays it
+    pub fn playable(format: &str) -> Option<FileKind> {
+        Self::of_format(format).filter(|k| k.available())
     }
 }
 
@@ -524,57 +535,20 @@ pub fn file_block(uri: &str) -> Option<&'static FileBlock> {
 }
 
 impl FileBlock {
-    /// Whether this block loads the files of a TONE3000 `format`. The gear
-    /// does not matter: any IR loads in any IR block, any NAM model in any
-    /// NAM block.
+    /// Whether this block of this build loads the files of a TONE3000
+    /// `format`. The gear does not matter: any IR loads in any IR block,
+    /// any NAM model in any NAM block.
     pub fn loads_format(&self, format: &str) -> bool {
-        FileKind::of_format(format) == Some(self.kind)
-    }
-
-    /// Why a tone of `format` cannot be loaded in this block, `None` when
-    /// it can
-    pub fn refusal(&self, format: &str) -> Option<String> {
-        let Some(kind) = FileKind::of_format(format) else {
-            let name = if format.is_empty() {
-                "This"
-            } else {
-                &format.to_uppercase()
-            };
-            return Some(format!("{name} files cannot be loaded in OpenRig yet."));
-        };
-        if kind == self.kind {
-            return None;
-        }
-        let names: Vec<&str> = FILE_BLOCKS
-            .iter()
-            .filter(|b| b.kind == kind)
-            .map(|b| b.name)
-            .collect();
-        let list = match names.split_last() {
-            Some((last, [])) => last.to_string(),
-            Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
-            None => return Some("No block loads these files.".into()),
-        };
-        let article = if list.starts_with(['A', 'E', 'I', 'O', 'U']) {
-            "an"
-        } else {
-            "a"
-        };
-        let blocks = format!("{article} {list} block");
-        Some(format!(
-            "This is {}. It loads in {blocks}, not in {}.",
-            kind.description(),
-            self.name
-        ))
+        FileKind::playable(format) == Some(self.kind)
     }
 }
 
 /// Block a new TONE3000 tone of `format` and `gear` goes in: the one made
 /// for its gear, else Space for an IR (blended with the dry signal, safe
-/// for any IR) and Pedal for a NAM model. `None` when no block loads the
-/// format.
+/// for any IR) and Pedal for a NAM model. `None` when no block of this
+/// build loads the format.
 pub fn block_for_tone(format: &str, gear: &str) -> Option<&'static FileBlock> {
-    let kind = FileKind::of_format(format)?;
+    let kind = FileKind::playable(format)?;
     let fallback = match kind {
         FileKind::ImpulseResponse => IR_SPACE_URI,
         FileKind::Neural => NAM_PEDAL_URI,
@@ -949,17 +923,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tone3000_formats_have_one_table() {
+        let nam = cfg!(feature = "nam");
+        for kind in FileKind::ALL {
+            assert_eq!(FileKind::of_format(kind.format()), Some(kind));
+            assert!(kind.extensions().contains(&kind.extension()));
+        }
+        assert_eq!(FileKind::Neural.extension(), "nam");
+        assert_eq!(FileKind::ImpulseResponse.extension(), "wav");
+        // Paths do not depend on the build, playing does
+        assert_eq!(FileKind::of_format("nam"), Some(FileKind::Neural));
+        assert_eq!(FileKind::playable("nam"), nam.then_some(FileKind::Neural));
+        assert_eq!(FileKind::playable("ir"), Some(FileKind::ImpulseResponse));
+        for format in ["aida-x", "proteus", "", "NAM"] {
+            assert_eq!(FileKind::of_format(format), None);
+            assert_eq!(FileKind::playable(format), None);
+        }
+    }
+
+    #[test]
     fn tone3000_files_load_in_every_block_of_their_kind() {
         let block = |uri| file_block(uri).unwrap();
+        let nam = cfg!(feature = "nam");
         // The gear is a preference, not a requirement: an "outboard" spring
         // tank IR loads in Space and Cabinet, any NAM model in any NAM block
         for uri in [IR_URI, IR_SPACE_URI] {
             assert!(block(uri).loads_format("ir"));
             assert!(!block(uri).loads_format("nam"));
-            assert_eq!(block(uri).refusal("ir"), None);
         }
+        // A NAM block of a build without NAM (from an old preset) loads
+        // nothing
         for uri in [NAM_URI, NAM_AMP_CAB_URI, NAM_PEDAL_URI] {
-            assert!(block(uri).loads_format("nam"));
+            assert_eq!(block(uri).loads_format("nam"), nam);
             assert!(!block(uri).loads_format("ir"));
         }
         assert!(!block(IR_SPACE_URI).loads_format("aida-x"));
@@ -970,27 +965,12 @@ mod tests {
         assert_eq!(target("ir", "space"), Some(IR_SPACE_URI));
         assert_eq!(target("ir", "cab"), Some(IR_URI));
         assert_eq!(target("ir", "amp"), Some(IR_SPACE_URI));
-        assert_eq!(target("nam", "amp"), Some(NAM_URI));
-        assert_eq!(target("nam", "amp-cab"), Some(NAM_AMP_CAB_URI));
-        assert_eq!(target("nam", "outboard"), Some(NAM_PEDAL_URI));
-        assert_eq!(target("nam", "space"), Some(NAM_PEDAL_URI));
+        let neural = |uri| nam.then_some(uri);
+        assert_eq!(target("nam", "amp"), neural(NAM_URI));
+        assert_eq!(target("nam", "amp-cab"), neural(NAM_AMP_CAB_URI));
+        assert_eq!(target("nam", "outboard"), neural(NAM_PEDAL_URI));
+        assert_eq!(target("nam", "space"), neural(NAM_PEDAL_URI));
         assert_eq!(target("aida-x", "pedal"), None);
-
-        // Why not, in plain words
-        assert_eq!(
-            block(NAM_PEDAL_URI).refusal("ir").as_deref(),
-            Some("This is an impulse response (IR). It loads in a Cabinet or Space block, not in Pedal.")
-        );
-        assert_eq!(
-            block(IR_SPACE_URI).refusal("nam").as_deref(),
-            Some(
-                "This is a NAM model. It loads in an Amp, Amp + Cab or Pedal block, not in Space."
-            )
-        );
-        assert_eq!(
-            block(IR_URI).refusal("aida-x").as_deref(),
-            Some("AIDA-X files cannot be loaded in OpenRig yet.")
-        );
     }
 
     #[test]
