@@ -5,6 +5,7 @@ import { NetMidiDevice, SystemSetting, WifiNetwork } from "../types.slint";
 import { Tone3000Logo } from "../components/tone3000_brand.slint";
 import { Features } from "../features.slint";
 import { RemoteCard, RemoteControl } from "../remote.slint";
+import { Backup, BackupCard, BackupPanel } from "backup_view.slint";
 
 // Signal strength as four bars
 component SignalBars inherits Rectangle {
@@ -1364,6 +1365,9 @@ export component SettingsView inherits Rectangle {
                     radius: Theme.radius-lg;
                 }
             }
+
+            // ---------------------------------------------------- Backup
+            BackupCard { }
         }
     }
 
@@ -1713,4 +1717,7 @@ export component SettingsView inherits Rectangle {
             }
         }
     }
+
+    // Backup and restore, over the settings
+    if Backup.open: BackupPanel { }
 }

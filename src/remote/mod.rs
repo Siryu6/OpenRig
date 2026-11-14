@@ -71,7 +71,14 @@ pub struct Remote {
     status: Mutex<Status>,
     /// Names of the pedal accepted in the Host header
     names: Vec<String>,
+    /// Where backups are read from and restored to
+    data_dir: std::path::PathBuf,
+    /// Called once a backup uploaded is ready: the app restarts to restore it
+    restore_hook: Mutex<Option<Arc<RestoreHook>>>,
 }
+
+/// Run on the UI thread's behalf once a restore is staged
+pub type RestoreHook = Box<dyn Fn() + Send + Sync>;
 
 impl Remote {
     pub fn new(data_dir: &std::path::Path, status: Status) -> Arc<Self> {
@@ -92,12 +99,26 @@ impl Remote {
             dispatcher: Mutex::new(None),
             status: Mutex::new(status),
             names: net::local_names(&hostname),
+            data_dir: data_dir.to_path_buf(),
+            restore_hook: Mutex::new(None),
         })
     }
 
     /// Where commands of the clients go (the UI thread)
     pub fn set_dispatcher(&self, dispatcher: Dispatcher) {
         *self.dispatcher.locked() = Some(Arc::new(dispatcher));
+    }
+
+    /// What to do once an uploaded backup is ready to restore
+    pub fn set_restore_hook(&self, hook: RestoreHook) {
+        *self.restore_hook.locked() = Some(Arc::new(hook));
+    }
+
+    fn restore_staged(&self) {
+        let hook = self.restore_hook.locked().clone();
+        if let Some(hook) = hook {
+            hook();
+        }
     }
 
     fn dispatch(&self, command: Command) {

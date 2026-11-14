@@ -1,3 +1,4 @@
+mod backup_ui;
 mod block_sound;
 #[cfg(feature = "store")]
 mod catalog_ui;
@@ -156,6 +157,40 @@ pub(crate) fn ui(app: &slint::Weak<App>, f: impl FnOnce(&App) + Send + 'static) 
             f(&app);
         }
     });
+}
+
+/// Set by `restart`: the app starts again once it has quit
+static RESTART: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Quit and start again (a restore takes effect at the start). On the OS
+/// image the supervisor starts the app again; elsewhere the app does,
+/// once its session is saved and the audio closed.
+pub(crate) fn restart(_app: &App) {
+    info!("Restarting");
+    RESTART.store(true, std::sync::atomic::Ordering::Relaxed);
+    slint::Timer::single_shot(Duration::from_millis(400), || {
+        let _ = slint::quit_event_loop();
+    });
+}
+
+/// Start this program again with the same arguments (no supervisor)
+fn start_again() {
+    let Ok(exe) = std::env::current_exe() else {
+        error!("Cannot find the program to start again");
+        return;
+    };
+    let mut command = std::process::Command::new(exe);
+    command.args(std::env::args_os().skip(1));
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let e = command.exec();
+        error!(error = %e, "Cannot start again");
+    }
+    #[cfg(not(unix))]
+    if let Err(e) = command.spawn() {
+        error!(error = %e, "Cannot start again");
+    }
 }
 
 /// Run `f` on a new thread; false (logged) when the system cannot start one
@@ -1772,6 +1807,16 @@ fn main() -> Result<()> {
     )]
     let headless = headless_mode();
 
+    // A restore staged before the last quit is swapped in before anything
+    // reads the data directory
+    let restored = match pedalboard::backup::apply_pending(&pedalboard::state::data_dir()) {
+        Ok(restored) => restored,
+        Err(e) => {
+            error!(error = format_args!("{e:#}"), "Backup not restored");
+            None
+        }
+    };
+
     let state = Arc::new(AppState::new()?);
     let demo = state.lv2_host.is_demo();
     if demo {
@@ -1883,6 +1928,10 @@ fn main() -> Result<()> {
     hardware_ui::setup(&app, &state);
     system_ui::setup(&app);
     strip_ui::setup(&app);
+    backup_ui::setup(&app, &state);
+    if let Some(manifest) = &restored {
+        backup_ui::restored(&app, manifest);
+    }
 
     app.run()?;
 
@@ -1893,6 +1942,12 @@ fn main() -> Result<()> {
     drop(_monitor);
     drop(_audio_watch);
     drop(engine);
+    // Under the OS image's supervisor, quitting is enough
+    if RESTART.load(std::sync::atomic::Ordering::Relaxed)
+        && std::env::var_os(EXIT_ON_AUDIO_CHANGE).is_none()
+    {
+        start_again();
+    }
     Ok(())
 }
 

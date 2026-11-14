@@ -93,6 +93,18 @@
       <button id="logout">Sign out</button>
       <button id="logout-all" class="danger">Sign out all devices</button>
     </div>
+
+    <h2 class="section">Backup</h2>
+    <p class="muted">One file with presets, setlists, rigs, loops and settings. Passwords, accounts and Wi-Fi keys are never in it.</p>
+    <label class="check"><input id="backup-full" type="checkbox"> Include models and plugins (larger)</label>
+    <div class="row">
+      <a id="backup-download" class="button primary" href="/api/backup" download>Download backup</a>
+    </div>
+    <p class="muted">Restore replaces presets, setlists, rigs, loops and settings with the backup's, and the pedal restarts. What it replaces is kept for one undo (Settings → Backup on the pedal).</p>
+    <div class="row">
+      <input id="backup-file" type="file" accept=".gz,application/gzip" aria-label="Backup file">
+      <button id="backup-restore" class="danger">Restore</button>
+    </div>
   </div>
 
   <div id="toast" class="toast" hidden></div>

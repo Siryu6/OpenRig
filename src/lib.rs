@@ -1,6 +1,7 @@
 // Library exports for pedalboard crate
 
 pub mod audio;
+pub mod backup;
 pub mod hardware;
 pub mod i2c_encoders;
 pub mod midi;

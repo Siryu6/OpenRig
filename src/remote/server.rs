@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{ConnectInfo, Request, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Query, Request, State};
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -142,6 +142,13 @@ fn router(state: Shared) -> Router {
         .route("/api/logout", post(logout))
         .route("/api/logout-all", post(logout_all))
         .route("/api/status", get(status))
+        .route("/api/backup", get(download_backup))
+        .route(
+            "/api/restore",
+            post(upload_backup).layer(DefaultBodyLimit::max(
+                crate::backup::MAX_REMOTE_BYTES as usize,
+            )),
+        )
         .route("/ws", get(websocket))
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard))
         .with_state(state)
@@ -346,6 +353,88 @@ async fn status(State(state): State<Shared>, headers: HeaderMap) -> Response {
             .collect::<Vec<_>>(),
     }))
     .into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct BackupQuery {
+    /// With models and plugins
+    #[serde(default)]
+    full: bool,
+}
+
+/// A backup of the pedal, as a file to save (held in memory, capped)
+async fn download_backup(
+    State(state): State<Shared>,
+    headers: HeaderMap,
+    Query(query): Query<BackupQuery>,
+) -> Response {
+    if !signed_in(&state, &headers) {
+        return plain(StatusCode::UNAUTHORIZED, "Sign in first");
+    }
+    let data_dir = state.remote.data_dir.clone();
+    let options = crate::backup::Options {
+        models: query.full,
+        plugins: query.full,
+    };
+    let made =
+        tokio::task::spawn_blocking(move || crate::backup::write_to_memory(&data_dir, options))
+            .await;
+    match made {
+        Ok(Ok(bytes)) => {
+            let name = crate::backup::file_name(chrono::Local::now());
+            tracing::info!(bytes = bytes.len(), "Remote control: backup downloaded");
+            let mut response = bytes.into_response();
+            let h = response.headers_mut();
+            h.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/gzip"),
+            );
+            if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")) {
+                h.insert(header::CONTENT_DISPOSITION, v);
+            }
+            response
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(
+                error = format_args!("{e:#}"),
+                "Remote control: backup not made"
+            );
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")).into_response()
+        }
+        Err(_) => plain(StatusCode::INTERNAL_SERVER_ERROR, "Backup not made"),
+    }
+}
+
+/// A backup sent by the browser: checked and staged, then the app
+/// restarts to restore it
+async fn upload_backup(
+    State(state): State<Shared>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    if !signed_in(&state, &headers) {
+        return plain(StatusCode::UNAUTHORIZED, "Sign in first");
+    }
+    let remote = state.remote.clone();
+    let staged =
+        tokio::task::spawn_blocking(move || crate::backup::stage(&remote.data_dir, body.as_ref()))
+            .await;
+    match staged {
+        Ok(Ok(manifest)) => {
+            tracing::info!(created = %manifest.created, "Remote control: backup uploaded");
+            state.remote.restore_staged();
+            Json(serde_json::json!({ "restoring": true, "created": manifest.created }))
+                .into_response()
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(
+                error = format_args!("{e:#}"),
+                "Remote control: backup refused"
+            );
+            (StatusCode::BAD_REQUEST, format!("{e:#}")).into_response()
+        }
+        Err(_) => plain(StatusCode::INTERNAL_SERVER_ERROR, "Backup not restored"),
+    }
 }
 
 async fn websocket(
@@ -710,6 +799,61 @@ mod tests {
         let status = get("/api/status", &host, &with_cookie);
         assert!(status.starts_with("HTTP/1.1 200"), "{status}");
         assert!(status.contains("\"version\":\"test\""));
+        // Backups: signed in, same origin, checked before anything changes
+        assert!(get("/api/backup", &host, "").starts_with("HTTP/1.1 401"));
+        let _ = std::fs::create_dir_all(dir.join("presets"));
+        let _ = std::fs::write(dir.join("presets").join("Lead.json"), "{}");
+        let download = {
+            use std::io::{Read, Write};
+            let mut out = Vec::new();
+            if let Ok(mut stream) = std::net::TcpStream::connect(("127.0.0.1", port)) {
+                let _ = stream.write_all(
+                    format!("GET /api/backup HTTP/1.1\r\nHost: {host}\r\n{with_cookie}Connection: close\r\n\r\n")
+                        .as_bytes(),
+                );
+                let _ = stream.read_to_end(&mut out);
+            }
+            out
+        };
+        let head = String::from_utf8_lossy(&download[..download.len().min(400)]).to_string();
+        assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+        assert!(
+            head.contains("attachment; filename=\"openrig-backup-"),
+            "{head}"
+        );
+        let restored = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = restored.clone();
+        remote.set_restore_hook(Box::new(move || flag.store(true, Ordering::Relaxed)));
+        let upload = |origin: &str, body: &[u8], extra: &str| -> String {
+            use std::io::{Read, Write};
+            let Ok(mut stream) = std::net::TcpStream::connect(("127.0.0.1", port)) else {
+                return String::new();
+            };
+            let head = format!(
+                "POST /api/restore HTTP/1.1\r\nHost: {host}\r\nOrigin: {origin}\r\n\
+                 Content-Type: application/gzip\r\nContent-Length: {}\r\n{extra}Connection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(body);
+            let mut out = String::new();
+            let _ = stream.read_to_string(&mut out);
+            out
+        };
+        assert!(upload(&origin, b"x", "").starts_with("HTTP/1.1 401"));
+        let cross = upload("http://evil.example", b"x", &with_cookie);
+        assert!(cross.starts_with("HTTP/1.1 403"), "{cross}");
+        let garbage = upload(&origin, b"not a backup", &with_cookie);
+        assert!(garbage.starts_with("HTTP/1.1 400"), "{garbage}");
+        assert!(!restored.load(Ordering::Relaxed));
+        let Ok(archive) = crate::backup::write_to_memory(&dir, crate::backup::Options::default())
+        else {
+            panic!("backup not made");
+        };
+        let ok = upload(&origin, &archive, &with_cookie);
+        assert!(ok.starts_with("HTTP/1.1 200"), "{ok}");
+        assert!(restored.load(Ordering::Relaxed));
+        assert!(crate::backup::pending(&dir));
         // WebSocket without the page's Origin
         let ws = get(
             "/ws",

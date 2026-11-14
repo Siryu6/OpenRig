@@ -1,0 +1,454 @@
+// Settings → Backup: save presets, setlists and settings to a USB drive
+// (or the pedal itself), and bring a backup back.
+// Set by Rust (src/backup_ui.rs) through `app.global::<Backup>()`.
+import { Theme } from "../theme.slint";
+import { Badge, Button, Card, Icon, SectionHeader, Toggle } from "../components/controls.slint";
+
+// A backup file found on a drive or on the pedal
+export struct BackupFile {
+    name: string,     // "14/11/2026 18:30"
+    detail: string,   // "OpenRig 0.14.3 · 1.2 MB · USB SANDISK", or why it cannot be read
+    usb: bool,
+    full: bool,       // with models and plugins
+    readable: bool,
+}
+
+// One line of what a restore replaces
+export struct BackupPart {
+    label: string,    // "Presets"
+    detail: string,   // "12 in the backup, 9 now"
+    replaced: bool,   // false: kept as it is
+}
+
+export global Backup {
+    in-out property <bool> open: false;
+    in-out property <bool> busy: false;
+    in-out property <string> progress: "";
+    // Back up
+    in-out property <bool> include-large: false;
+    in-out property <string> destination: "";   // where the next backup goes
+    in-out property <bool> usb: false;          // to a USB drive
+    in-out property <string> large-size: "";    // "Models 1.2 GB, plugins 300 MB"
+    in-out property <string> local-note: "";    // what only a full backup keeps
+    // Restore
+    in-out property <[BackupFile]> files: [];
+    in-out property <int> selected: -1;         // confirm open for this file
+    in-out property <string> confirm-title: "";
+    in-out property <[BackupPart]> confirm-parts: [];
+    in-out property <string> confirm-note: "";
+    in-out property <bool> confirm-undo: false; // the confirm is for Undo
+    in-out property <bool> can-undo: false;
+    in-out property <string> undo-detail: "";
+    in-out property <int> missing: 0;           // store plugins + TONE3000 models to get again
+    in-out property <string> missing-detail: "";
+    in-out property <string> message: "";
+    in-out property <bool> message-error: false;
+
+    callback opened();
+    callback back-up();
+    callback select(int);
+    callback ask-undo();
+    callback confirm();
+    callback cancel();
+    callback get-missing();
+}
+
+// The Settings card that opens the panel
+export component BackupCard inherits Card {
+    in property <bool> focused: false;
+    height: 72px;
+
+    ta := TouchArea {
+        clicked => {
+            Backup.open = true;
+            Backup.opened();
+        }
+    }
+    HorizontalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-md;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                name: "save";
+                color: Theme.accent;
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: "Backup";
+                color: Theme.text-primary;
+                font-size: Theme.font-title;
+                font-weight: Theme.weight-semibold;
+            }
+            Text {
+                text: "Save presets, setlists and settings, and restore them on a new card or board";
+                color: Theme.text-secondary;
+                font-size: Theme.font-small;
+                wrap: word-wrap;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                name: "chevron-right";
+                color: ta.pressed ? Theme.accent : Theme.text-secondary;
+            }
+        }
+    }
+}
+
+component Line inherits Text {
+    color: Theme.text-secondary;
+    font-size: Theme.font-small;
+    wrap: word-wrap;
+}
+
+component Note inherits Text {
+    color: Theme.text-muted;
+    font-size: Theme.font-caption;
+    wrap: word-wrap;
+}
+
+component FileRow inherits Rectangle {
+    in property <BackupFile> file;
+    callback clicked();
+
+    height: 52px;
+    border-radius: Theme.radius-md;
+    background: row-ta.pressed ? Theme.surface-hover : Theme.surface-raised;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    row-ta := TouchArea {
+        enabled: root.file.readable && !Backup.busy;
+        clicked => {
+            root.clicked();
+        }
+    }
+    HorizontalLayout {
+        padding-left: Theme.space-md;
+        padding-right: Theme.space-md;
+        spacing: Theme.space-sm;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.file.name;
+                color: root.file.readable ? Theme.text-primary : Theme.text-muted;
+                font-size: Theme.font-small;
+                font-weight: Theme.weight-semibold;
+                overflow: elide;
+            }
+            Text {
+                text: root.file.detail;
+                color: root.file.readable ? Theme.text-secondary : Theme.danger;
+                font-size: Theme.font-caption;
+                overflow: elide;
+            }
+        }
+        if root.file.full: VerticalLayout {
+            alignment: center;
+            Badge {
+                text: "FULL";
+                tone: "accent";
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Badge {
+                text: root.file.usb ? "USB" : "PEDAL";
+            }
+        }
+    }
+}
+
+export component BackupPanel inherits Rectangle {
+    background: Theme.background;
+    TouchArea { }
+
+    VerticalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-md;
+
+        HorizontalLayout {
+            height: 48px;
+            spacing: Theme.space-md;
+            Button {
+                horizontal-stretch: 0;
+                icon: "back";
+                text: "Settings";
+                variant: "ghost";
+                clicked => {
+                    Backup.open = false;
+                }
+            }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 2px;
+                SectionHeader {
+                    text: "BACKUP";
+                }
+                Text {
+                    text: "Move your sounds to a new card or another OpenRig";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-small;
+                    overflow: elide;
+                }
+            }
+            Button {
+                horizontal-stretch: 0;
+                icon: "refresh";
+                variant: "ghost";
+                enabled: !Backup.busy;
+                clicked => {
+                    Backup.opened();
+                }
+            }
+        }
+
+        HorizontalLayout {
+            vertical-stretch: 1;
+            spacing: Theme.space-md;
+
+            // ------------------------------------------------ Back up
+            Card {
+                horizontal-stretch: 1;
+                width: (parent.width - Theme.space-md) / 2;
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-sm;
+                    alignment: start;
+                    SectionHeader {
+                        text: "BACK UP";
+                    }
+                    Line {
+                        text: "Saves presets, setlists, rigs, loops and settings in one file.";
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-sm;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 2px;
+                            Text {
+                                text: "INCLUDE MODELS AND PLUGINS";
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-caption;
+                                font-weight: Theme.weight-bold;
+                                letter-spacing: 0.8px;
+                            }
+                            Text {
+                                text: Backup.large-size;
+                                color: Theme.text-muted;
+                                font-size: Theme.font-caption;
+                                wrap: word-wrap;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Toggle {
+                                checked: Backup.include-large;
+                                enabled: !Backup.busy;
+                                toggled(on) => {
+                                    Backup.include-large = on;
+                                }
+                            }
+                        }
+                    }
+                    if !Backup.include-large && Backup.local-note == "": Note {
+                        text: "Off: store plugins and TONE3000 models are listed, then downloaded again after a restore.";
+                    }
+                    if !Backup.include-large && Backup.local-note != "": Note {
+                        text: Backup.local-note;
+                        color: Theme.warning;
+                    }
+                    Note {
+                        text: "Passwords, accounts and Wi-Fi keys are never saved.";
+                    }
+                    Button {
+                        text: Backup.usb ? "Back up to USB drive" : "Back up on the pedal";
+                        icon: "save";
+                        variant: "primary";
+                        enabled: !Backup.busy;
+                        clicked => {
+                            Backup.back-up();
+                        }
+                    }
+                    Note {
+                        text: Backup.destination;
+                    }
+                }
+            }
+
+            // ------------------------------------------------ Restore
+            Card {
+                horizontal-stretch: 1;
+                width: (parent.width - Theme.space-md) / 2;
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-sm;
+                    SectionHeader {
+                        text: "RESTORE";
+                    }
+                    if Backup.files.length == 0: Line {
+                        vertical-stretch: 1;
+                        text: "No backup found. Plug in the USB drive that holds one (openrig-backup-….tar.gz at its top), or upload one from the remote control.";
+                    }
+                    if Backup.files.length > 0: Flickable {
+                        vertical-stretch: 1;
+                        content-height: Backup.files.length * 58px;
+                        interactive: self.content-height > self.height;
+                        for file[i] in Backup.files: FileRow {
+                            y: i * 58px;
+                            width: parent.width;
+                            file: file;
+                            clicked => {
+                                Backup.select(i);
+                            }
+                        }
+                    }
+                    if Backup.missing > 0: HorizontalLayout {
+                        spacing: Theme.space-sm;
+                        Line {
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                            text: Backup.missing-detail;
+                            color: Theme.warning;
+                        }
+                        Button {
+                            horizontal-stretch: 0;
+                            text: "Download";
+                            icon: "download";
+                            enabled: !Backup.busy;
+                            clicked => {
+                                Backup.get-missing();
+                            }
+                        }
+                    }
+                    if Backup.can-undo: HorizontalLayout {
+                        spacing: Theme.space-sm;
+                        Line {
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                            text: Backup.undo-detail;
+                        }
+                        Button {
+                            horizontal-stretch: 0;
+                            text: "Undo restore";
+                            icon: "undo";
+                            variant: "ghost";
+                            enabled: !Backup.busy;
+                            clicked => {
+                                Backup.ask-undo();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if Backup.progress != "" || Backup.message != "": Text {
+            text: Backup.progress != "" ? Backup.progress : Backup.message;
+            color: Backup.progress == "" && Backup.message-error ? Theme.danger : Theme.text-secondary;
+            font-size: Theme.font-small;
+            wrap: word-wrap;
+        }
+    }
+
+    // ------------------------------------------------ Confirm a restore
+    if Backup.selected >= 0 || Backup.confirm-undo: Rectangle {
+        background: Theme.scrim;
+        TouchArea {
+            clicked => {
+                Backup.cancel();
+            }
+        }
+        Card {
+            x: (parent.width - self.width) / 2;
+            y: Theme.space-lg;
+            width: min(520px, parent.width - 2 * Theme.space-lg);
+            height: parent.height - 2 * Theme.space-lg;
+            background: Theme.surface-raised;
+            TouchArea { }
+            VerticalLayout {
+                padding: Theme.space-lg;
+                spacing: Theme.space-sm;
+                Text {
+                    text: Backup.confirm-title;
+                    color: Theme.text-primary;
+                    font-size: Theme.font-title;
+                    font-weight: Theme.weight-semibold;
+                    wrap: word-wrap;
+                }
+                SectionHeader {
+                    text: "WHAT THE RESTORE DOES";
+                }
+                Flickable {
+                    vertical-stretch: 1;
+                    content-height: Backup.confirm-parts.length * 26px;
+                    interactive: self.content-height > self.height;
+                    for part[i] in Backup.confirm-parts: HorizontalLayout {
+                        y: i * 26px;
+                        height: 24px;
+                        width: parent.width;
+                        spacing: Theme.space-sm;
+                        Rectangle {
+                            width: 8px;
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                background: part.replaced ? Theme.accent : Theme.led-off;
+                            }
+                        }
+                        Text {
+                            width: 90px;
+                            text: part.label;
+                            color: Theme.text-primary;
+                            font-size: Theme.font-small;
+                            font-weight: Theme.weight-semibold;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: part.detail;
+                            color: part.replaced ? Theme.text-secondary : Theme.text-muted;
+                            font-size: Theme.font-small;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+                Line {
+                    text: Backup.confirm-note;
+                }
+                HorizontalLayout {
+                    spacing: Theme.space-sm;
+                    alignment: end;
+                    Button {
+                        text: "Cancel";
+                        variant: "ghost";
+                        clicked => {
+                            Backup.cancel();
+                        }
+                    }
+                    Button {
+                        text: Backup.confirm-undo ? "Undo and restart" : "Restore and restart";
+                        icon: Backup.confirm-undo ? "undo" : "refresh";
+                        variant: "primary";
+                        enabled: !Backup.busy;
+                        clicked => {
+                            Backup.confirm();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
