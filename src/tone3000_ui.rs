@@ -71,9 +71,6 @@ struct Downloads {
 const MODELS_PER_PAGE: usize = library::PAGE_SIZE as usize;
 const MAX_SELECTED: usize = MODELS_PER_PAGE;
 
-/// Side the tone pictures are fetched at (drawn at 48 px in the lists,
-/// 88 px in the tone sheet and the block editor)
-const PICTURE_SIDE: u32 = 96;
 /// Side of the avatars (16 to 26 px)
 const AVATAR_SIDE: u32 = 32;
 /// Memory kept for pictures, about 400 tones
@@ -565,13 +562,9 @@ fn tone_detail(tone: &Tone) -> String {
     }
 }
 
-/// The block a new block for `tone` would be, if any
-fn block_for(tone: &Tone) -> Option<&'static FileBlock> {
-    scanner::block_for_tone(&tone.format, &tone.gear)
-}
-
 fn tone_row(shared: &Shared, library: &Library, tone: &Tone) -> T3kTone {
-    let (image_key, image) = shared.pictures.get(tone.image(), PICTURE_SIDE);
+    let new_block = scanner::block_for_tone(&tone.format, &tone.gear);
+    let (image_key, image) = shared.pictures.get(tone.image(), library::PICTURE_SIDE);
     let (avatar_key, avatar) = shared.pictures.get(tone.avatar(), AVATAR_SIDE);
     T3kTone {
         title: tone.title.as_str().into(),
@@ -582,20 +575,9 @@ fn tone_row(shared: &Shared, library: &Library, tone: &Tone) -> T3kTone {
         detail: tone_detail(tone).into(),
         supported: tone.supported(),
         on_board: library::is_downloaded(&shared.models_dir, tone),
-        usable: library
-            .target
-            .is_some_and(|b| tone.supported() && b.loads_format(&tone.format)),
-        reason: match library.target {
-            Some(_) if !tone.supported() => format!(
-                "{} files cannot be loaded in OpenRig yet.",
-                tone.format.to_uppercase()
-            ),
-            Some(block) => block.refusal(&tone.format).unwrap_or_default(),
-            None => String::new(),
-        }
-        .into(),
-        block_uri: block_for(tone).map(|b| b.uri).unwrap_or_default().into(),
-        block_name: block_for(tone).map(|b| b.name).unwrap_or_default().into(),
+        usable: library.target.is_some_and(|b| b.loads_format(&tone.format)),
+        block_uri: new_block.map(|b| b.uri).unwrap_or_default().into(),
+        block_name: new_block.map(|b| b.name).unwrap_or_default().into(),
         image,
         avatar,
         image_key,

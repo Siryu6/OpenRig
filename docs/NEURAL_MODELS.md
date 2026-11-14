@@ -230,9 +230,9 @@ or `feather` when several NAM blocks are stacked.
    `models/Tone3000/<gear>/<title> [<id>]/` (as `<model> [<model id>].nam`,
    the ids hidden in the UI), with a `tone.json` keeping the
    creator, license and link; the token is only ever sent to tone3000.com.
-   Opened from a block, the library only offers that block's gears and
-   "Download" fetches a model, then "Use" loads it in that block; otherwise (menu ⋮, or a tone of another
-   gear) "Add" puts the model in a new block of the right type at the end
+   Opened from a block, the library lists the tones of that block's format
+   and "Download" fetches a model, then "Use" loads it in that block; otherwise (menu ⋮)
+   "Add" puts the model in a new block of the right type at the end
    of the chain. NAM and IR
    formats only for now (AIDA-X, Proteus and AA snapshots are listed but
    greyed out). Favoriting from the pedalboard and catalogue search are not
