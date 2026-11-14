@@ -167,6 +167,10 @@ Limits:
 - Pictures are encoded on a thread of their own: the UI thread only draws
   and copies the changed areas. While a frame is being encoded, the UI keeps
   drawing and the next frame takes everything that changed meanwhile.
+- Only pixels that changed are sent: the areas Slint redraws are compared
+  with the last picture sent and trimmed (a label redrawn as it was goes
+  nowhere), and areas close to each other go as one picture. A knob drag
+  sends one picture per frame, not three.
 - Flow control: the page acknowledges each frame once drawn. The pedal
   measures how fast the page gets its messages (the bytes delivered over
   the time they took, the highest rate of the last 2 s) and the shortest
