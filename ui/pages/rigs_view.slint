@@ -30,6 +30,7 @@ export global Rigs {
     in-out property <bool> usb: false;           // a removable drive is mounted
     in-out property <bool> can-eject: false;     // the system ejects drives (OpenRig OS)
     in-out property <bool> ejecting: false;
+    in-out property <string> drive: "";          // the drive To USB and Eject use
     in-out property <string> note: "";           // last export / list message
     in-out property <bool> busy: false;          // exporting or installing
     // The rig opened for import
@@ -44,7 +45,7 @@ export global Rigs {
 
     callback opened();
     callback export(bool); // to the USB drive too
-    callback eject();      // the USB drives, before pulling them out
+    callback eject(string); // the drive, before pulling it out
     callback set-author(string);
     callback open-file(int);
     callback install();
@@ -283,7 +284,7 @@ export component RigsPanel inherits Rectangle {
                             variant: "ghost";
                             enabled: !Rigs.busy && !Rigs.ejecting;
                             clicked => {
-                                Rigs.eject();
+                                Rigs.eject(Rigs.drive);
                             }
                         }
                     }

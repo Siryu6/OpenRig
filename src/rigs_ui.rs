@@ -121,12 +121,18 @@ fn list(weak: &Weak<App>) {
             files.extend(rigs::list(drive, true));
         }
         let usb = !drives.is_empty();
+        // The drive "To USB" writes to and Eject ejects
+        let drive = drives
+            .first()
+            .map(|d| d.to_string_lossy().into_owned())
+            .unwrap_or_default();
         ui(&weak, move |app| {
             let infos: Vec<RigFileInfo> = files.iter().map(file_info).collect();
             with_page(|p| p.files = files);
             let rigs = app.global::<Rigs>();
             rigs.set_files(model(infos));
             rigs.set_usb(usb);
+            rigs.set_drive(drive.into());
         });
     });
 }
@@ -247,6 +253,7 @@ fn export_current(app: &App, state: &Arc<AppState>, usb: bool) {
         include_midi: rigs.get_include_midi(),
     };
     let author = state.rig_author();
+    let shown = rigs.get_drive();
     rigs.set_busy(true);
     rigs.set_note("Exporting…".into());
     let (weak, st) = (app.as_weak(), state.clone());
@@ -260,8 +267,8 @@ fn export_current(app: &App, state: &Arc<AppState>, usb: bool) {
                 path.file_name().unwrap_or_default().to_string_lossy()
             );
             if usb {
-                match rigs::removable_drives().first() {
-                    Some(drive) => match rigs::write(drive, &exported.rig) {
+                match pedalboard::drives::chosen(&rigs::removable_drives(), &shown) {
+                    Some(drive) => match rigs::write(&drive, &exported.rig) {
                         Ok(copy) => {
                             info!(path = %copy.display(), "Rig copied to a drive");
                             note.push_str(", and on the USB drive");
