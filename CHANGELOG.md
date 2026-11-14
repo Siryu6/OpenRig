@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0](https://github.com/Siryu6/OpenRig/compare/v0.14.3...v0.15.0) - 2026-11-14
+
+### Added
+
+- compensate plugin latency and report it to JACK ([#147](https://github.com/Siryu6/OpenRig/pull/147))
+- back up and restore presets, setlists, rigs, loops and settings ([#138](https://github.com/Siryu6/OpenRig/pull/138))
+- *(audio)* global output EQ and limiter per output ([#135](https://github.com/Siryu6/OpenRig/pull/135))
+
+### Fixed
+
+- *(os)* give the app an OpenRig folder on ext4 USB drives ([#154](https://github.com/Siryu6/OpenRig/pull/154))
+- drop the USB drive messages when the drive goes ([#152](https://github.com/Siryu6/OpenRig/pull/152))
+- eject only the USB drive the panel shows ([#150](https://github.com/Siryu6/OpenRig/pull/150))
+- *(os)* mount USB drives and eject them from the app ([#148](https://github.com/Siryu6/OpenRig/pull/148))
+- *(ui)* draw rack wires as rectangles ([#143](https://github.com/Siryu6/OpenRig/pull/143))
+- *(remote)* stop the Editor lagging on slow links ([#140](https://github.com/Siryu6/OpenRig/pull/140))
+
+### Other
+
+- *(drives)* one drive model for the rigs panel, backup and eject ([#168](https://github.com/Siryu6/OpenRig/pull/168))
+- *(remote)* one frame pipeline for the Editor stream ([#166](https://github.com/Siryu6/OpenRig/pull/166))
+- *(deps)* update crates, jack 0.14, argon2 0.6 and getrandom 0.4 ([#160](https://github.com/Siryu6/OpenRig/pull/160))
+- *(remote)* send only the pixels that changed ([#158](https://github.com/Siryu6/OpenRig/pull/158))
+- *(remote)* size the frame budget to the link ([#156](https://github.com/Siryu6/OpenRig/pull/156))
+- *(remote)* encode Editor frames off the UI thread ([#145](https://github.com/Siryu6/OpenRig/pull/145))
+
 ## [0.14.3](https://github.com/Siryu6/OpenRig/compare/v0.14.2...v0.14.3) - 2026-11-14
 
 ### Fixed
