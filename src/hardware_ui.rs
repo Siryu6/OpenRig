@@ -141,36 +141,28 @@ fn step(hardware: &mut Hardware, what: &str, index: i32, delta: i32) {
         }
         "encoder-steps" => {
             if let Some(encoder) = &mut hardware.encoder {
-                let at = ENCODER_STEPS
-                    .iter()
-                    .position(|&s| s == encoder.steps)
-                    .unwrap_or(0) as i32;
-                let at = (at + delta).clamp(0, ENCODER_STEPS.len() as i32 - 1);
-                encoder.steps = ENCODER_STEPS[at as usize];
+                encoder.steps = step_in(&ENCODER_STEPS, encoder.steps, delta);
             }
         }
         "i2c-module" | "i2c-steps" | "i2c-reverse" => {
             let Some(i2c) = &mut hardware.i2c_encoders else {
                 return;
             };
-            let next = |at: Option<usize>, len: usize| {
-                (at.unwrap_or(0) as i32 + delta).clamp(0, len as i32 - 1) as usize
-            };
             match what {
-                "i2c-module" => {
-                    let at = I2cModule::ALL.iter().position(|&m| m == i2c.module);
-                    i2c.module = I2cModule::ALL[next(at, I2cModule::ALL.len())];
-                }
-                "i2c-steps" => {
-                    let steps = pedalboard::i2c_encoders::STEPS;
-                    i2c.steps =
-                        steps[next(steps.iter().position(|&s| s == i2c.steps), steps.len())];
-                }
+                "i2c-module" => i2c.module = step_in(&I2cModule::ALL, i2c.module, delta),
+                "i2c-steps" => i2c.steps = step_in(&ENCODER_STEPS, i2c.steps, delta),
                 _ => i2c.reverse = delta > 0,
             }
         }
         _ => {}
     }
+}
+
+/// The item `delta` places from `current` in `items` (from the first when
+/// `current` is not there), kept within the list
+fn step_in<T: Copy + PartialEq>(items: &[T], current: T, delta: i32) -> T {
+    let at = items.iter().position(|&i| i == current).unwrap_or(0) as i32;
+    items[(at + delta).clamp(0, items.len() as i32 - 1) as usize]
 }
 
 /// Change a copy of the hardware with `f`, then save and apply it
@@ -299,6 +291,8 @@ mod tests {
         assert_eq!(h.encoder.unwrap().steps, 1);
         step(&mut h, "encoder-steps", 0, 1);
         assert_eq!(h.encoder.unwrap().steps, 2);
+        // A value off the list starts from the first
+        assert_eq!(step_in(&ENCODER_STEPS, 3, 1), 2);
     }
 
     #[test]
