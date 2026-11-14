@@ -16,7 +16,8 @@ the format.
 Presets page → share button (next to Save) opens the Rigs panel.
 
 - **Export** writes the current chain to `<data>/rigs/<name>.openrig`, and
-  to a USB drive when one is mounted (**To USB**). MIDI CCs learned by the
+  to a USB drive when one is mounted (**To USB**; **Eject** next to it,
+  on the OpenRig OS, before pulling the drive out). MIDI CCs learned by the
   blocks fit one controller setup, so they are left out unless the
   **MIDI CCs** toggle is on. The note under the title lists what only this
   pedalboard has (see below). **Author** sets, once, the name written in
@@ -47,11 +48,13 @@ Presets page → share button (next to Save) opens the Rigs panel.
 (`~/.local/share/pedalboard` on Linux, `/data/pedalboard` on the OS
 image).
 
-USB drives are found where the desktop mounts them: `/media/<user>/*` and
-`/run/media/<user>/*` on Linux, `/Volumes/*` on macOS. The OpenRig OS
-image does not mount drives by itself yet, so there, and on Windows, copy
-files to `<data>/rigs` instead. `PEDALBOARD_MEDIA_DIR` replaces these places: each of its
-subfolders is taken as a drive.
+USB drives are found where the system mounts them: `/media/*` on the
+OpenRig OS (see [OS.md](OS.md#usb-drives)), `/media/<user>/*` and
+`/run/media/<user>/*` on Linux desktops, `/Volumes/*` on macOS. On Windows,
+copy files to `<data>/rigs` instead. `PEDALBOARD_MEDIA_DIR` replaces these
+places: each of its subfolders is taken as a drive. The list follows the
+drives plugged in and pulled out, without Refresh (the app looks every two
+seconds).
 
 ## On openrig.eu
 

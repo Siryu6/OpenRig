@@ -175,6 +175,37 @@ root's `authorized_keys` (`/data/ssh`), the SSH host keys, the update state
 (`/data/update`, `/data/rauc`), app updates (`/data/app`) and `/var/lib`. It is checked at every boot. When it cannot
 be mounted, the pedalboard runs on a RAM disk (logged): nothing is kept.
 
+### USB drives
+
+A USB stick, card reader or USB disk is mounted when it is plugged in, for
+rigs ([RIGS.md](RIGS.md)) and backups ([BACKUP.md](BACKUP.md)): each FAT
+(FAT16, FAT32), exFAT or ext4 file system on it, in `/media/<label>` (the
+file system's label, else its UUID; `-2`, `-3`… when two drives have the
+same). `/media` is a RAM disk: the root file system stays read-only.
+
+- **Mount**: a udev rule (`/etc/udev/rules.d/90-pedalboard-drives.rules`)
+  runs `/usr/libexec/pedalboard/drives add` for USB block devices only,
+  so the internal disks (NVMe, SATA, SD card) are never mounted, nor the
+  disk the system runs from when it is a USB stick or SSD. Options:
+  `nosuid,nodev,noexec,noatime`; FAT and exFAT files belong to the
+  `pedalboard` user, and FAT is written at each file close (`flush`);
+  ext4 keeps the owners of the drive and commits every second.
+- **Eject**: the Eject button (Rigs panel, Settings → Backup) asks the
+  same script, run by init as root (`drives serve`, FIFO
+  `/run/pedalboard/drives/request`): it writes what is cached, unmounts
+  every file system of the drive and powers it off. A drive in use (a
+  backup being written) is not ejected; try again once it is done.
+- **Pulled out without Eject**: it is unmounted at once (lazily, so files
+  still open cannot hang anything). Files the app wrote completely are on
+  the drive (backups and rigs are written aside, synced, then renamed);
+  one being written is lost.
+- The app sees drives come and go without restarting (it looks at
+  `/media` every two seconds).
+
+`grep /media /proc/mounts` lists the drives mounted, and
+`grep pedalboard-drives /var/log/messages` what was done (also in
+`pedalboard-report`).
+
 ## Start-up and services
 
 BusyBox init, no systemd. After mounting the storage, init starts and

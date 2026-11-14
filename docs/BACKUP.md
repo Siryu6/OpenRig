@@ -11,7 +11,9 @@ Settings → **Backup**.
 - **Back up to USB drive** writes `openrig-backup-<date>-<time>.tar.gz` at
   the top of the first USB drive found. With no drive, the backup stays on
   the pedal in `<data>/backups` (the last 3 are kept): download it from the
-  remote control.
+  remote control. The panel follows the drives plugged in and pulled out.
+  **Eject**, under the button, makes the drive safe to pull out (OpenRig
+  OS, see [OS.md](OS.md#usb-drives)).
 - **Include models and plugins** adds the NAM models, IRs and LV2 plugins.
   The file can then be large; the sizes are shown next to the switch.
   Without them, the backup lists the store plugins and TONE3000 models in

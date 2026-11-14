@@ -1,0 +1,6 @@
+# USB drives: mounted on /media when they appear, unmounted when they go
+# (/usr/libexec/pedalboard/drives). After 60-persistent-storage.rules, which
+# sets ID_BUS and the ID_FS_* of the file system. Only USB: the internal
+# disks (NVMe, SATA, SD card) are never mounted here.
+ACTION=="add", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", ENV{ID_FS_USAGE}=="filesystem", RUN+="/usr/libexec/pedalboard/drives add %k"
+ACTION=="remove", SUBSYSTEM=="block", RUN+="/usr/libexec/pedalboard/drives remove %k"

@@ -223,6 +223,15 @@ fn refresh(app: &App) {
     });
 }
 
+/// A USB drive was plugged in, ejected or pulled out: the open panel
+/// looks again (a backup being written says itself how it went)
+pub(crate) fn drives_changed(app: &App) {
+    let g = app.global::<Backup>();
+    if g.get_open() && !g.get_busy() {
+        refresh(app);
+    }
+}
+
 fn message(app: &App, text: &str, error: bool) {
     let g = app.global::<Backup>();
     g.set_message(text.into());

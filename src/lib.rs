@@ -2,6 +2,7 @@
 
 pub mod audio;
 pub mod backup;
+pub mod drives;
 pub mod hardware;
 pub mod i2c_encoders;
 pub mod midi;

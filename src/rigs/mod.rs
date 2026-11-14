@@ -8,7 +8,7 @@
 //!   or downloaded, then install it and turn it into a preset with paths
 //!   of this pedalboard.
 //!
-//! Rigs live in `<data>/rigs`; removable drives mounted by the desktop
+//! Rigs live in `<data>/rigs`; removable drives mounted by the system
 //! are listed too.
 
 pub mod export;
@@ -69,12 +69,12 @@ pub fn catalog_plugins(
 /// Folder of the drives, instead of the system's places
 pub const MEDIA_DIR_ENV: &str = "PEDALBOARD_MEDIA_DIR";
 
-/// Removable drives mounted by the system, where rigs can be copied to and
-/// read from: `/media/<user>/<drive>`, `/run/media/<user>/<drive>` (Linux
-/// desktops), `/Volumes/<drive>` (macOS). Empty elsewhere (Windows, the
-/// OpenRig OS, which mounts no drive by itself). `PEDALBOARD_MEDIA_DIR`
-/// names a folder whose subfolders are taken as drives instead (a system
-/// that mounts drives there, tests).
+/// Removable drives mounted by the system, where rigs and backups can be
+/// copied to and read from: `/media/<drive>` (the OpenRig OS, see
+/// `crate::drives`), `/media/<user>/<drive>`, `/run/media/<user>/<drive>`
+/// (Linux desktops), `/Volumes/<drive>` (macOS). Empty elsewhere (Windows).
+/// `PEDALBOARD_MEDIA_DIR` names a folder whose subfolders are taken as
+/// drives instead (a system that mounts drives there, tests).
 pub fn removable_drives() -> Vec<PathBuf> {
     let mut drives = Vec::new();
     if let Some(media) = std::env::var_os(MEDIA_DIR_ENV).filter(|m| !m.is_empty()) {
