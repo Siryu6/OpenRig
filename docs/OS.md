@@ -190,8 +190,9 @@ same). `/media` is a RAM disk: the root file system stays read-only.
   `nosuid,nodev,noexec,noatime`; FAT and exFAT files belong to the
   `pedalboard` user, and FAT is written at each file close (`flush`);
   ext4 keeps the owners of the drive and commits every second.
-- **Eject**: the Eject button (Rigs panel, Settings → Backup) asks the
-  same script, run by init as root (`drives serve`, FIFO
+- **Eject**: the Eject button (Rigs panel, Settings → Backup) ejects the
+  drive the panel shows and writes to (the first one, by name, when there
+  are several), and only that one. It asks the same script, run by init as root (`drives serve`, FIFO
   `/run/pedalboard/drives/request`): it writes what is cached, unmounts
   every file system of the drive and powers it off. A drive in use (a
   backup being written) is not ejected; try again once it is done.

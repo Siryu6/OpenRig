@@ -32,6 +32,23 @@ pub fn can_eject() -> bool {
     helper_dir().is_some()
 }
 
+/// The drive a page shows (`shown`, a path from `rigs::removable_drives`),
+/// if it is still plugged in
+pub fn chosen(drives: &[PathBuf], shown: &str) -> Option<PathBuf> {
+    if shown.is_empty() {
+        return None;
+    }
+    drives.iter().find(|d| d.as_os_str() == shown).cloned()
+}
+
+/// The name of a drive, as the pages show it (its label)
+pub fn name(drive: &Path) -> String {
+    drive
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| drive.display().to_string())
+}
+
 /// Eject `drive` (one of `rigs::removable_drives`): everything is written,
 /// its file systems unmounted and it is powered off. Waits for the helper:
 /// not on the UI thread.
@@ -96,6 +113,16 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pb-drives-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn chosen_is_the_drive_shown_if_still_there() {
+        let drives = vec![PathBuf::from("/media/A"), PathBuf::from("/media/B")];
+        assert_eq!(chosen(&drives, "/media/B"), Some(PathBuf::from("/media/B")));
+        assert_eq!(chosen(&drives, "/media/C"), None);
+        assert_eq!(chosen(&drives, ""), None);
+        assert_eq!(chosen(&[], "/media/A"), None);
+        assert_eq!(name(Path::new("/media/MY STICK")), "MY STICK");
     }
 
     #[test]

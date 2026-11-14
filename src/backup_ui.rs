@@ -109,6 +109,8 @@ fn file_row(found: &Found) -> BackupFile {
 struct Scan {
     found: Vec<Found>,
     destination: String,
+    /// The drive backups go to (and Eject ejects), "" for the pedal
+    drive: String,
     usb: bool,
     large: String,
     local: String,
@@ -133,16 +135,12 @@ fn scan(data: &Path) -> Scan {
         }
     }
     let drives = pedalboard::rigs::removable_drives();
+    let drive = drives
+        .first()
+        .map(|d| d.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let (usb, destination) = match drives.first() {
-        Some(d) => (
-            true,
-            format!(
-                "To {}",
-                d.file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| d.display().to_string())
-            ),
-        ),
+        Some(d) => (true, format!("To {}", pedalboard::drives::name(d))),
         None => (
             false,
             format!(
@@ -177,6 +175,7 @@ fn scan(data: &Path) -> Scan {
     Scan {
         found,
         destination,
+        drive,
         usb,
         large,
         local,
@@ -190,6 +189,7 @@ fn show(app: &App, scan: Scan) {
     g.set_files(model(scan.found.iter().map(file_row).collect()));
     g.set_destination(scan.destination.into());
     g.set_usb(scan.usb);
+    g.set_drive(scan.drive.into());
     g.set_large_size(scan.large.into());
     g.set_local_note(scan.local.into());
     g.set_can_undo(scan.undo.is_some());
@@ -395,13 +395,15 @@ fn back_up(app: &App, state: &Arc<AppState>) {
     } else {
         Options::default()
     };
+    let shown = g.get_drive();
     g.set_busy(true);
     g.set_progress("Backing up…".into());
     message(app, "", false);
     let weak = app.as_weak();
     let started = spawn("backup-write", move || {
         let data = data_dir();
-        let drive = pedalboard::rigs::removable_drives().into_iter().next();
+        // The drive the panel shows; the pedal when there was none (or it is gone)
+        let drive = pedalboard::drives::chosen(&pedalboard::rigs::removable_drives(), &shown);
         let dir = drive
             .clone()
             .unwrap_or_else(|| data.join(backup::LOCAL_DIR));
