@@ -16,6 +16,11 @@
 //! Send and return blocks (`scanner::SEND_URI`, `RETURN_URI`) are run by
 //! the chain itself: a return brings an input of the interface into the
 //! signal, a send adds the signal to a send bus (`ChainIo`).
+//!
+//! Blocks can be late (an LV2 plugin reporting its latency). The branches
+//! of a split are delayed to the latest of them before they meet, a return
+//! delays its input to meet the signal at its place, and a late block
+//! delays its own dry signal: see `crate::audio::latency`.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -29,6 +34,8 @@ use super::instance::PluginInstance;
 use super::lv2_host::Lv2Host;
 use super::scanner::{self, FileKind};
 use crate::audio::dsp_pool;
+use crate::audio::latency::{BlockLatency, DelayLine};
+use crate::audio::routing::MAX_SENDS;
 use crate::audio::spectrum::BlockTap;
 use crate::audio::split_chain::{ChainNode, SplitType};
 use crate::midi::RawMidi;
@@ -77,6 +84,11 @@ pub struct ChainIo<'a> {
     /// fades its sends too): at its start, and its change per sample
     gain: f32,
     gain_step: f32,
+    /// Frames the signal is late by at the block being processed, and
+    /// where the last send before it took the signal (a return meets the
+    /// signal coming back from an effect loop there)
+    latency: usize,
+    send_mark: Option<usize>,
 }
 
 impl<'a> ChainIo<'a> {
@@ -87,6 +99,8 @@ impl<'a> ChainIo<'a> {
             offset: 0,
             gain: 1.0,
             gain_step: 0.0,
+            latency: 0,
+            send_mark: None,
         }
     }
 
@@ -107,6 +121,8 @@ impl<'a> ChainIo<'a> {
             offset: self.offset,
             gain: self.gain,
             gain_step: self.gain_step,
+            latency: self.latency,
+            send_mark: self.send_mark,
         }
     }
 }
@@ -333,6 +349,8 @@ struct PluginProc {
     /// tells the UI
     watchdog: Watchdog,
     trip: Arc<AtomicU8>,
+    /// Where its latency is shown, for a plugin that reports one
+    latency_slot: Option<Arc<AtomicU32>>,
     /// Test only: time added to each run, as a slow plugin
     #[cfg(test)]
     stall: std::time::Duration,
@@ -361,6 +379,9 @@ impl PluginProc {
             if self.stereo_out {
                 r.fill(0.0);
             }
+        }
+        if let Some(slot) = &self.latency_slot {
+            slot.store(self.latency() as u32, Ordering::Relaxed);
         }
         let nanos = start.elapsed().as_nanos() as u64;
         self.spent.fetch_add(nanos, Ordering::Relaxed);
@@ -408,6 +429,14 @@ impl PluginProc {
     fn instances(&mut self) -> impl Iterator<Item = &mut PluginInstance> {
         std::iter::once(&mut *self.left).chain(self.right.as_deref_mut())
     }
+
+    /// Frames the block is late by (both sides of a dual mono block are
+    /// the same plugin)
+    fn latency(&self) -> usize {
+        self.left
+            .latency()
+            .max(self.right.as_ref().map_or(0, |r| r.latency()))
+    }
 }
 
 struct SplitProc {
@@ -434,6 +463,54 @@ struct SplitProc {
     bottom_buf: [Box<[f32]>; 2],
     /// The branch that may run on another core (see `Offload`)
     offload: Offload,
+    /// Delay of the top and bottom branches (left, right), when a block
+    /// in either can be late: the earlier branch waits for the later one
+    compensation: Option<Box<[[DelayLine; 2]; 2]>>,
+    /// Frames each branch is late by, and the split (the later branch)
+    branch_latency: [usize; 2],
+    latency: usize,
+    /// Branches that ran last period: one that did not has stale delays
+    ran: [bool; 2],
+}
+
+/// Frames a run of blocks is late by
+fn nodes_latency(nodes: &[ProcNode]) -> usize {
+    nodes.iter().map(ProcNode::latency).sum()
+}
+
+/// True if a block in `nodes` can be late
+fn may_be_late(nodes: &[ProcNode]) -> bool {
+    nodes.iter().any(|node| match node {
+        ProcNode::Plugin(plugin) => plugin.left.reports_latency(),
+        ProcNode::Split(split) => may_be_late(&split.top) || may_be_late(&split.bottom),
+        ProcNode::Route(_) => false,
+    })
+}
+
+/// Delay the output of `branch` (`r` when it is stereo) by `delay` frames,
+/// to meet the other branch. A branch that did not run last period
+/// (`fresh`) starts on silence rather than on its old sound.
+fn compensate(
+    lines: &mut Option<Box<[[DelayLine; 2]; 2]>>,
+    branch: usize,
+    fresh: bool,
+    delay: usize,
+    l: &mut [f32],
+    r: Option<&mut [f32]>,
+) {
+    let Some([left, right]) = lines.as_deref_mut().and_then(|lines| lines.get_mut(branch)) else {
+        return;
+    };
+    for line in [&mut *left, &mut *right] {
+        line.set(delay);
+        if fresh {
+            line.clear();
+        }
+    }
+    left.process(l);
+    if let Some(r) = r {
+        right.process(r);
+    }
 }
 
 /// Which branch of a split runs on another core while the audio thread runs
@@ -486,6 +563,7 @@ fn process_branches(
     bottom: &mut [ProcNode],
     [bl, br]: [&mut [f32]; 2],
 ) {
+    let (latency, mark) = (io.latency, io.send_mark);
     let mut other = io.without_sends();
     match offload {
         Offload::Bottom => {
@@ -502,9 +580,14 @@ fn process_branches(
         }
         Offload::None => {
             process_nodes(top, tl, tr, io);
+            // Each branch starts where the split does
+            let top_mark = std::mem::replace(&mut io.send_mark, mark);
+            io.latency = latency;
             process_nodes(bottom, bl, br, io);
+            io.send_mark = io.send_mark.max(top_mark);
         }
     }
+    io.latency = latency;
 }
 
 impl SplitProc {
@@ -538,9 +621,29 @@ impl SplitProc {
         self.split_type == SplitType::Lr && self.stereo_out
     }
 
+    /// Latency of each branch and of the split, from what their blocks
+    /// last reported
+    fn update_latency(&mut self) {
+        self.branch_latency = [nodes_latency(&self.top), nodes_latency(&self.bottom)];
+        self.latency = self.branch_latency[0].max(self.branch_latency[1]);
+    }
+
+    /// Delay branch `branch` must wait, to meet the other one
+    fn delay(&self, branch: usize) -> usize {
+        self.latency - self.branch_latency[branch]
+    }
+
     /// `l.len()` must not exceed the branch buffer size
     fn process(&mut self, l: &mut [f32], r: &mut [f32], io: &mut ChainIo) {
+        let base = io.latency;
+        let ran = self.ran;
+        self.update_latency();
         if !self.enabled {
+            // Switched off, the split stays as late as its branches, so
+            // the sound does not move in time
+            let stereo = self.stereo_in.then_some(&mut *r);
+            compensate(&mut self.compensation, 0, !ran[0], self.latency, l, stereo);
+            self.ran = [true, false];
             if self.stereo_out && !self.stereo_in {
                 r.copy_from_slice(l);
             }
@@ -562,6 +665,14 @@ impl SplitProc {
                 &mut self.bottom,
                 [&mut *bl, &mut *br],
             );
+            self.branch_latency = [nodes_latency(&self.top), nodes_latency(&self.bottom)];
+            self.latency = self.branch_latency[0].max(self.branch_latency[1]);
+            let delays = self.branch_latency.map(|b| self.latency - b);
+            let top_r = self.top_stereo.then_some(&mut *tr);
+            compensate(&mut self.compensation, 0, !ran[0], delays[0], l, top_r);
+            let bottom_r = self.bottom_stereo.then_some(&mut *br);
+            compensate(&mut self.compensation, 1, !ran[1], delays[1], bl, bottom_r);
+            self.ran = [true, true];
             if self.top_stereo {
                 for (l, tr) in l.iter_mut().zip(tr.iter()) {
                     *l = (*l + tr) * 0.5;
@@ -587,6 +698,12 @@ impl SplitProc {
                 (&mut self.bottom, self.bottom_stereo, 1)
             };
             process_nodes(branch, l, r, io);
+            io.latency = base;
+            self.update_latency();
+            let right = branch_stereo.then_some(&mut *r);
+            let delay = self.delay(side);
+            compensate(&mut self.compensation, side, !ran[side], delay, l, right);
+            self.ran = [side == 0, side == 1];
             if self.stereo_out && !branch_stereo {
                 r.copy_from_slice(l);
             }
@@ -621,6 +738,27 @@ impl SplitProc {
                 [&mut bl[..n], &mut br[..n]],
             );
         }
+        self.update_latency();
+        let delays = [self.delay(0), self.delay(1)];
+        for (branch, ([bl, br], stereo)) in [
+            (&mut self.top_buf, self.top_stereo),
+            (&mut self.bottom_buf, self.bottom_stereo),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let right = stereo.then_some(&mut br[..n]);
+            let (fresh, delay) = (!ran[branch], delays[branch]);
+            compensate(
+                &mut self.compensation,
+                branch,
+                fresh,
+                delay,
+                &mut bl[..n],
+                right,
+            );
+        }
+        self.ran = [true, true];
 
         let ([tl, tr], [bl, br]) = (&self.top_buf, &self.bottom_buf);
         for i in 0..n {
@@ -657,6 +795,11 @@ struct RouteProc {
     mix_now: f32,
     step: f32,
     stereo: bool,
+    /// Return: delay of the input, to meet the signal at its place, when
+    /// a block of the chain can be late
+    delay: Option<Box<DelayLine>>,
+    /// Send: frames the signal it takes is late by
+    at: usize,
 }
 
 impl RouteProc {
@@ -680,6 +823,8 @@ impl RouteProc {
             mix_now: 0.0,
             step: 1.0 / (sample_rate * SPLIT_RAMP_SECONDS).max(1.0),
             stereo,
+            delay: None,
+            at: 0,
         };
         for (index, value) in values.iter().enumerate() {
             route.set_parameter(index, *value);
@@ -717,9 +862,22 @@ impl RouteProc {
         (level, mix)
     }
 
+    /// Frames a return delays its input by: the signal at its place is as
+    /// late as the blocks before it, or, after a send (an effect loop), as
+    /// the blocks since that send
+    fn input_delay(io: &ChainIo) -> usize {
+        io.latency.saturating_sub(io.send_mark.unwrap_or(0))
+    }
+
     fn process(&mut self, l: &mut [f32], r: &mut [f32], io: &mut ChainIo) {
         let range = io.offset..io.offset + l.len();
         let (level, mix) = self.targets();
+        if self.send {
+            self.at = io.latency;
+            io.send_mark = Some(io.latency);
+        } else if let Some(line) = &mut self.delay {
+            line.set(Self::input_delay(io));
+        }
         if self.send {
             let mut bus = io
                 .sends
@@ -741,7 +899,11 @@ impl RouteProc {
             for i in 0..l.len() {
                 ramp(&mut self.level_now, level, self.step);
                 ramp(&mut self.mix_now, mix, self.step);
-                let wet = input.map_or(0.0, |b| b[i]) * self.level_now * self.mix_now;
+                let mut sample = input.map_or(0.0, |b| b[i]);
+                if let Some(line) = &mut self.delay {
+                    sample = line.tick(sample);
+                }
+                let wet = sample * self.level_now * self.mix_now;
                 let dry = 1.0 - self.mix_now;
                 l[i] = l[i] * dry + wet;
                 if self.stereo {
@@ -773,10 +935,97 @@ enum ProcNode {
 fn process_nodes(nodes: &mut [ProcNode], l: &mut [f32], r: &mut [f32], io: &mut ChainIo) {
     for node in nodes {
         node.process(l, r, io);
+        io.latency += node.latency();
+    }
+}
+
+/// Before the chain plays: give its delays their length at once, from the
+/// latency each block reports, the latency at the start of `nodes` and the
+/// last send before them. Returns the latency of `nodes` and the last send.
+fn settle_latency(
+    nodes: &mut [ProcNode],
+    start: usize,
+    mut mark: Option<usize>,
+) -> (usize, Option<usize>) {
+    let mut at = start;
+    for node in nodes.iter_mut() {
+        match node {
+            ProcNode::Plugin(_) => {}
+            ProcNode::Route(route) if route.send => {
+                route.at = at;
+                mark = Some(at);
+            }
+            ProcNode::Route(route) => {
+                let delay = at.saturating_sub(mark.unwrap_or(0));
+                if let Some(line) = &mut route.delay {
+                    line.jump(delay);
+                }
+            }
+            ProcNode::Split(split) => {
+                let (_, top_mark) = settle_latency(&mut split.top, at, mark);
+                let (_, bottom_mark) = settle_latency(&mut split.bottom, at, mark);
+                mark = mark.max(top_mark).max(bottom_mark);
+                split.update_latency();
+                let delays = [split.delay(0), split.delay(1)];
+                if let Some(lines) = &mut split.compensation {
+                    for (branch, delay) in lines.iter_mut().zip(delays) {
+                        for line in branch {
+                            line.jump(delay);
+                        }
+                    }
+                }
+            }
+        }
+        at += node.latency();
+    }
+    (at - start, mark)
+}
+
+/// Give the returns of `nodes` a delay for their input
+fn add_return_delays(nodes: &mut [ProcNode], sample_rate: f32) {
+    for node in nodes {
+        match node {
+            ProcNode::Route(route) if !route.send => {
+                route.delay = Some(Box::new(DelayLine::new(sample_rate)));
+            }
+            ProcNode::Split(split) => {
+                add_return_delays(&mut split.top, sample_rate);
+                add_return_delays(&mut split.bottom, sample_rate);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Shortest and longest latency of the sends to each bus in `nodes`
+fn send_latencies(nodes: &[ProcNode], buses: &mut [Option<(usize, usize)>; MAX_SENDS]) {
+    for node in nodes {
+        match node {
+            ProcNode::Route(route) if route.send => {
+                if let Some(bus) = buses.get_mut(route.port) {
+                    let (min, max) = bus.unwrap_or((route.at, route.at));
+                    *bus = Some((min.min(route.at), max.max(route.at)));
+                }
+            }
+            ProcNode::Split(split) => {
+                send_latencies(&split.top, buses);
+                send_latencies(&split.bottom, buses);
+            }
+            _ => {}
+        }
     }
 }
 
 impl ProcNode {
+    /// Frames the block is late by, as last reported
+    fn latency(&self) -> usize {
+        match self {
+            ProcNode::Plugin(plugin) => plugin.latency(),
+            ProcNode::Split(split) => split.latency,
+            ProcNode::Route(_) => 0,
+        }
+    }
+
     fn process(&mut self, l: &mut [f32], r: &mut [f32], io: &mut ChainIo) {
         match self {
             ProcNode::Plugin(plugin) => plugin.process(l, r),
@@ -861,6 +1110,8 @@ struct Wave<'a> {
     part: usize,
     inputs: &'a [&'a [f32]],
     offset: usize,
+    /// Latency of the signal at the start of each stage
+    starts: [usize; dsp_pool::MAX_WORKERS + 1],
     /// Sub-blocks each stage has finished
     progress: [AtomicUsize; dsp_pool::MAX_WORKERS + 1],
 }
@@ -878,12 +1129,17 @@ impl<'a> Wave<'a> {
     ) -> Self {
         let stages = std::array::from_fn(|_| Mutex::new(None));
         let blocks = std::array::from_fn(|_| Mutex::new(None));
+        let mut starts = [0; dsp_pool::MAX_WORKERS + 1];
+        for (start, ends) in starts.iter_mut().zip(bounds.windows(2)).skip(1) {
+            *start = nodes_latency(nodes.get(..ends[0]).unwrap_or_default());
+        }
         let wave = Self {
             stages,
             blocks,
             part,
             inputs,
             offset,
+            starts,
             progress: Default::default(),
         };
         for (slot, ends) in wave.stages.iter().zip(bounds.windows(2)) {
@@ -939,10 +1195,13 @@ impl<'a> Wave<'a> {
                     offset: self.offset + j * self.part,
                     gain: 1.0,
                     gain_step: 0.0,
+                    latency: self.starts.get(k).copied().unwrap_or(0),
+                    send_mark: None,
                 };
                 for (node, spent) in nodes.iter_mut().zip(spent.iter_mut()) {
                     let start = Instant::now();
                     node.process(l, r, &mut io);
+                    io.latency += node.latency();
                     *spent += start.elapsed().as_secs_f32();
                 }
             }
@@ -1035,6 +1294,8 @@ pub struct EffectChain {
     /// A send somewhere: the chain stays on the audio thread, which owns
     /// the send buses
     has_send: bool,
+    /// Frames the output is late by, as of the last period
+    latency: usize,
 }
 
 impl EffectChain {
@@ -1049,6 +1310,7 @@ impl EffectChain {
             costs: Vec::new(),
             spent: Vec::new(),
             has_send: false,
+            latency: 0,
         }
     }
 
@@ -1071,6 +1333,10 @@ impl EffectChain {
         chain.costs = vec![0.0; chain.nodes.len()];
         chain.spent = vec![0.0; chain.nodes.len()];
         chain.has_send = has_send(&chain.nodes);
+        if may_be_late(&chain.nodes) {
+            add_return_delays(&mut chain.nodes, sample_rate);
+        }
+        chain.latency = settle_latency(&mut chain.nodes, 0, None).0;
         if spec.bpm > 0.0 {
             chain.apply(&ChainCommand::SetTempo { bpm: spec.bpm });
         }
@@ -1157,6 +1423,11 @@ impl EffectChain {
                             let stereo_out = right.is_some()
                                 || stereo
                                 || (spec.stereo && left.audio_ports().1 >= 2);
+                            let latency_slot = left.reports_latency().then(|| {
+                                let slot = BlockLatency::global().slot(*instance_id);
+                                slot.store(left.latency() as u32, Ordering::Relaxed);
+                                slot
+                            });
                             self.plugin_count += 1;
                             built.push(ProcNode::Plugin(Box::new(PluginProc {
                                 left,
@@ -1167,6 +1438,7 @@ impl EffectChain {
                                 tap: BlockTap::global(),
                                 watchdog: Watchdog::new(sample_rate, self.max_block),
                                 trip: GuardBoard::global().slot(*instance_id),
+                                latency_slot,
                                 #[cfg(test)]
                                 stall: std::time::Duration::ZERO,
                             })));
@@ -1222,7 +1494,15 @@ impl EffectChain {
                         top_buf: [buffer(), buffer()],
                         bottom_buf: [buffer(), buffer()],
                         offload: Offload::None,
+                        compensation: None,
+                        branch_latency: [0; 2],
+                        latency: 0,
+                        ran: [true; 2],
                     };
+                    if may_be_late(&split.top) || may_be_late(&split.bottom) {
+                        let line = || DelayLine::new(sample_rate);
+                        split.compensation = Some(Box::new([[line(), line()], [line(), line()]]));
+                    }
                     split.offload = Offload::choose(&split.top, &split.bottom);
                     split.top_gain = split.target();
                     split.pan_now = split.pan_target();
@@ -1277,6 +1557,8 @@ impl EffectChain {
 
     /// `process_io` on at most `max_block` samples, `l` and `r` as long
     fn process_part(&mut self, l: &mut [f32], r: &mut [f32], io: &mut ChainIo) {
+        io.latency = 0;
+        io.send_mark = None;
         let stages = self.stages(l.len());
         let crew = (stages > 1).then(|| dsp_pool::crew(stages - 1));
         match crew {
@@ -1293,6 +1575,7 @@ impl EffectChain {
                 {
                     let start = Instant::now();
                     node.process(l, r, io);
+                    io.latency += node.latency();
                     *spent = start.elapsed().as_secs_f32();
                     *cost += (*spent - *cost) * COST_WEIGHT;
                     *spent = 0.0;
@@ -1302,6 +1585,21 @@ impl EffectChain {
         if !self.stereo_out {
             r.copy_from_slice(l);
         }
+        self.latency = nodes_latency(&self.nodes);
+    }
+
+    /// Frames the output is late by (the blocks' latency, with the
+    /// compensation of the splits)
+    pub fn latency(&self) -> usize {
+        self.latency
+    }
+
+    /// Shortest and longest frames the signal sent to each bus is late by;
+    /// None for a bus no send feeds (real-time safe)
+    pub fn send_latency(&self) -> [Option<(usize, usize)>; MAX_SENDS] {
+        let mut buses = [None; MAX_SENDS];
+        send_latencies(&self.nodes, &mut buses);
+        buses
     }
 
     /// The chain feeds a send bus: it must run on the audio thread
@@ -1386,7 +1684,6 @@ impl EffectChain {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::routing::MAX_SENDS;
 
     fn plugin(id: usize) -> ChainNode {
         ChainNode::Plugin {
@@ -1988,5 +2285,240 @@ mod tests {
         assert!(plugin_proc(&mut chain, ID)
             .instances()
             .all(|i| i.is_bypassed()));
+    }
+
+    // Latency compensation
+
+    /// Lookahead block (demo): late by its first control, 48 frames by default
+    fn late(id: usize) -> ChainNode {
+        route(id, scanner::DEMO_LOOKAHEAD_URI)
+    }
+
+    fn split_of(split_type: SplitType, top: Vec<ChainNode>, bottom: Vec<ChainNode>) -> ChainNode {
+        ChainNode::Split {
+            instance_id: 1,
+            split_type,
+            enabled: true,
+            top_chain: top,
+            bottom_chain: bottom,
+            ab_select_a: true,
+            mix_ratio: 0.5,
+            pan: [-1.0, 1.0],
+            num_inputs: 1,
+            num_outputs: 2,
+        }
+    }
+
+    fn build_latent(nodes: Vec<ChainNode>, stereo: bool) -> EffectChain {
+        let host = Lv2Host::demo();
+        let spec = ChainSpec {
+            nodes,
+            stereo,
+            ..Default::default()
+        };
+        let (chain, errors) = EffectChain::build(&spec, &host, 48000.0, 64);
+        assert!(errors.is_empty(), "{errors:?}");
+        chain
+    }
+
+    /// Let gains settle, then send an impulse; returns both outputs from
+    /// the impulse on
+    fn impulse(chain: &mut EffectChain, len: usize) -> (Vec<f32>, Vec<f32>) {
+        let (mut l, mut r) = (vec![0.0; 2048], vec![0.0; 2048]);
+        chain.process(&mut l, &mut r);
+        let (mut l, mut r) = (vec![0.0; len], vec![0.0; len]);
+        l[0] = 1.0;
+        chain.process(&mut l, &mut r);
+        (l, r)
+    }
+
+    /// The one frame carrying the impulse: every other one is silent
+    fn arrival(buffer: &[f32]) -> Option<usize> {
+        let loud: Vec<usize> = (0..buffer.len())
+            .filter(|&i| buffer[i].abs() > 1e-6)
+            .collect();
+        match loud[..] {
+            [only] => Some(only),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn mix_split_branches_arrive_together() {
+        // A 48-frame block on the top branch only: the bottom (dry) branch
+        // is delayed to meet it, so no comb filtering
+        let mut chain = build_latent(
+            vec![split_of(SplitType::Mix, vec![late(10)], vec![])],
+            false,
+        );
+        assert_eq!(chain.latency(), 48);
+        let (l, _) = impulse(&mut chain, 512);
+        assert_eq!(arrival(&l), Some(48), "{:?}", &l[..64]);
+    }
+
+    #[test]
+    fn lr_split_sides_arrive_together() {
+        // 48 frames on the left side, 200 on the right side
+        let mut chain = build_latent(
+            vec![split_of(SplitType::Lr, vec![late(10)], vec![late(20)])],
+            true,
+        );
+        chain.apply(&ChainCommand::SetParameter {
+            instance_id: 20,
+            index: 0,
+            value: 200.0,
+        });
+        let _ = impulse(&mut chain, 4800);
+        assert_eq!(chain.latency(), 200);
+        let (l, r) = impulse(&mut chain, 512);
+        assert_eq!(arrival(&l), Some(200));
+        assert_eq!(arrival(&r), Some(200));
+    }
+
+    #[test]
+    fn a_latency_change_is_click_free_and_realigns() {
+        let mut chain = build_latent(
+            vec![split_of(SplitType::Mix, vec![late(10)], vec![])],
+            false,
+        );
+        let rate = 48_000.0;
+        let sine = |i: usize| 0.5 * (i as f32 * 2.0 * std::f32::consts::PI * 220.0 / rate).sin();
+        let mut last: Option<f32> = None;
+        let mut jump = 0.0f32;
+        for block in 0..150 {
+            if block == 40 {
+                chain.apply(&ChainCommand::SetParameter {
+                    instance_id: 10,
+                    index: 0,
+                    value: 480.0,
+                });
+            }
+            let mut l: Vec<f32> = (0..64).map(|i| sine(block * 64 + i)).collect();
+            let mut r = vec![0.0; 64];
+            chain.process(&mut l, &mut r);
+            for &s in &l {
+                if let Some(before) = last {
+                    if block > 2 {
+                        jump = jump.max((s - before).abs());
+                    }
+                }
+                last = Some(s);
+            }
+        }
+        // A 220 Hz sine at 0.5 moves by 0.015 a frame at most
+        assert!(jump < 0.03, "largest step {jump}");
+        assert_eq!(chain.latency(), 480);
+        let (l, _) = impulse(&mut chain, 1024);
+        assert_eq!(arrival(&l), Some(480));
+    }
+
+    #[test]
+    fn ab_switching_keeps_the_timing() {
+        // A is late, B is not: B waits as long as A, so switching never
+        // shifts the sound
+        let mut chain = build_latent(
+            vec![split_of(SplitType::Ab, vec![late(10)], vec![cab(20)])],
+            false,
+        );
+        let (l, _) = impulse(&mut chain, 512);
+        assert_eq!(arrival(&l), Some(48));
+        chain.apply(&ChainCommand::SetSplitAb {
+            instance_id: 1,
+            select_a: false,
+        });
+        let (l, _) = impulse(&mut chain, 512);
+        assert_eq!(arrival(&l), Some(48));
+        chain.apply(&ChainCommand::SetSplitAb {
+            instance_id: 1,
+            select_a: true,
+        });
+        let (l, _) = impulse(&mut chain, 512);
+        assert_eq!(arrival(&l), Some(48));
+    }
+
+    #[test]
+    fn a_bypassed_late_block_keeps_its_latency() {
+        let mut chain = build_latent(vec![late(10), cab(20)], false);
+        let (l, _) = impulse(&mut chain, 512);
+        assert_eq!(arrival(&l), Some(48));
+        chain.apply(&ChainCommand::SetEnabled {
+            instance_id: 10,
+            enabled: false,
+        });
+        let (l, _) = impulse(&mut chain, 512);
+        assert_eq!(arrival(&l), Some(48));
+        assert_eq!(chain.latency(), 48);
+    }
+
+    #[test]
+    fn a_return_meets_the_late_signal() {
+        // Input 2 joins the chain after a 48-frame block: it is delayed
+        // by as much
+        let host = Lv2Host::demo();
+        let spec = ChainSpec {
+            nodes: vec![late(10), route(12, scanner::RETURN_URI)],
+            params: HashMap::from([(12, vec![1.0, 0.0, 100.0])]),
+            ..Default::default()
+        };
+        let (mut chain, errors) = EffectChain::build(&spec, &host, 48000.0, 64);
+        assert!(errors.is_empty(), "{errors:?}");
+        let mut sends: Vec<[Vec<f32>; 2]> = (0..MAX_SENDS)
+            .map(|_| [vec![0.0; 64], vec![0.0; 64]])
+            .collect();
+        let silent = [0.0f32; 64];
+        let mut out = Vec::new();
+        for block in 0..40 {
+            let mut bass = [0.0f32; 64];
+            if block == 32 {
+                bass[0] = 1.0;
+            }
+            let inputs: [&[f32]; 2] = [&silent, &bass];
+            let mut io = ChainIo::new(&inputs, &mut sends);
+            io.part(0, 64, 1.0, 1.0);
+            let (mut l, mut r) = ([0.0f32; 64], [0.0f32; 64]);
+            chain.process_io(&mut l, &mut r, &mut io);
+            if block >= 32 {
+                out.extend_from_slice(&l);
+            }
+        }
+        assert_eq!(arrival(&out), Some(48));
+    }
+
+    #[test]
+    fn sends_report_their_latency() {
+        let host = Lv2Host::demo();
+        let spec = ChainSpec {
+            nodes: vec![late(10), route(11, scanner::SEND_URI)],
+            params: HashMap::from([(11, vec![1.0, 0.0])]),
+            ..Default::default()
+        };
+        let (mut chain, errors) = EffectChain::build(&spec, &host, 48000.0, 64);
+        assert!(errors.is_empty(), "{errors:?}");
+        let _ = run_io(&mut chain);
+        let sends = chain.send_latency();
+        assert_eq!(sends[1], Some((48, 48)), "{sends:?}");
+        assert_eq!(sends[0], None);
+    }
+
+    #[test]
+    fn chains_without_late_blocks_are_unchanged() {
+        // An older preset: no delay line anywhere, and no latency
+        let mut chain = build_latent(
+            vec![
+                split_of(SplitType::Mix, vec![cab(10)], vec![]),
+                split_of(SplitType::Lr, vec![plugin(20)], vec![cab(30)]),
+                cab(40),
+            ],
+            true,
+        );
+        assert_eq!(chain.latency(), 0);
+        for node in &chain.nodes {
+            if let ProcNode::Split(split) = node {
+                assert!(split.compensation.is_none());
+            }
+        }
+        let (l, _) = impulse(&mut chain, 64);
+        assert!(l[0].abs() > 1e-3, "{:?}", &l[..4]);
+        assert_eq!(chain.latency(), 0);
     }
 }

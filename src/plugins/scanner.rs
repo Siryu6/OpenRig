@@ -62,6 +62,10 @@ pub struct PortInfo {
     /// one file parameters are set through
     #[serde(default)]
     pub patch: bool,
+    /// Control output giving the plugin's latency in frames
+    /// (lv2:reportsLatency, or lv2:designation lv2:latency)
+    #[serde(default)]
+    pub latency: bool,
 }
 
 impl PortInfo {
@@ -817,7 +821,33 @@ fn demo_plugin(
     }
 }
 
+/// Demo plugin that is late by its first control (frames) and reports it,
+/// as a lookahead limiter or a pitch shifter would
+pub const DEMO_LOOKAHEAD_URI: &str = "urn:pedalboard:demo:lookahead";
+
 fn demo_plugins() -> Vec<PluginInfo> {
+    let mut lookahead = demo_plugin(
+        DEMO_LOOKAHEAD_URI,
+        "Demo Lookahead",
+        "Pedalboard",
+        PluginCategory::Dynamics,
+        false,
+        &[("Latency", 0.0, 4800.0, 48.0)],
+    );
+    if let Some(latency) = lookahead.ports.last_mut() {
+        latency.integer = true;
+        latency.unit = Some("frames".to_string());
+    }
+    lookahead.ports.push(PortInfo {
+        index: lookahead.ports.len(),
+        name: "latency".to_string(),
+        symbol: "latency".to_string(),
+        port_type: PortType::ControlOutput,
+        max: 4800.0,
+        integer: true,
+        latency: true,
+        ..Default::default()
+    });
     let mut overdrive = demo_plugin(
         "urn:pedalboard:demo:overdrive",
         "Demo Overdrive",
@@ -846,6 +876,7 @@ fn demo_plugins() -> Vec<PluginInfo> {
     overdrive.num_control_ports += 2;
 
     vec![
+        lookahead,
         demo_plugin(
             "urn:pedalboard:demo:compressor",
             "Demo Compressor",

@@ -6,7 +6,8 @@ use super::chain::ramp;
 use super::dsp::Cuts;
 #[cfg(feature = "nam")]
 use super::dsp::{NoiseGate, ToneStack};
-use super::scanner::{PluginCategory, PluginInfo, PortType, IR_SPACE_URI};
+use super::scanner::{PluginCategory, PluginInfo, PortType, DEMO_LOOKAHEAD_URI, IR_SPACE_URI};
+use crate::audio::latency::{self, DelayLine};
 use crate::midi::RawMidi;
 
 // Control port indices of the built-in blocks (ports 0 and 1 are audio).
@@ -61,6 +62,9 @@ struct AtomPort {
 enum Backend {
     /// Copies input to output (demo plugins)
     Passthrough,
+    /// Delays its input by its first control, in frames, and reports it as
+    /// its latency (the demo lookahead plugin)
+    DemoDelay(Box<DelayLine>),
     #[cfg(feature = "lv2")]
     Lv2 {
         // Declared before the instance: its thread must stop before the
@@ -198,6 +202,16 @@ pub struct PluginInstance {
     /// Frames of silence out of a bypassed block with trails
     quiet: usize,
     quiet_limit: usize,
+
+    /// Control output the plugin reports its latency on, and that latency
+    /// in frames as of its last run
+    latency_port: Option<usize>,
+    latency: usize,
+    max_latency: usize,
+    /// A late block delays the dry signal of its bypass crossfade and of
+    /// its bypass as much (left, right): switching it does not move the
+    /// sound in time, and the crossfade does not comb
+    dry: Option<Box<[DelayLine; 2]>>,
 }
 
 // SAFETY: LV2 instances have no thread affinity (the plugin's threading
@@ -224,6 +238,15 @@ impl PluginInstance {
         for port in &info.ports {
             controls[port.index] = port.default;
         }
+        // A plugin with no audio output has no latency to compensate
+        let latency_port = info
+            .ports
+            .iter()
+            .find(|p| p.latency && p.port_type == PortType::ControlOutput)
+            .map(|p| p.index)
+            .filter(|_| count(PortType::AudioOutput) > 0);
+        let dry = latency_port
+            .map(|_| Box::new([DelayLine::new(sample_rate), DelayLine::new(sample_rate)]));
 
         Self {
             param_ports: info
@@ -256,12 +279,45 @@ impl PluginInstance {
             ramp: block(),
             quiet: 0,
             quiet_limit: (sample_rate * TAIL_SILENCE_SECONDS) as usize,
+            latency_port,
+            latency: 0,
+            max_latency: latency::max_latency(sample_rate),
+            dry,
         }
     }
 
-    /// Plugin that passes audio through unchanged (demo catalogue)
-    pub fn passthrough(info: PluginInfo, instance_id: usize, max_block: usize) -> Self {
-        Self::with_buffers(info, instance_id, 48000.0, max_block)
+    /// Plugin that passes audio through unchanged (demo catalogue); the
+    /// demo lookahead plugin delays it
+    pub fn passthrough(
+        info: PluginInfo,
+        instance_id: usize,
+        sample_rate: f32,
+        max_block: usize,
+    ) -> Self {
+        let demo_delay = info.uri == DEMO_LOOKAHEAD_URI;
+        let mut this = Self::with_buffers(info, instance_id, sample_rate, max_block);
+        if demo_delay {
+            this.backend = Backend::DemoDelay(Box::new(DelayLine::new(sample_rate)));
+            this.settle_latency();
+        }
+        this
+    }
+
+    /// Run the plugin once on silence, off the audio thread, so that it
+    /// gives its latency before it plays (LV2 only reports it from a run)
+    fn settle_latency(&mut self) {
+        if self.latency_port.is_some() {
+            for input in &mut self.audio_in {
+                input.fill(0.0);
+            }
+            self.reset_atoms();
+            self.run(self.max_block);
+            if let Some(dry) = &mut self.dry {
+                for line in dry.iter_mut() {
+                    line.jump(self.latency);
+                }
+            }
+        }
     }
 
     /// Instantiate, connect and activate a real LV2 plugin
@@ -373,6 +429,7 @@ impl PluginInstance {
             instance,
             _features: features,
         };
+        this.settle_latency();
         Ok(this)
     }
 
@@ -595,6 +652,18 @@ impl PluginInstance {
     }
 
     fn run(&mut self, frames: usize) {
+        self.run_backend(frames);
+        if let Some(port) = self.latency_port {
+            let reported = self.controls.get(port).copied().unwrap_or(0.0);
+            self.latency = if reported.is_finite() && reported >= 0.5 {
+                (reported.round() as usize).min(self.max_latency)
+            } else {
+                0
+            };
+        }
+    }
+
+    fn run_backend(&mut self, frames: usize) {
         match &mut self.backend {
             Backend::Passthrough => {
                 // Each output copies the input of the same rank (or the last)
@@ -607,6 +676,25 @@ impl PluginInstance {
                             output.copy_from_slice(input);
                         }
                     }
+                }
+            }
+            Backend::DemoDelay(line) => {
+                // First control: the delay; the latency port reports it
+                let delay = self
+                    .param_ports
+                    .first()
+                    .and_then(|&(port, ..)| self.controls.get(port))
+                    .map_or(0, |&v| v.max(0.0).round() as usize);
+                line.set(delay);
+                if let (Some(input), Some(output)) = (
+                    self.audio_in.first().and_then(|b| b.get(..frames)),
+                    self.audio_out.first_mut().and_then(|b| b.get_mut(..frames)),
+                ) {
+                    output.copy_from_slice(input);
+                    line.process(output);
+                }
+                if let Some(control) = self.latency_port.and_then(|p| self.controls.get_mut(p)) {
+                    *control = line.target() as f32;
                 }
             }
             #[cfg(feature = "lv2")]
@@ -744,6 +832,8 @@ impl PluginInstance {
         if self.bypassed && self.wet <= 0.0 && (!self.trails || self.quiet >= self.quiet_limit) {
             // Not run: queued notes would play late
             self.midi_len = 0;
+            // Still as late as when it runs
+            self.delay_dry(left, right.as_deref_mut().filter(|_| stereo_in));
             copy_mono(left, right, stereo_in);
             return;
         }
@@ -773,6 +863,8 @@ impl PluginInstance {
             copy_mono(left, right, stereo_in);
             return;
         }
+        // From here `left` and `right` are the dry signal
+        self.delay_dry(left, right.as_deref_mut().filter(|_| stereo_in));
         let target = if self.bypassed { 0.0 } else { 1.0 };
         if self.wet == 1.0 && target == 1.0 {
             // Fully on, the common case: no ramp to mix in
@@ -835,6 +927,7 @@ impl PluginInstance {
             copy_mono(left, right, stereo_in);
             return;
         }
+        self.delay_dry(left, right.as_deref_mut().filter(|_| stereo_in));
         let ramp = &self.ramp[..frames];
         let (wet_l, wet_r) = (
             &self.audio_out[0][..frames],
@@ -858,6 +951,32 @@ impl PluginInstance {
         } else {
             0
         };
+    }
+
+    /// Delay the dry signal (`right` when stereo) as much as the plugin is
+    /// late, so the dry and the processed sound line up
+    fn delay_dry(&mut self, left: &mut [f32], right: Option<&mut [f32]>) {
+        let Some(dry) = &mut self.dry else {
+            return;
+        };
+        let [dry_l, dry_r] = &mut **dry;
+        dry_l.set(self.latency);
+        dry_l.process(left);
+        dry_r.set(self.latency);
+        if let Some(right) = right {
+            dry_r.process(right);
+        }
+    }
+
+    /// Frames the plugin is late by, as it reported on its last run (0 for
+    /// a plugin that does not report it)
+    pub fn latency(&self) -> usize {
+        self.latency
+    }
+
+    /// True if the plugin reports a latency (it may change while it runs)
+    pub fn reports_latency(&self) -> bool {
+        self.latency_port.is_some()
     }
 
     /// True for blocks that keep ringing once bypassed (delays, reverbs)
@@ -961,7 +1080,7 @@ mod tests {
             .find_by_uri("urn:pedalboard:demo:overdrive")
             .unwrap()
             .clone();
-        PluginInstance::passthrough(info, 7, 64)
+        PluginInstance::passthrough(info, 7, 48000.0, 64)
     }
 
     /// A built-in block

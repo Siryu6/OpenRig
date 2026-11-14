@@ -2,6 +2,7 @@ pub mod chain_switcher;
 pub mod dsp_pool;
 pub mod engine;
 pub mod jack_client;
+pub mod latency;
 pub mod loop_files;
 pub mod looper;
 pub mod master;
