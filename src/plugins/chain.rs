@@ -24,17 +24,17 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tracing::warn;
 
-use super::guard::{GuardBoard, Trip, Watchdog};
+use super::guard::Guard;
 use super::instance::PluginInstance;
 use super::lv2_host::Lv2Host;
 use super::scanner::{self, FileKind};
 use crate::audio::dsp_pool;
-use crate::audio::latency::{BlockLatency, DelayLine};
+use crate::audio::latency::{BlockLatency, DelayLine, EffectsLatency};
 use crate::audio::routing::MAX_SENDS;
 use crate::audio::spectrum::BlockTap;
 use crate::audio::split_chain::{ChainNode, SplitType};
@@ -344,11 +344,10 @@ struct PluginProc {
     spent: Arc<AtomicU64>,
     /// Records the sound in and out while the block's view is shown
     tap: &'static BlockTap,
-    /// Switches the plugin off when it takes too much of the period or
-    /// keeps putting out non-finite samples (see `guard`), and where it
-    /// tells the UI
-    watchdog: Watchdog,
-    trip: Arc<AtomicU8>,
+    /// Silences a non-finite output, and switches the plugin off when it
+    /// takes too much of the period or keeps putting out non-finite
+    /// samples (see `guard`)
+    guard: Guard,
     /// Where its latency is shown, for a plugin that reports one
     latency_slot: Option<Arc<AtomicU32>>,
     /// Test only: time added to each run, as a slow plugin
@@ -369,45 +368,36 @@ impl PluginProc {
         }
         #[cfg(test)]
         std::thread::sleep(self.stall);
-        // A non-finite sample would spread through the rest of the chain
-        // (filters and reverbs keep it in their state): silence this
-        // block's output
-        let finite = l.iter().all(|s| s.is_finite())
-            && (!self.stereo_out || r.iter().all(|s| s.is_finite()));
-        if !finite {
-            l.fill(0.0);
-            if self.stereo_out {
-                r.fill(0.0);
-            }
-        }
         if let Some(slot) = &self.latency_slot {
             slot.store(self.latency() as u32, Ordering::Relaxed);
         }
         let nanos = start.elapsed().as_nanos() as u64;
         self.spent.fetch_add(nanos, Ordering::Relaxed);
-        if let Some(trip) = self.watchdog.record(l.len(), nanos, finite) {
-            self.switch_off(trip);
+        let outputs: &mut [&mut [f32]] = if self.stereo_out {
+            &mut [l, r]
+        } else {
+            &mut [l]
+        };
+        if self.guard.check(nanos, outputs) {
+            // Off at once: it stops running, without a tail
+            for instance in self.instances() {
+                instance.set_bypass_immediate(true);
+            }
         }
     }
 
-    /// Bypass the plugin at once (it stops running, without a tail) and
-    /// tell the UI
-    fn switch_off(&mut self, trip: Trip) {
-        for instance in self.instances() {
-            instance.set_bypass_immediate(true);
-        }
-        GuardBoard::global().report(&self.trip, trip);
-    }
-
-    /// Bypass or not, from the user: switching the plugin on re-arms the
-    /// guard
+    /// Bypass or not, from the user. Switching the plugin on re-arms the
+    /// guard. Switched off by the guard, it already is: the UI confirming
+    /// it must not let the plugin play its tail again.
     fn set_enabled(&mut self, enabled: bool) {
+        if self.guard.tripped() {
+            if !enabled {
+                return;
+            }
+            self.guard.rearm();
+        }
         for instance in self.instances() {
             instance.set_bypass(!enabled);
-        }
-        if enabled && self.watchdog.tripped() {
-            self.watchdog.rearm();
-            self.trip.store(0, Ordering::Release);
         }
     }
 
@@ -466,9 +456,6 @@ struct SplitProc {
     /// Delay of the top and bottom branches (left, right), when a block
     /// in either can be late: the earlier branch waits for the later one
     compensation: Option<Box<[[DelayLine; 2]; 2]>>,
-    /// Frames each branch is late by, and the split (the later branch)
-    branch_latency: [usize; 2],
-    latency: usize,
     /// Branches that ran last period: one that did not has stale delays
     ran: [bool; 2],
 }
@@ -476,6 +463,13 @@ struct SplitProc {
 /// Frames a run of blocks is late by
 fn nodes_latency(nodes: &[ProcNode]) -> usize {
     nodes.iter().map(ProcNode::latency).sum()
+}
+
+/// Frames each branch of a split waits for, to meet the other one
+fn branch_delays(top: &[ProcNode], bottom: &[ProcNode]) -> [usize; 2] {
+    let branches = [nodes_latency(top), nodes_latency(bottom)];
+    let latency = branches[0].max(branches[1]);
+    branches.map(|branch| latency - branch)
 }
 
 /// True if a block in `nodes` can be late
@@ -502,10 +496,10 @@ fn compensate(
         return;
     };
     for line in [&mut *left, &mut *right] {
-        line.set(delay);
         if fresh {
             line.clear();
         }
+        line.set(delay);
     }
     left.process(l);
     if let Some(r) = r {
@@ -587,7 +581,6 @@ fn process_branches(
             io.send_mark = io.send_mark.max(top_mark);
         }
     }
-    io.latency = latency;
 }
 
 impl SplitProc {
@@ -621,28 +614,21 @@ impl SplitProc {
         self.split_type == SplitType::Lr && self.stereo_out
     }
 
-    /// Latency of each branch and of the split, from what their blocks
-    /// last reported
-    fn update_latency(&mut self) {
-        self.branch_latency = [nodes_latency(&self.top), nodes_latency(&self.bottom)];
-        self.latency = self.branch_latency[0].max(self.branch_latency[1]);
-    }
-
-    /// Delay branch `branch` must wait, to meet the other one
-    fn delay(&self, branch: usize) -> usize {
-        self.latency - self.branch_latency[branch]
+    /// Frames the split is late by: as late as its later branch, from
+    /// what their blocks last reported
+    fn latency(&self) -> usize {
+        nodes_latency(&self.top).max(nodes_latency(&self.bottom))
     }
 
     /// `l.len()` must not exceed the branch buffer size
     fn process(&mut self, l: &mut [f32], r: &mut [f32], io: &mut ChainIo) {
-        let base = io.latency;
         let ran = self.ran;
-        self.update_latency();
         if !self.enabled {
             // Switched off, the split stays as late as its branches, so
             // the sound does not move in time
             let stereo = self.stereo_in.then_some(&mut *r);
-            compensate(&mut self.compensation, 0, !ran[0], self.latency, l, stereo);
+            let latency = self.latency();
+            compensate(&mut self.compensation, 0, !ran[0], latency, l, stereo);
             self.ran = [true, false];
             if self.stereo_out && !self.stereo_in {
                 r.copy_from_slice(l);
@@ -665,9 +651,7 @@ impl SplitProc {
                 &mut self.bottom,
                 [&mut *bl, &mut *br],
             );
-            self.branch_latency = [nodes_latency(&self.top), nodes_latency(&self.bottom)];
-            self.latency = self.branch_latency[0].max(self.branch_latency[1]);
-            let delays = self.branch_latency.map(|b| self.latency - b);
+            let delays = branch_delays(&self.top, &self.bottom);
             let top_r = self.top_stereo.then_some(&mut *tr);
             compensate(&mut self.compensation, 0, !ran[0], delays[0], l, top_r);
             let bottom_r = self.bottom_stereo.then_some(&mut *br);
@@ -698,10 +682,8 @@ impl SplitProc {
                 (&mut self.bottom, self.bottom_stereo, 1)
             };
             process_nodes(branch, l, r, io);
-            io.latency = base;
-            self.update_latency();
+            let delay = branch_delays(&self.top, &self.bottom)[side];
             let right = branch_stereo.then_some(&mut *r);
-            let delay = self.delay(side);
             compensate(&mut self.compensation, side, !ran[side], delay, l, right);
             self.ran = [side == 0, side == 1];
             if self.stereo_out && !branch_stereo {
@@ -738,8 +720,7 @@ impl SplitProc {
                 [&mut bl[..n], &mut br[..n]],
             );
         }
-        self.update_latency();
-        let delays = [self.delay(0), self.delay(1)];
+        let delays = branch_delays(&self.top, &self.bottom);
         for (branch, ([bl, br], stereo)) in [
             (&mut self.top_buf, self.top_stereo),
             (&mut self.bottom_buf, self.bottom_stereo),
@@ -935,50 +916,7 @@ enum ProcNode {
 fn process_nodes(nodes: &mut [ProcNode], l: &mut [f32], r: &mut [f32], io: &mut ChainIo) {
     for node in nodes {
         node.process(l, r, io);
-        io.latency += node.latency();
     }
-}
-
-/// Before the chain plays: give its delays their length at once, from the
-/// latency each block reports, the latency at the start of `nodes` and the
-/// last send before them. Returns the latency of `nodes` and the last send.
-fn settle_latency(
-    nodes: &mut [ProcNode],
-    start: usize,
-    mut mark: Option<usize>,
-) -> (usize, Option<usize>) {
-    let mut at = start;
-    for node in nodes.iter_mut() {
-        match node {
-            ProcNode::Plugin(_) => {}
-            ProcNode::Route(route) if route.send => {
-                route.at = at;
-                mark = Some(at);
-            }
-            ProcNode::Route(route) => {
-                let delay = at.saturating_sub(mark.unwrap_or(0));
-                if let Some(line) = &mut route.delay {
-                    line.jump(delay);
-                }
-            }
-            ProcNode::Split(split) => {
-                let (_, top_mark) = settle_latency(&mut split.top, at, mark);
-                let (_, bottom_mark) = settle_latency(&mut split.bottom, at, mark);
-                mark = mark.max(top_mark).max(bottom_mark);
-                split.update_latency();
-                let delays = [split.delay(0), split.delay(1)];
-                if let Some(lines) = &mut split.compensation {
-                    for (branch, delay) in lines.iter_mut().zip(delays) {
-                        for line in branch {
-                            line.jump(delay);
-                        }
-                    }
-                }
-            }
-        }
-        at += node.latency();
-    }
-    (at - start, mark)
 }
 
 /// Give the returns of `nodes` a delay for their input
@@ -1021,17 +959,21 @@ impl ProcNode {
     fn latency(&self) -> usize {
         match self {
             ProcNode::Plugin(plugin) => plugin.latency(),
-            ProcNode::Split(split) => split.latency,
+            ProcNode::Split(split) => split.latency(),
             ProcNode::Route(_) => 0,
         }
     }
 
+    /// Process the block, and move `io` past it: the signal after it is
+    /// as late as the block makes it
     fn process(&mut self, l: &mut [f32], r: &mut [f32], io: &mut ChainIo) {
+        let at = io.latency;
         match self {
             ProcNode::Plugin(plugin) => plugin.process(l, r),
             ProcNode::Split(split) => split.process(l, r, io),
             ProcNode::Route(route) => route.process(l, r, io),
         }
+        io.latency = at + self.latency();
     }
 }
 
@@ -1201,7 +1143,6 @@ impl<'a> Wave<'a> {
                 for (node, spent) in nodes.iter_mut().zip(spent.iter_mut()) {
                     let start = Instant::now();
                     node.process(l, r, &mut io);
-                    io.latency += node.latency();
                     *spent += start.elapsed().as_secs_f32();
                 }
             }
@@ -1294,8 +1235,6 @@ pub struct EffectChain {
     /// A send somewhere: the chain stays on the audio thread, which owns
     /// the send buses
     has_send: bool,
-    /// Frames the output is late by, as of the last period
-    latency: usize,
 }
 
 impl EffectChain {
@@ -1310,7 +1249,6 @@ impl EffectChain {
             costs: Vec::new(),
             spent: Vec::new(),
             has_send: false,
-            latency: 0,
         }
     }
 
@@ -1336,7 +1274,6 @@ impl EffectChain {
         if may_be_late(&chain.nodes) {
             add_return_delays(&mut chain.nodes, sample_rate);
         }
-        chain.latency = settle_latency(&mut chain.nodes, 0, None).0;
         if spec.bpm > 0.0 {
             chain.apply(&ChainCommand::SetTempo { bpm: spec.bpm });
         }
@@ -1436,8 +1373,7 @@ impl EffectChain {
                                 stereo_out,
                                 spent: BlockMeter::global().counter(*instance_id),
                                 tap: BlockTap::global(),
-                                watchdog: Watchdog::new(sample_rate, self.max_block),
-                                trip: GuardBoard::global().slot(*instance_id),
+                                guard: Guard::new(*instance_id, sample_rate, self.max_block),
                                 latency_slot,
                                 #[cfg(test)]
                                 stall: std::time::Duration::ZERO,
@@ -1495,8 +1431,6 @@ impl EffectChain {
                         bottom_buf: [buffer(), buffer()],
                         offload: Offload::None,
                         compensation: None,
-                        branch_latency: [0; 2],
-                        latency: 0,
                         ran: [true; 2],
                     };
                     if may_be_late(&split.top) || may_be_late(&split.bottom) {
@@ -1575,7 +1509,6 @@ impl EffectChain {
                 {
                     let start = Instant::now();
                     node.process(l, r, io);
-                    io.latency += node.latency();
                     *spent = start.elapsed().as_secs_f32();
                     *cost += (*spent - *cost) * COST_WEIGHT;
                     *spent = 0.0;
@@ -1585,21 +1518,23 @@ impl EffectChain {
         if !self.stereo_out {
             r.copy_from_slice(l);
         }
-        self.latency = nodes_latency(&self.nodes);
     }
 
     /// Frames the output is late by (the blocks' latency, with the
-    /// compensation of the splits)
+    /// compensation of the splits), as of the last period (real-time safe)
     pub fn latency(&self) -> usize {
-        self.latency
+        nodes_latency(&self.nodes)
     }
 
-    /// Shortest and longest frames the signal sent to each bus is late by;
-    /// None for a bus no send feeds (real-time safe)
-    pub fn send_latency(&self) -> [Option<(usize, usize)>; MAX_SENDS] {
-        let mut buses = [None; MAX_SENDS];
-        send_latencies(&self.nodes, &mut buses);
-        buses
+    /// Frames the main mix and each send bus are late by, as of the last
+    /// period (real-time safe)
+    pub fn effects_latency(&self) -> EffectsLatency {
+        let mut sends = [None; MAX_SENDS];
+        send_latencies(&self.nodes, &mut sends);
+        EffectsLatency {
+            chain: self.latency(),
+            sends,
+        }
     }
 
     /// The chain feeds a send bus: it must run on the audio thread
@@ -1684,6 +1619,7 @@ impl EffectChain {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugins::guard::Trip;
 
     fn plugin(id: usize) -> ChainNode {
         ChainNode::Plugin {
@@ -2203,7 +2139,7 @@ mod tests {
     }
 
     fn trip_of(instance_id: usize) -> u8 {
-        GuardBoard::global()
+        crate::plugins::guard::GuardBoard::global()
             .slot(instance_id)
             .load(Ordering::Acquire)
     }
@@ -2212,7 +2148,7 @@ mod tests {
     fn a_slow_plugin_is_switched_off_and_can_be_switched_back_on() {
         // A 100 ms period (100 frames at 1 kHz) and a plugin taking 55 ms
         // of it: heavy, but far from missing the deadline on its own
-        use crate::plugins::guard::{GRACE_SECONDS, HEAVY_SECONDS};
+        use crate::plugins::guard::{GRACE_SECONDS, LOAD_RULES};
         const ID: usize = 9101;
         const FRAMES: usize = 100;
         let host = Lv2Host::demo();
@@ -2230,7 +2166,8 @@ mod tests {
         };
 
         // Cut after the grace time and the heavy time (0.5 s), not before
-        let periods = ((GRACE_SECONDS + HEAVY_SECONDS) * 10.0).round() as usize;
+        let heavy = LOAD_RULES[0].1.limit;
+        let periods = ((GRACE_SECONDS + heavy) * 10.0).round() as usize;
         for _ in 0..periods - 1 {
             period(&mut chain);
         }
@@ -2240,7 +2177,7 @@ mod tests {
         }
         assert_eq!(trip_of(ID), Trip::Cpu as u8);
         let slow = plugin_proc(&mut chain, ID);
-        assert!(slow.watchdog.tripped());
+        assert!(slow.guard.tripped());
         assert!(slow.instances().all(|i| i.is_bypassed()));
         // Only that plugin
         assert!(!plugin_proc(&mut chain, ID + 1)
@@ -2256,7 +2193,7 @@ mod tests {
             enabled: true
         }));
         let slow = plugin_proc(&mut chain, ID);
-        assert!(!slow.watchdog.tripped());
+        assert!(!slow.guard.tripped());
         assert!(!slow.instances().any(|i| i.is_bypassed()));
         assert_eq!(trip_of(ID), 0);
     }
@@ -2285,6 +2222,43 @@ mod tests {
         assert!(plugin_proc(&mut chain, ID)
             .instances()
             .all(|i| i.is_bypassed()));
+    }
+
+    #[test]
+    fn a_plugin_switched_off_by_the_guard_stays_off_when_the_ui_follows() {
+        // A reverb (with trails) gone bad: the UI then bypasses the block
+        // too, which must not start its tail again
+        const ID: usize = 9202;
+        let host = Lv2Host::demo();
+        let spec = ChainSpec {
+            nodes: vec![ChainNode::Plugin {
+                instance_id: ID,
+                uri: "urn:pedalboard:demo:reverb".to_string(),
+                enabled: true,
+                num_inputs: 1,
+                num_outputs: 1,
+            }],
+            ..Default::default()
+        };
+        let (mut chain, _) = EffectChain::build(&spec, &host, 48000.0, 64);
+        assert!(plugin_proc(&mut chain, ID).left.has_trails());
+        for _ in 0..3 {
+            let (mut l, mut r) = (vec![f32::NAN; 64], vec![0.0; 64]);
+            chain.process(&mut l, &mut r);
+        }
+        assert_eq!(trip_of(ID), Trip::NonFinite as u8);
+        assert!(plugin_proc(&mut chain, ID).instances().all(|i| i.is_idle()));
+        assert!(chain.apply(&ChainCommand::SetEnabled {
+            instance_id: ID,
+            enabled: false
+        }));
+        assert!(plugin_proc(&mut chain, ID).instances().all(|i| i.is_idle()));
+        // Switched on again: it runs
+        assert!(chain.apply(&ChainCommand::SetEnabled {
+            instance_id: ID,
+            enabled: true
+        }));
+        assert!(!plugin_proc(&mut chain, ID).left.is_idle());
     }
 
     // Latency compensation
@@ -2495,7 +2469,7 @@ mod tests {
         let (mut chain, errors) = EffectChain::build(&spec, &host, 48000.0, 64);
         assert!(errors.is_empty(), "{errors:?}");
         let _ = run_io(&mut chain);
-        let sends = chain.send_latency();
+        let sends = chain.effects_latency().sends;
         assert_eq!(sends[1], Some((48, 48)), "{sends:?}");
         assert_eq!(sends[0], None);
     }

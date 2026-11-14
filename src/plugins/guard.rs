@@ -18,34 +18,64 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::sync::MutexExt;
 
-/// A period in which the plugin takes at least this share of it is heavy
-pub const HEAVY_SHARE: f32 = 0.5;
-/// Heavy periods (in seconds of audio, net of the light ones) that switch
-/// the plugin off: a sustained overload is cut in about this time
-pub const HEAVY_SECONDS: f32 = 0.3;
-/// A period in which the plugin alone takes at least this share of it is a
-/// spike: with the rest of the chain, the deadline is missed
-pub const SPIKE_SHARE: f32 = 0.75;
-/// Spikes that switch the plugin off...
-pub const SPIKE_LIMIT: f32 = 3.0;
-/// ...each one being forgiven after this many seconds: a spike now and
-/// then (a preset load, a burst of system activity) is harmless, several
-/// in a row are not
-pub const SPIKE_FORGIVE_SECONDS: f32 = 0.25;
-/// A period that the plugin alone takes longer than: the deadline is
-/// missed whatever the rest of the chain does, so a dropout
-pub const OVERRUN_SHARE: f32 = 1.0;
-/// Overruns that switch the plugin off...
-pub const OVERRUN_LIMIT: f32 = 5.0;
-/// ...each one being forgiven after this many seconds: unlike a spike, an
-/// overrun is a dropout the user hears. Spikes spaced more than
-/// `SPIKE_FORGIVE_SECONDS` apart never add up, so a plugin that overruns
-/// one period every half second (a buffer rebuilt in one go) would
-/// otherwise never be cut
-pub const OVERRUN_FORGIVE_SECONDS: f32 = 3.0;
-/// Periods with a non-finite output that switch the plugin off, each one
-/// forgiven after `SPIKE_FORGIVE_SECONDS` too
-pub const NON_FINITE_LIMIT: f32 = 3.0;
+/// A leaky count of bad periods. Each bad period adds its weight in
+/// seconds, each good one takes its own length off, and the plugin is
+/// switched off once the count reaches `limit` seconds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rule {
+    /// Weight of a bad period; None: its own length
+    weight: Option<f32>,
+    pub limit: f32,
+}
+
+impl Rule {
+    /// Bad periods adding up to `seconds` of audio, net of the good ones
+    pub const fn sustained(seconds: f32) -> Self {
+        Self {
+            weight: None,
+            limit: seconds,
+        }
+    }
+
+    /// `count` bad periods, each one forgiven after `forgive` seconds
+    pub const fn events(count: f32, forgive: f32) -> Self {
+        Self {
+            weight: Some(forgive),
+            limit: count * forgive,
+        }
+    }
+
+    /// Count a period of `period` seconds, bad or not; true once the
+    /// limit is reached
+    fn count(&self, level: &mut f32, bad: bool, period: f32) -> bool {
+        *level = if bad {
+            *level + self.weight.unwrap_or(period)
+        } else {
+            (*level - period).max(0.0)
+        };
+        *level >= self.limit
+    }
+}
+
+/// Load checks: a period in which the plugin takes at least this share of
+/// it is bad for the rule.
+/// - Half of it, for 0.3 s net: a sustained overload.
+/// - Three quarters, three times, each forgiven after 0.25 s: with the
+///   rest of the chain, the deadline is missed. A spike now and then (a
+///   preset load, a burst of system activity) is harmless, several in a
+///   row are not.
+/// - The whole period, five times, each forgiven after 3 s: the deadline
+///   is missed whatever the rest of the chain does, so a dropout the user
+///   hears. Spikes far apart never add up, so a plugin that overruns one
+///   period every half second (a buffer rebuilt in one go) is cut by this
+///   rule only.
+pub const LOAD_RULES: [(f32, Rule); 3] = [
+    (0.5, Rule::sustained(0.3)),
+    (0.75, Rule::events(3.0, 0.25)),
+    (1.0, Rule::events(5.0, 3.0)),
+];
+/// Periods with a non-finite output: three, each forgiven after 0.25 s
+pub const OUTPUT_RULE: Rule = Rule::events(3.0, 0.25);
 /// Time not checked for load after the plugin starts (or is switched back
 /// on): first periods often cost more (buffers, caches, initial state)
 pub const GRACE_SECONDS: f32 = 0.2;
@@ -91,12 +121,9 @@ pub struct Watchdog {
     non_finite: bool,
     /// Seconds of audio left before the load is checked
     grace: f32,
-    /// Net seconds of heavy periods
-    heavy: f32,
-    /// Spikes, overruns and non-finite periods not forgiven yet
-    spikes: f32,
-    overruns: f32,
-    bad_output: f32,
+    /// Count of each of `LOAD_RULES`, and of `OUTPUT_RULE`
+    load: [f32; LOAD_RULES.len()],
+    output: f32,
     tripped: bool,
 }
 
@@ -111,10 +138,8 @@ impl Watchdog {
             nanos: 0,
             non_finite: false,
             grace: GRACE_SECONDS,
-            heavy: 0.0,
-            spikes: 0.0,
-            overruns: 0.0,
-            bad_output: 0.0,
+            load: [0.0; LOAD_RULES.len()],
+            output: 0.0,
             tripped: false,
         }
     }
@@ -146,45 +171,85 @@ impl Watchdog {
         let non_finite = self.non_finite;
         (self.frames, self.nanos, self.non_finite) = (0, 0, false);
 
-        // Spikes and bad outputs are forgiven over the periods without
-        let forgiven = period / SPIKE_FORGIVE_SECONDS;
-        if non_finite {
-            self.bad_output += 1.0;
-            if self.bad_output >= NON_FINITE_LIMIT {
-                self.tripped = true;
-                return Some(Trip::NonFinite);
-            }
-        } else {
-            self.bad_output = (self.bad_output - forgiven).max(0.0);
-        }
-
-        if self.grace > 0.0 {
+        // The output is checked from the start
+        let trip = if OUTPUT_RULE.count(&mut self.output, non_finite, period) {
+            Some(Trip::NonFinite)
+        } else if self.grace > 0.0 {
             self.grace -= period;
-            return None;
-        }
-        self.heavy = if load >= HEAVY_SHARE {
-            self.heavy + period
+            None
         } else {
-            (self.heavy - period).max(0.0)
+            // Every rule counts the period, whichever trips
+            let mut over = false;
+            for ((share, rule), level) in LOAD_RULES.iter().zip(&mut self.load) {
+                over |= rule.count(level, load >= *share, period);
+            }
+            over.then_some(Trip::Cpu)
         };
-        if load >= SPIKE_SHARE {
-            self.spikes += 1.0;
-        } else {
-            self.spikes = (self.spikes - forgiven).max(0.0);
+        self.tripped = trip.is_some();
+        trip
+    }
+}
+
+/// True if every sample of `buffers` is finite; else silences them all
+/// (real-time safe). A non-finite sample would spread through what comes
+/// after (filters and reverbs keep it in their state) and could reach the
+/// speakers at full scale.
+pub fn silence_non_finite(buffers: &mut [&mut [f32]]) -> bool {
+    let finite = buffers.iter().all(|b| b.iter().all(|s| s.is_finite()));
+    if !finite {
+        for buffer in buffers.iter_mut() {
+            buffer.fill(0.0);
         }
-        if load >= OVERRUN_SHARE {
-            self.overruns += 1.0;
-        } else {
-            self.overruns = (self.overruns - period / OVERRUN_FORGIVE_SECONDS).max(0.0);
+    }
+    finite
+}
+
+/// The guard of one plugin of the chain: its watchdog, and its slot on the
+/// [`GuardBoard`]
+#[derive(Debug)]
+pub struct Guard {
+    watchdog: Watchdog,
+    slot: Arc<AtomicU8>,
+}
+
+impl Guard {
+    /// Guard of block `instance_id` (not real-time safe: called when
+    /// building the chain)
+    pub fn new(instance_id: usize, sample_rate: f32, window: usize) -> Self {
+        Self {
+            watchdog: Watchdog::new(sample_rate, window),
+            slot: GuardBoard::global().slot(instance_id),
         }
-        if self.heavy >= HEAVY_SECONDS
-            || self.spikes >= SPIKE_LIMIT
-            || self.overruns >= OVERRUN_LIMIT
-        {
-            self.tripped = true;
-            return Some(Trip::Cpu);
-        }
-        None
+    }
+
+    /// After a run that took `nanos` and put out `outputs`: silences a
+    /// non-finite output, and returns true when the plugin must be switched
+    /// off now (the UI is told). Real-time safe.
+    pub fn check(&mut self, nanos: u64, outputs: &mut [&mut [f32]]) -> bool {
+        let frames = outputs.first().map_or(0, |b| b.len());
+        let finite = silence_non_finite(outputs);
+        let Some(trip) = self.watchdog.record(frames, nanos, finite) else {
+            return false;
+        };
+        GuardBoard::global().report(&self.slot, trip);
+        true
+    }
+
+    /// True once the plugin was switched off, until `rearm`
+    pub fn tripped(&self) -> bool {
+        self.watchdog.tripped()
+    }
+
+    /// The plugin is switched back on: check it from scratch
+    pub fn rearm(&mut self) {
+        self.watchdog.rearm();
+        self.slot.store(0, Ordering::Release);
+    }
+
+    /// What the slot holds (tests)
+    #[cfg(test)]
+    pub fn reported(&self) -> u8 {
+        self.slot.load(Ordering::Acquire)
     }
 }
 
@@ -378,6 +443,61 @@ mod tests {
         assert_eq!(dog.record(PERIOD, 0, false), None);
         assert_eq!(dog.record(PERIOD, 0, false), None);
         assert_eq!(dog.record(PERIOD, 0, false), Some(Trip::NonFinite));
+    }
+
+    #[test]
+    fn rules_count_in_seconds() {
+        // Three events forgiven after 0.25 s: the third in a row trips,
+        // one every 0.25 s never adds up
+        let rule = Rule::events(3.0, 0.25);
+        let mut level = 0.0;
+        assert!(!rule.count(&mut level, true, 0.01));
+        assert!(!rule.count(&mut level, true, 0.01));
+        assert!(rule.count(&mut level, true, 0.01));
+        let mut level = 0.0;
+        for _ in 0..100 {
+            assert!(!rule.count(&mut level, true, 0.01));
+            for _ in 0..25 {
+                assert!(!rule.count(&mut level, false, 0.01));
+            }
+        }
+        // Sustained: bad periods add their length, net of the good ones
+        let rule = Rule::sustained(0.3);
+        let mut level = 0.0;
+        for _ in 0..1000 {
+            assert!(!rule.count(&mut level, true, 0.01));
+            assert!(!rule.count(&mut level, false, 0.01));
+        }
+        assert!((0..32).any(|_| rule.count(&mut level, true, 0.01)));
+    }
+
+    #[test]
+    fn non_finite_buffers_are_silenced_together() {
+        let (mut l, mut r) = ([0.5, 0.25], [0.5, f32::INFINITY]);
+        assert!(silence_non_finite(&mut [&mut l[..]]));
+        assert_eq!(l, [0.5, 0.25]);
+        assert!(!silence_non_finite(&mut [&mut l[..], &mut r[..]]));
+        assert_eq!((l, r), ([0.0; 2], [0.0; 2]));
+    }
+
+    #[test]
+    fn a_guard_silences_reports_and_rearms() {
+        const ID: usize = 9301;
+        let mut guard = Guard::new(ID, RATE, PERIOD);
+        let nan = || vec![f32::NAN; PERIOD];
+        let mut out = nan();
+        assert!(!guard.check(0, &mut [&mut out]));
+        assert!(out.iter().all(|&s| s == 0.0));
+        assert!(!guard.check(0, &mut [&mut nan()]));
+        assert_eq!(guard.reported(), 0);
+        assert!(guard.check(0, &mut [&mut nan()]));
+        assert!(guard.tripped());
+        assert_eq!(guard.reported(), Trip::NonFinite as u8);
+        // Once
+        assert!(!guard.check(0, &mut [&mut nan()]));
+        guard.rearm();
+        assert!(!guard.tripped());
+        assert_eq!(guard.reported(), 0);
     }
 
     #[test]

@@ -13,6 +13,7 @@ use super::routing::{OutputRouter, PortMeter, Routing, RoutingControl, MAX_PORTS
 use super::{ChainSwitcher, Looper, Tuner, TunerResult};
 use crate::monitor::{DspMeter, LevelMeter};
 use crate::plugins::chain::ChainIo;
+use crate::plugins::guard::silence_non_finite;
 use crate::plugins::Lv2Host;
 
 /// Preset/chain switch crossfade
@@ -477,17 +478,12 @@ impl ProcessHandler for PedalboardProcessor {
         if let Ok(mut looper) = self.looper.try_lock() {
             looper.process(left, right);
         }
-        // A plugin or model gone wrong (NaN, infinity) would send garbage,
-        // possibly at full scale, to the speakers: silence instead
-        if !left.iter().chain(right.iter()).all(|s| s.is_finite()) {
-            left.fill(0.0);
-            right.fill(0.0);
-        }
-        for bus in self.sends.iter_mut().flatten() {
-            let bus = &mut bus[..n];
-            if !bus.iter().all(|s| s.is_finite()) {
-                bus.fill(0.0);
-            }
+        // Each block's output is checked by its guard; this is the last
+        // check before the speakers, for what no block puts out (a sum
+        // that overflows, the looper)
+        silence_non_finite(&mut [&mut *left, &mut *right]);
+        for [l, r] in &mut self.sends {
+            silence_non_finite(&mut [&mut l[..n], &mut r[..n]]);
         }
         let passed = |i: u8| inputs.get(..heard)?.get(i as usize).copied();
         // The main mix, then each send
@@ -515,11 +511,10 @@ impl ProcessHandler for PedalboardProcessor {
         self.levels.record(input, left, right);
 
         // Latency of the effects and of every output, for JACK and the UI
-        let chain = self.chain_switcher.latency();
-        let sends = self.chain_switcher.send_latency();
-        self.latency.set_chain(chain);
+        let effects = self.chain_switcher.latency();
+        self.latency.set_chain(effects.chain);
         for port in 0..count {
-            let latency = self.router.output_latency(port, chain, &sends);
+            let latency = self.router.output_latency(port, &effects);
             self.latency.set_output(port, latency);
         }
 
