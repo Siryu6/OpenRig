@@ -164,6 +164,13 @@ Limits:
   PNG, larger ones as JPEG (quality 80). `PEDALBOARD_REMOTE_FRAMES=png` or
   `jpeg` forces one. A frame is a 14-byte header (format, position, window
   size) and the picture; pointer and key events come back as JSON.
+- Flow control: the page acknowledges each frame once drawn. At most 32 KiB
+  of frames are on the way to a page; past that, frames are held back and
+  their area is sent again, as it is then, once the page caught up. A slow
+  link (weak Wi-Fi) or a slow phone gets fewer frames, never late ones: the
+  delay stays under about 32 KiB over the link's speed instead of growing.
+- The sockets send small messages at once (`TCP_NODELAY`): a knob or a
+  meter does not wait for the acknowledgement of the previous frame.
 
 Cargo features: `remote` (the server and the Live view) and `headless` (the
 Editor's renderer), both on by default and in the OS image.
@@ -191,7 +198,17 @@ the app process (100 % = one core):
 | Editor, tapping and dragging | 2.9 % |
 
 The Editor sends 10 to 15 KiB per changed area; a still screen sends only
-what moves (the meters, the DSP load).
+what moves (the meters, the DSP load: about 2 KiB a second).
+
+Delay of the Editor (WebSocket ping behind the frames, x86_64 desktop,
+1280 × 800, a page change every 0.5 s or a knob dragged; the link is a
+reader limited to a given speed):
+
+| | Before | After |
+|---|---|---|
+| Fast link, page changes, 95th percentile | 41 ms | 0.4 ms |
+| 150 KB/s, knob dragged, median | 5.5 s, growing | 0.21 s |
+| 60 KB/s, page changes, median | 2.6 s, growing | 0.27 s |
 
 ## Troubleshooting
 

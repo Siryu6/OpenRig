@@ -166,6 +166,8 @@ impl Screen {
         }
         INPUT.with(|i| i.set(false));
         let keyframe = remote.take_keyframe();
+        // What a client missed, from the window as it is now
+        let repaint = remote.take_repaint();
         if keyframe {
             self.window.request_redraw();
         }
@@ -197,7 +199,10 @@ impl Screen {
                 height: h,
             }];
         }
-        if !drawn && !keyframe {
+        if let Some(rect) = repaint.filter(|_| !keyframe) {
+            rects.push(rect);
+        }
+        if !drawn && !keyframe && repaint.is_none() {
             // Nothing changed: look again soon (an animation may be running)
             return Some(if self.window.has_active_animations() {
                 period
@@ -209,10 +214,20 @@ impl Screen {
         if rects.is_empty() {
             return Some(period);
         }
-        self.rgb.clear();
-        self.rgb.reserve(w * h * 3);
-        for p in &self.pixels {
-            self.rgb.extend_from_slice(&[p.r, p.g, p.b]);
+        // Only the areas sent: the rest of the window is not read
+        self.rgb.resize(w * h * 3, 0);
+        for rect in &rects {
+            let x2 = (rect.x + rect.width).min(w);
+            for row in rect.y..(rect.y + rect.height).min(h) {
+                let line = row * w;
+                for (i, p) in self.pixels[line + rect.x.min(x2)..line + x2]
+                    .iter()
+                    .enumerate()
+                {
+                    let o = (line + rect.x + i) * 3;
+                    self.rgb[o..o + 3].copy_from_slice(&[p.r, p.g, p.b]);
+                }
+            }
         }
         for rect in rects {
             if let Some(frame) = frames::encode(&self.rgb, (w, h), rect, self.encoding) {

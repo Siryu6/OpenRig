@@ -47,6 +47,34 @@ pub struct Rect {
     pub height: usize,
 }
 
+impl Rect {
+    /// The smallest rectangle holding both
+    pub fn union(self, other: Rect) -> Rect {
+        let x = self.x.min(other.x);
+        let y = self.y.min(other.y);
+        let x2 = (self.x + self.width).max(other.x + other.width);
+        let y2 = (self.y + self.height).max(other.y + other.height);
+        Rect {
+            x,
+            y,
+            width: x2 - x,
+            height: y2 - y,
+        }
+    }
+}
+
+/// The rectangle a frame message shows (see protocol::frame_header)
+pub fn rect_of(message: &[u8]) -> Option<Rect> {
+    let header = message.get(..FRAME_HEADER)?;
+    let field = |i: usize| usize::from(u16::from_le_bytes([header[2 + i * 2], header[3 + i * 2]]));
+    Some(Rect {
+        x: field(0),
+        y: field(1),
+        width: field(2),
+        height: field(3),
+    })
+}
+
 /// The message for rectangle `rect` of an RGB window (`rgb`, 3 bytes per
 /// pixel, `window` = width and height): header then picture. None when the
 /// rectangle is empty or outside the window.
@@ -183,6 +211,35 @@ mod tests {
             Encoding::Png
         )
         .is_none());
+    }
+
+    #[test]
+    fn rect_of_a_message_and_unions() {
+        let rgb = window(100, 50);
+        let rect = Rect {
+            x: 10,
+            y: 5,
+            width: 20,
+            height: 8,
+        };
+        let message = encode(&rgb, (100, 50), rect, Encoding::Png).unwrap_or_default();
+        assert_eq!(rect_of(&message), Some(rect));
+        assert_eq!(rect_of(&message[..4]), None);
+        let other = Rect {
+            x: 50,
+            y: 0,
+            width: 10,
+            height: 2,
+        };
+        assert_eq!(
+            rect.union(other),
+            Rect {
+                x: 10,
+                y: 0,
+                width: 50,
+                height: 13
+            }
+        );
     }
 
     /// Sizes and times of both encodings: `cargo test --release frames -- --nocapture`
