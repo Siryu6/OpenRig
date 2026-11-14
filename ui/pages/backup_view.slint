@@ -28,6 +28,8 @@ export global Backup {
     in-out property <bool> include-large: false;
     in-out property <string> destination: "";   // where the next backup goes
     in-out property <bool> usb: false;          // to a USB drive
+    in-out property <bool> can-eject: false;    // the system ejects drives (OpenRig OS)
+    in-out property <bool> ejecting: false;
     in-out property <string> large-size: "";    // "Models 1.2 GB, plugins 300 MB"
     in-out property <string> local-note: "";    // what only a full backup keeps
     // Restore
@@ -46,6 +48,7 @@ export global Backup {
 
     callback opened();
     callback back-up();
+    callback eject();                           // the USB drives, before pulling them out
     callback select(int);
     callback ask-undo();
     callback confirm();
@@ -280,8 +283,23 @@ export component BackupPanel inherits Rectangle {
                             Backup.back-up();
                         }
                     }
-                    Note {
-                        text: Backup.destination;
+                    HorizontalLayout {
+                        spacing: Theme.space-sm;
+                        Note {
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                            text: Backup.destination;
+                        }
+                        if Backup.usb && Backup.can-eject: Button {
+                            horizontal-stretch: 0;
+                            text: "Eject";
+                            icon: "eject";
+                            variant: "ghost";
+                            enabled: !Backup.busy && !Backup.ejecting;
+                            clicked => {
+                                Backup.eject();
+                            }
+                        }
                     }
                 }
             }

@@ -158,7 +158,7 @@ with audio disabled.
 | `PEDALBOARD_DATA_DIR` | platform data dir (`~/.local/share/pedalboard` on Linux) | Presets, setlists, session, `models/` (NAM models and IRs) |
 | `PEDALBOARD_TONE3000_CLIENT_ID` | unset | Uses the publishable key (`t3k_pub_…`) of your own TONE3000 application instead of OpenRig's, when none is saved |
 | `OPENRIG_TONE3000_CLIENT_ID` | OpenRig's key | At build time: the publishable key built in |
-| `PEDALBOARD_MEDIA_DIR` | unset | Folder whose subfolders are taken as USB drives (rigs and backups), instead of the desktop's mount points |
+| `PEDALBOARD_MEDIA_DIR` | unset | Folder whose subfolders are taken as USB drives (rigs and backups), instead of the system's mount points |
 | `PEDALBOARD_NO_AUTOCONNECT` | unset | Do not connect JACK ports |
 | `PEDALBOARD_FOOTSWITCH_PINS` | `17,27,22,23` | Footswitch GPIOs (BCM), until set in Settings → Hardware (empty: none) |
 | `PEDALBOARD_ENCODER_PINS` | `5,6,13` | Encoder A, B and button, until set in Settings (`A,B`: no button; empty: no encoder) |
@@ -169,6 +169,7 @@ with audio disabled.
 | `RUST_LOG` | `info` | Log level |
 | `PEDALBOARD_EXIT_ON_AUDIO_CHANGE` | unset | Quit when the JACK server stops or starts (the OS launcher starts the UI again) |
 | `PEDALBOARD_POWER_REQUEST` | unset | File where Power off / Restart is requested (set by the OS launcher; shows the menu entry) |
+| `PEDALBOARD_DRIVES_DIR` | unset | Folder of the OS helper that ejects USB drives (set by the OS launcher; shows the Eject buttons) |
 | `PEDALBOARD_DISPLAY` | `auto` | `screen`, or `remote`: the UI for the remote control's Editor, drawn in memory (see [docs/REMOTE.md](docs/REMOTE.md)) |
 | `PEDALBOARD_REMOTE_PORT` | `80`, then `8080` | Port of the remote control's web server |
 | `PEDALBOARD_ALIVE_FILE` | unset | File written again every second while the UI runs (set by the OS launcher, to tell an app update that hangs) |

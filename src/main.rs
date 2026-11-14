@@ -2,6 +2,7 @@ mod backup_ui;
 mod block_sound;
 #[cfg(feature = "store")]
 mod catalog_ui;
+mod drives_ui;
 mod dynamics_ui;
 mod eq_ui;
 #[cfg(feature = "gpio")]
@@ -1929,6 +1930,7 @@ fn main() -> Result<()> {
     system_ui::setup(&app);
     strip_ui::setup(&app);
     backup_ui::setup(&app, &state);
+    drives_ui::setup(&app);
     if let Some(manifest) = &restored {
         backup_ui::restored(&app, manifest);
     }

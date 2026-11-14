@@ -106,6 +106,11 @@ fn opened(app: &App, state: &Arc<AppState>) {
     list(&app.as_weak());
 }
 
+/// A USB drive was plugged in, ejected or pulled out: list again
+pub(crate) fn drives_changed(app: &App) {
+    list(&app.as_weak());
+}
+
 /// Read the rigs of the rigs folder and the USB drives, on a worker thread
 fn list(weak: &Weak<App>) {
     let weak = weak.clone();
