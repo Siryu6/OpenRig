@@ -168,7 +168,8 @@ What OpenRig does, in more technical detail than the
   the tempo and, held, opens the tuner. The tempo drives the BPM ports of
   LV2 plugins.
 - **Tails (spillover)**: delays and reverbs keep ringing when bypassed or
-  when the scene changes.
+  when the scene changes. LV2 plugins with an `lv2:enabled` port keep
+  running bypassed with that port at 0, and play their own tail.
 - **Session**: the current chain is saved a few seconds after each change (and on exit)
   and restored at startup, so switching the pedalboard off is safe.
 - **Backup and restore**: Settings → Backup writes presets, setlists, rigs,

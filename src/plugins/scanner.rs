@@ -66,6 +66,11 @@ pub struct PortInfo {
     /// (lv2:reportsLatency, or lv2:designation lv2:latency)
     #[serde(default)]
     pub latency: bool,
+    /// Control input the host sets to 0 to bypass the plugin
+    /// (lv2:designation lv2:enabled): not a parameter, the plugin keeps
+    /// running bypassed and plays its own tail
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 impl PortInfo {
@@ -188,11 +193,20 @@ pub fn file_type_extensions(types: &str) -> Vec<String> {
 }
 
 impl PluginInfo {
-    /// Control input ports, in the order they are exposed as parameters
+    /// Control input ports, in the order they are exposed as parameters.
+    /// The lv2:enabled port is not one: the bypass drives it.
     pub fn control_inputs(&self) -> impl Iterator<Item = &PortInfo> {
         self.ports
             .iter()
-            .filter(|p| p.port_type == PortType::ControlInput)
+            .filter(|p| p.port_type == PortType::ControlInput && !p.enabled)
+    }
+
+    /// Port index of the lv2:enabled control input, if the plugin has one
+    pub fn enabled_port(&self) -> Option<usize> {
+        self.ports
+            .iter()
+            .find(|p| p.port_type == PortType::ControlInput && p.enabled)
+            .map(|p| p.index)
     }
 
     /// Number of audio inputs and outputs
@@ -243,15 +257,19 @@ impl PluginInfo {
     /// Parameter values (in order) from a preset: by symbol when it has
     /// them, else by position as older presets saved them. Ports the
     /// preset does not know take their default; saved symbols the plugin
-    /// no longer has are ignored.
+    /// no longer has are ignored. Older presets also saved the lv2:enabled
+    /// port: it still counts in their positions, and is skipped.
     pub fn values_from_saved(
         &self,
         by_position: Option<&[f32]>,
         by_symbol: Option<&SymbolValues>,
     ) -> Vec<f32> {
         let by_position = by_position.unwrap_or(&[]);
-        self.control_inputs()
+        self.ports
+            .iter()
+            .filter(|p| p.port_type == PortType::ControlInput)
             .enumerate()
+            .filter(|(_, port)| !port.enabled)
             .map(|(index, port)| match by_symbol {
                 Some(saved) if !port.symbol.is_empty() => {
                     saved.get(&port.symbol).copied().unwrap_or(port.default)

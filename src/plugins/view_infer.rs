@@ -362,7 +362,8 @@ pub fn dynamics(info: &PluginInfo) -> Option<Dynamics> {
         enable: None,
         reduction: None,
     };
-    for port in &info.ports {
+    // The lv2:enabled port is the bypass, not the view's on switch
+    for port in info.ports.iter().filter(|p| !p.enabled) {
         let w = words(&port.name);
         let has = |names: &[&str]| has_any(&w, names);
         let db = unit(port) == "db";
