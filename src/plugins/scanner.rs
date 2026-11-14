@@ -424,6 +424,14 @@ impl FileKind {
         }
     }
 
+    /// TONE3000 format of the files of this kind
+    pub fn format(self) -> &'static str {
+        match self {
+            FileKind::Neural => "nam",
+            FileKind::ImpulseResponse => "ir",
+        }
+    }
+
     /// "a NAM model", "an impulse response (IR)"
     fn description(self) -> &'static str {
         match self {

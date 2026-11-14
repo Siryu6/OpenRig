@@ -72,7 +72,9 @@ What OpenRig does, in more technical detail than the
   downloaded one after the other, at a pace that stays under the TONE3000
   rate limit (as every request), into `models/Tone3000/<gear>/<tone>/` with the creator,
   license and link in `tone.json`, and can be loaded straight into the block.
-  Opened from a block, "Use" loads a downloaded model in it when the
+  Opened from a block, the library lists the tones of the block's format
+  ("All NAM" or "All IRs") and offers every gear filter; it never opens on
+  a gear the user did not pick. "Use" loads a downloaded model in it when the
   block can play its format (any IR in Cabinet or Space, any NAM model in
   Amp, Amp + Cab or Pedal), else the library says why;
   "Add" puts a downloaded model in a new block of its type.
