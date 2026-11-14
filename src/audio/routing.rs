@@ -21,6 +21,7 @@ use crossbeam_channel::{Receiver, Sender, TrySendError};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
+use super::master::{self, Limiter, MasterProc, MasterTarget, OutputEq};
 use crate::plugins::chain::{pan_gains, ramp};
 
 const FILE: &str = "routing.json";
@@ -96,6 +97,12 @@ pub struct Strip {
     /// Polarity flipped
     #[serde(default)]
     pub invert: bool,
+    /// Global EQ, after the level (off by default)
+    #[serde(default)]
+    pub eq: OutputEq,
+    /// Safety limiter, last (on by default)
+    #[serde(default)]
+    pub limiter: Limiter,
 }
 
 impl Strip {
@@ -111,6 +118,8 @@ impl Strip {
             mute: false,
             solo: false,
             invert: false,
+            eq: OutputEq::default(),
+            limiter: Limiter::default(),
         }
     }
 
@@ -182,6 +191,9 @@ impl Routing {
             if !strip.gain_db.is_finite() || !strip.pan.is_finite() {
                 bail!("Output {}: invalid level or pan", strip.port as usize + 1);
             }
+            if !strip.eq.is_valid() || !strip.limiter.is_valid() {
+                bail!("Output {}: invalid EQ or limiter", strip.port as usize + 1);
+            }
             for port in strip.ports() {
                 if port >= MAX_PORTS {
                     bail!("There is no output {}", port + 1);
@@ -194,13 +206,16 @@ impl Routing {
         Ok(())
     }
 
-    /// Gains for the audio thread, for an interface with `inputs` and
-    /// `outputs` ports. A strip past the last output is ignored; a pair on
-    /// the last output plays as a single output.
-    pub fn mix(&self, inputs: usize, outputs: usize) -> Mix {
+    /// Gains, EQ and limiters for the audio thread, for an interface with
+    /// `inputs` and `outputs` ports running at `sample_rate`. A strip past
+    /// the last output is ignored; a pair on the last output plays as a
+    /// single output.
+    pub fn mix(&self, inputs: usize, outputs: usize, sample_rate: f32) -> Mix {
         let mut mix = Mix {
             input: (self.input as usize).min(inputs.saturating_sub(1)) as u8,
             ports: [PortMix::SILENT; MAX_PORTS],
+            masters: [MasterTarget::NONE; MAX_PORTS],
+            widths: [0; MAX_PORTS],
         };
         let outputs = outputs.min(MAX_PORTS);
         let solo = self.strips.iter().any(|s| s.solo);
@@ -224,6 +239,12 @@ impl Routing {
                 Source::Input(i) if (i as usize) < inputs => (0, Some(i)),
                 // An input this interface does not have
                 Source::Input(_) | Source::Send(_) => continue,
+            };
+            mix.masters[first] = master::target(&strip.eq, &strip.limiter, sample_rate);
+            mix.widths[first] = if strip.stereo && first + 1 < outputs {
+                2
+            } else {
+                1
             };
             if strip.stereo && first + 1 < outputs {
                 let (left, right) = pan_gains(strip.pan);
@@ -366,6 +387,8 @@ impl Routing {
             change(strip);
             strip.gain_db = strip.gain_db.clamp(GAIN_RANGE_DB.0, GAIN_RANGE_DB.1);
             strip.pan = strip.pan.clamp(-1.0, 1.0);
+            strip.eq.clamp();
+            strip.limiter.clamp();
         }
     }
 }
@@ -418,6 +441,11 @@ pub struct Mix {
     /// Input feeding the chain
     pub input: u8,
     pub ports: [PortMix; MAX_PORTS],
+    /// EQ and limiter of the strip starting on each output
+    pub masters: [MasterTarget; MAX_PORTS],
+    /// Outputs of the strip starting on each output: 0 (none, or the
+    /// second side of a pair), 1 or 2
+    pub widths: [u8; MAX_PORTS],
 }
 
 /// Peak level of every input and output, for the Routing view. Written by
@@ -428,6 +456,9 @@ pub struct PortMeter {
     /// numeric order, so `fetch_max` keeps the highest peak
     inputs: [AtomicU32; MAX_PORTS],
     outputs: [AtomicU32; MAX_PORTS],
+    /// Gain reduction of the limiter of the strip starting on each output,
+    /// 0 (none) to 1
+    reductions: [AtomicU32; MAX_PORTS],
 }
 
 impl Default for PortMeter {
@@ -435,6 +466,7 @@ impl Default for PortMeter {
         Self {
             inputs: std::array::from_fn(|_| AtomicU32::new(0)),
             outputs: std::array::from_fn(|_| AtomicU32::new(0)),
+            reductions: std::array::from_fn(|_| AtomicU32::new(0)),
         }
     }
 }
@@ -457,6 +489,23 @@ impl PortMeter {
         Self::record(self.outputs.get(port), buffer);
     }
 
+    /// Record the gain reduction of the limiter on output `port`, 0 to 1
+    /// (real-time safe)
+    pub fn record_reduction(&self, port: usize, reduction: f32) {
+        if let (Some(slot), true) = (self.reductions.get(port), reduction.is_finite()) {
+            slot.fetch_max(reduction.max(0.0).to_bits(), Ordering::Relaxed);
+        }
+    }
+
+    /// Deepest gain reduction of each limiter since the previous call, dB
+    /// (0 or below)
+    pub fn take_reductions(&self) -> [f32; MAX_PORTS] {
+        std::array::from_fn(|i| {
+            let r = f32::from_bits(self.reductions[i].swap(0, Ordering::Relaxed));
+            20.0 * (1.0 - r.min(0.999_999)).log10()
+        })
+    }
+
     /// Peaks of the inputs and outputs since the previous call
     pub fn take(&self) -> ([f32; MAX_PORTS], [f32; MAX_PORTS]) {
         let take = |slots: &[AtomicU32; MAX_PORTS]| {
@@ -475,25 +524,29 @@ pub struct RoutingControl {
     pub outputs: usize,
     /// The routing the audio thread started with
     pub initial: Routing,
+    pub sample_rate: f32,
 }
 
 impl RoutingControl {
     pub fn apply(&self, routing: &Routing) {
+        let mix = routing.mix(self.inputs, self.outputs, self.sample_rate);
         // Disconnected: the audio thread is gone (shutdown, audio restart)
-        if let Err(TrySendError::Full(_)) = self.tx.try_send(routing.mix(self.inputs, self.outputs))
-        {
+        if let Err(TrySendError::Full(_)) = self.tx.try_send(mix) {
             warn!("Audio thread not taking routing changes, change dropped");
         }
     }
 }
 
 /// Output mixer of the audio thread: plays the main mix, the sends and the
-/// inputs on the outputs, with every gain ramped
+/// inputs on the outputs, with every gain ramped, then runs the EQ and
+/// limiter of each output or pair
 pub struct OutputRouter {
     target: Mix,
     current: [PortMix; MAX_PORTS],
     rx: Receiver<Mix>,
     step: f32,
+    /// EQ and limiter of the strip starting on each output
+    masters: Vec<MasterProc>,
 }
 
 impl OutputRouter {
@@ -505,12 +558,15 @@ impl OutputRouter {
         sample_rate: f32,
     ) -> (Self, RoutingControl) {
         let (tx, rx) = crossbeam_channel::bounded(8);
-        let target = routing.mix(inputs, outputs);
+        let target = routing.mix(inputs, outputs, sample_rate);
         let router = Self {
             target,
             current: target.ports,
             rx,
             step: 1.0 / (sample_rate * RAMP_MS / 1000.0).max(1.0),
+            masters: (0..MAX_PORTS)
+                .map(|_| MasterProc::new(sample_rate))
+                .collect(),
         };
         (
             router,
@@ -519,6 +575,7 @@ impl OutputRouter {
                 inputs,
                 outputs,
                 initial: routing.clone(),
+                sample_rate,
             },
         )
     }
@@ -597,6 +654,25 @@ impl OutputRouter {
     }
 }
 
+impl OutputRouter {
+    /// Run the EQ and limiter of each strip on `outputs`, the buffers
+    /// [`Self::render`] filled (every output, in order), and record the
+    /// limiters' gain reduction (real-time safe)
+    pub fn master(&mut self, outputs: &mut [&mut [f32]], meter: &PortMeter) {
+        let count = outputs.len().min(MAX_PORTS);
+        for (port, proc) in self.masters.iter_mut().enumerate() {
+            let width = self.target.widths[port] as usize;
+            if width == 0 || port + width > count {
+                proc.idle();
+                continue;
+            }
+            let reduction =
+                proc.process(&self.target.masters[port], &mut outputs[port..port + width]);
+            meter.record_reduction(port, reduction);
+        }
+    }
+}
+
 /// Sample `i` of `buffer`, silence past its end (a buffer shorter than the
 /// output)
 fn sample(buffer: &[f32], i: usize) -> f32 {
@@ -607,6 +683,8 @@ fn sample(buffer: &[f32], i: usize) -> f32 {
 mod tests {
     use super::*;
 
+    const RATE: f32 = 48_000.0;
+
     fn strip(port: u8, stereo: bool, source: Source) -> Strip {
         Strip {
             source,
@@ -616,7 +694,7 @@ mod tests {
 
     #[test]
     fn default_plays_the_main_mix_on_outputs_1_and_2() {
-        let mix = Routing::default().mix(1, 4);
+        let mix = Routing::default().mix(1, 4, RATE);
         assert_eq!(mix.ports[0].gains, [1.0, 0.0]);
         assert_eq!(mix.ports[1].gains, [0.0, 1.0]);
         assert!(mix.ports[2].is_silent() && mix.ports[3].is_silent());
@@ -624,7 +702,7 @@ mod tests {
 
     #[test]
     fn a_pair_on_the_last_output_folds_to_mono() {
-        let mix = Routing::default().mix(1, 1);
+        let mix = Routing::default().mix(1, 1, RATE);
         assert_eq!(mix.ports[0].gains, [0.5, 0.5]);
     }
 
@@ -643,7 +721,7 @@ mod tests {
                 },
             ],
         };
-        let mix = routing.mix(2, 4);
+        let mix = routing.mix(2, 4, RATE);
         assert_eq!(mix.ports[2].gains, [1.0, 0.0]);
         assert_eq!(mix.ports[3].gains, [0.0, 1.0]);
     }
@@ -661,7 +739,7 @@ mod tests {
                 },
             ],
         };
-        let mix = routing.mix(2, 4);
+        let mix = routing.mix(2, 4, RATE);
         assert!(mix.ports[0].is_silent() && mix.ports[1].is_silent());
         assert_eq!(mix.ports[2].input, Some(1));
         assert_eq!(mix.ports[2].input_gain, -1.0);
@@ -673,7 +751,7 @@ mod tests {
             input: 5,
             strips: vec![strip(0, false, Source::Input(3)), Strip::main(6, true)],
         };
-        let mix = routing.mix(2, 4);
+        let mix = routing.mix(2, 4, RATE);
         assert_eq!(mix.input, 1);
         assert!(mix.ports.iter().all(PortMix::is_silent));
     }
@@ -772,7 +850,7 @@ mod tests {
                 strip(4, false, Source::Send(MAX_SENDS as u8)),
             ],
         };
-        let mix = routing.mix(1, 6);
+        let mix = routing.mix(1, 6, RATE);
         assert_eq!((mix.ports[2].bus, mix.ports[2].gains), (2, [1.0, 0.0]));
         assert_eq!((mix.ports[3].bus, mix.ports[3].gains), (2, [0.0, 1.0]));
         // No such send
@@ -805,7 +883,11 @@ mod tests {
             routing.strip(1).map(|s| (s.stereo, s.fold)),
             Some((false, Fold::Right))
         );
-        assert_eq!(routing.mix(1, 4), Routing::default().mix(1, 4));
+        // The same sound; each side now has its own limiter
+        assert_eq!(
+            routing.mix(1, 4, RATE).ports,
+            Routing::default().mix(1, 4, RATE).ports
+        );
 
         routing.set_linked(0, true, 4);
         assert!(routing.strip(0).is_some_and(|s| s.stereo));
@@ -832,6 +914,43 @@ mod tests {
         assert_eq!(routing.input, 1);
         routing.step_input(-5, 2);
         assert_eq!(routing.input, 0);
+    }
+
+    #[test]
+    fn a_file_from_before_the_eq_and_limiter_loads_with_the_limiter_on() {
+        let old = r#"{ "input": 0, "strips": [
+            { "port": 0, "stereo": true, "source": "main", "gain_db": -3.0 } ] }"#;
+        let routing: Routing = serde_json::from_str(old).unwrap();
+        let strip = routing.strip(0).unwrap();
+        assert!(!strip.eq.on);
+        assert!(strip.limiter.on);
+        assert_eq!(strip.limiter.ceiling_db, -1.0);
+        assert!(routing.validate().is_ok());
+        let mix = routing.mix(1, 2, RATE);
+        assert_eq!(mix.widths[..2], [2, 0]);
+        assert!(mix.masters[0].limiter);
+    }
+
+    #[test]
+    fn a_pair_is_limited_as_one() {
+        let (mut router, _) = OutputRouter::new(&Routing::default(), 1, 2, RATE);
+        let meter = PortMeter::default();
+        // Left over the ceiling, right far below: both sides get the same
+        // reduction, so the image stays
+        let main_left = [2.0f32; 256];
+        let main_right = [0.1f32; 256];
+        let (mut left, mut right) = ([0.0f32; 256], [0.0f32; 256]);
+        for _ in 0..4 {
+            router.render(0, &[[&main_left, &main_right]], |_| None, &mut left);
+            router.render(1, &[[&main_left, &main_right]], |_| None, &mut right);
+            router.master(&mut [&mut left, &mut right], &meter);
+        }
+        let ceiling = 10f32.powf(-1.0 / 20.0);
+        assert!(left.iter().all(|x| x.abs() <= ceiling * 1.000_001));
+        assert!((left[255] / right[255] - 20.0).abs() < 0.01);
+        let reduction = meter.take_reductions()[0];
+        assert!((reduction + 7.0).abs() < 0.1, "{reduction} dB");
+        assert_eq!(meter.take_reductions()[0], 0.0);
     }
 
     #[test]

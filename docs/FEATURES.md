@@ -86,7 +86,10 @@ What OpenRig does, in more technical detail than the
   interface (up to 16 each). One input feeds the effects; each output or stereo pair plays
   the main mix, one of 4 sends, or an input passed straight through, with
   level, balance, mute, solo and polarity (kept for the rig in
-  `routing.json`). Send and Return blocks, placed anywhere in the rack,
+  `routing.json`). Each output or pair also has a 6-band EQ (low and high
+  cut, low and high shelf, two mids, drawn on a curve you drag) and a
+  limiter that keeps peaks under a ceiling (on by default, −1 dBFS, with
+  a gain reduction meter). Send and Return blocks, placed anywhere in the rack,
   copy the signal at their place to a send bus or bring an input in, with
   level, mix and bypass per scene. See [ROUTING.md](ROUTING.md).
 - **Stereo**: two outputs. The guitar comes in mono and becomes stereo where

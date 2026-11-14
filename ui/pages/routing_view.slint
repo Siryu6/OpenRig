@@ -1,7 +1,69 @@
 import { Theme } from "../theme.slint";
-import { Button, Card, EmptyState, Icon, Knob, Segmented, Stepper } from "../components/controls.slint";
+import { Button, Card, EmptyState, Icon, Knob, Segmented, Stepper, Toggle } from "../components/controls.slint";
 import { LedBar } from "../components/level_meter.slint";
-import { RoutingBlock, RoutingOutput } from "../types.slint";
+import { EqGraph } from "../components/eq_graph.slint";
+import { EqView, PlotHandle, RoutingBlock, RoutingMaster, RoutingOutput } from "../types.slint";
+
+// The global EQ and limiter of each output (src/routing_ui.rs answers)
+export global OutputMaster {
+    in-out property <RoutingMaster> edit;
+    in-out property <EqView> eq;                 // curve of the output edited
+    in-out property <[PlotHandle]> points;       // its band points, updated in place
+    in-out property <[float]> reductions: [];    // limiter gain reduction per first output, dB (0 or below)
+    callback open(int, int);                     // first output, 0 = EQ / 1 = limiter
+    callback close();
+    callback set-tab(int);
+    callback select-band(int);
+    callback set-eq(string, float);              // "on" | "band-on" | "freq" | "gain" | "q" | "flat"
+    callback set-limiter(string, float);         // "on" | "ceiling" | "release"
+    callback drag(int, float, float);            // band point dragged to x, y (0..1)
+    callback toggle-band(int);                   // band point double-tapped
+    callback resized(length, length);            // the curve's plot was laid out
+}
+
+// Gain reduction of a limiter: a bar hanging from the right, and its value
+component ReductionMeter inherits HorizontalLayout {
+    in property <float> db;                      // 0 or below
+    in property <bool> on;
+    in property <length> bar-height: 8px;
+    spacing: Theme.space-xs;
+    Text {
+        text: "GR";
+        color: root.on && root.db < -0.05 ? Theme.accent : Theme.text-muted;
+        font-size: Theme.font-caption;
+        font-weight: Theme.weight-bold;
+        letter-spacing: 0.8px;
+        vertical-alignment: center;
+    }
+    VerticalLayout {
+        horizontal-stretch: 1;
+        alignment: center;
+        Rectangle {
+            height: root.bar-height + 4px;
+            border-radius: Theme.radius-sm;
+            background: Theme.display;
+            border-width: 1px;
+            border-color: Theme.edge-dark;
+            // 12 dB across
+            Rectangle {
+                private property <float> f: root.on ? max(0, min(1, -root.db / 12)) : 0;
+                x: parent.width - 2px - self.width;
+                y: 2px;
+                width: (parent.width - 4px) * self.f;
+                height: root.bar-height;
+                background: -root.db > 6 ? Theme.danger : Theme.accent;
+            }
+        }
+    }
+    Text {
+        width: 34px;
+        text: !root.on ? "OFF" : root.db > -0.05 ? "0.0" : round(root.db * 10) / 10;
+        color: Theme.text-secondary;
+        font-size: Theme.font-caption;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+}
 
 // Title and explanation of a card
 component CardTitle inherits HorizontalLayout {
@@ -43,13 +105,14 @@ component LabeledKnob inherits VerticalLayout {
     in property <float> minimum;
     in property <float> maximum;
     in property <float> default-value: 0;     // 0 dB, centre
+    in property <length> knob-size: 60px;
     callback changed(float);
     spacing: 2px;
     alignment: start;
     HorizontalLayout {
         alignment: center;
         Knob {
-            size: 60px;
+            size: root.knob-size;
             value: root.value;
             minimum: root.minimum;
             maximum: root.maximum;
@@ -79,6 +142,7 @@ component OutputStrip inherits Rectangle {
     in property <RoutingOutput> output;
     in property <float> level-a;     // meter of the first output (0..1)
     in property <float> level-b;     // and of the second one of a pair
+    in property <float> reduction;   // limiter gain reduction, dB
     callback step-source(int, int);
     callback set-linked(int, bool);
     callback set-gain(int, float);
@@ -224,6 +288,33 @@ component OutputStrip inherits Rectangle {
                     }
                 }
             }
+
+            // Global EQ and limiter: lit when on, open their editor
+            HorizontalLayout {
+                spacing: Theme.space-xs;
+                Button {
+                    horizontal-stretch: 1;
+                    text: "EQ";
+                    font-size: Theme.font-small;
+                    active: root.output.eq-on;
+                    clicked => {
+                        OutputMaster.open(root.output.port, 0);
+                    }
+                }
+                Button {
+                    horizontal-stretch: 1;
+                    text: "LIMIT";
+                    font-size: Theme.font-small;
+                    active: root.output.limiter-on;
+                    clicked => {
+                        OutputMaster.open(root.output.port, 1);
+                    }
+                }
+            }
+            ReductionMeter {
+                db: root.reduction;
+                on: root.output.limiter-on;
+            }
         }
 
         if !root.output.assigned: Text {
@@ -264,6 +355,248 @@ component BlockRow inherits HorizontalLayout {
             text: "Bypassed";
             color: Theme.text-muted;
             font-size: Theme.font-small;
+        }
+    }
+}
+
+// Small-caps name over a control
+component Caption inherits Text {
+    color: Theme.text-muted;
+    font-size: Theme.font-caption;
+    font-weight: Theme.weight-bold;
+    letter-spacing: 0.8px;
+    horizontal-alignment: center;
+}
+
+// EQ and limiter of one output or pair, over the Routing view
+component MasterPanel inherits Rectangle {
+    private property <RoutingMaster> edit: OutputMaster.edit;
+    background: Theme.background;
+
+    // Taps on the backdrop do not reach the view under it
+    TouchArea { }
+
+    Card {
+        x: Theme.space-sm;
+        y: Theme.space-sm;
+        width: parent.width - 2 * Theme.space-sm;
+        height: parent.height - 2 * Theme.space-sm;
+
+        VerticalLayout {
+            padding: Theme.space-md;
+            spacing: Theme.space-sm;
+
+            HorizontalLayout {
+                height: Theme.touch-target;
+                spacing: Theme.space-md;
+                Text {
+                    text: root.edit.title;
+                    color: Theme.text-primary;
+                    font-size: Theme.font-body;
+                    font-weight: Theme.weight-bold;
+                    letter-spacing: 0.8px;
+                    vertical-alignment: center;
+                }
+                Segmented {
+                    width: 220px;
+                    options: ["EQ", "LIMITER"];
+                    current-index: root.edit.tab;
+                    activated(i) => {
+                        OutputMaster.set-tab(i);
+                    }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: (root.edit.tab == 0 ? root.edit.eq-on : root.edit.limiter-on) ? "ON" : "OFF";
+                    color: (root.edit.tab == 0 ? root.edit.eq-on : root.edit.limiter-on) ? Theme.accent : Theme.text-muted;
+                    font-size: Theme.font-caption;
+                    font-weight: Theme.weight-bold;
+                    letter-spacing: 0.8px;
+                    vertical-alignment: center;
+                }
+                Toggle {
+                    checked: root.edit.tab == 0 ? root.edit.eq-on : root.edit.limiter-on;
+                    toggled(on) => {
+                        if root.edit.tab == 0 {
+                            OutputMaster.set-eq("on", on ? 1 : 0);
+                        } else {
+                            OutputMaster.set-limiter("on", on ? 1 : 0);
+                        }
+                    }
+                }
+                Button {
+                    width: 56px;
+                    icon: "close";
+                    clicked => {
+                        OutputMaster.close();
+                    }
+                }
+            }
+
+            if root.edit.tab == 0: VerticalLayout {
+                spacing: Theme.space-sm;
+
+                EqGraph {
+                    min-height: 90px;
+                    vertical-stretch: 1;
+                    wide: false;
+                    eq: OutputMaster.eq;
+                    points: OutputMaster.points;
+                    plot-sized(w, h) => {
+                        OutputMaster.resized(w, h);
+                    }
+                }
+
+                Segmented {
+                    options: ["LOW CUT", "LOW", "MID 1", "MID 2", "HIGH", "HIGH CUT"];
+                    current-index: root.edit.band;
+                    activated(i) => {
+                        OutputMaster.select-band(i);
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: Theme.space-lg;
+                    alignment: start;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        HorizontalLayout {
+                            alignment: center;
+                            Toggle {
+                                checked: root.edit.band-on;
+                                toggled(on) => {
+                                    OutputMaster.set-eq("band-on", on ? 1 : 0);
+                                }
+                            }
+                        }
+                        Caption {
+                            text: "BAND";
+                        }
+                    }
+                    LabeledKnob {
+                        label: "FREQ";
+                        knob-size: 48px;
+                        value-text: root.edit.freq-text;
+                        value: root.edit.freq;
+                        minimum: 0;
+                        maximum: 1;
+                        default-value: 0.5663;
+                        changed(v) => {
+                            OutputMaster.set-eq("freq", v);
+                        }
+                    }
+                    if root.edit.has-gain: LabeledKnob {
+                        label: "GAIN";
+                        knob-size: 48px;
+                        value-text: root.edit.gain-text;
+                        value: root.edit.gain;
+                        // EQ_GAIN_RANGE_DB in src/audio/master.rs
+                        minimum: -12;
+                        maximum: 12;
+                        changed(v) => {
+                            OutputMaster.set-eq("gain", v);
+                        }
+                    }
+                    if root.edit.has-q: LabeledKnob {
+                        label: "Q";
+                        knob-size: 48px;
+                        value-text: root.edit.q-text;
+                        value: root.edit.q;
+                        // Q_RANGE
+                        minimum: 0.3;
+                        maximum: 8;
+                        default-value: 1;
+                        changed(v) => {
+                            OutputMaster.set-eq("q", v);
+                        }
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Button {
+                            text: "FLAT";
+                            font-size: Theme.font-small;
+                            clicked => {
+                                OutputMaster.set-eq("flat", 0);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.edit.tab == 1: VerticalLayout {
+                alignment: start;
+                spacing: Theme.space-lg;
+                Text {
+                    text: "Keeps every sample of this output under the ceiling, whatever the preset plays. It looks "
+                        + root.edit.latency-text + " ahead, so it adds that much delay while on. Set the ceiling a little under where the next device clips.";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-small;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: Theme.space-xl;
+                    LabeledKnob {
+                        horizontal-stretch: 0;
+                        label: "CEILING";
+                        value-text: root.edit.ceiling-text;
+                        value: root.edit.ceiling;
+                        // CEILING_RANGE_DB in src/audio/master.rs
+                        minimum: -12;
+                        maximum: 0;
+                        default-value: -1;
+                        changed(v) => {
+                            OutputMaster.set-limiter("ceiling", v);
+                        }
+                    }
+                    LabeledKnob {
+                        horizontal-stretch: 0;
+                        label: "RELEASE";
+                        value-text: root.edit.release-text;
+                        value: root.edit.release;
+                        minimum: 0;
+                        maximum: 1;
+                        default-value: 0.5;
+                        changed(v) => {
+                            OutputMaster.set-limiter("release", v);
+                        }
+                    }
+                    // What it takes off right now
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        border-radius: Theme.radius-md;
+                        background: Theme.display;
+                        border-width: 1px;
+                        border-color: Theme.edge-dark;
+                        VerticalLayout {
+                            padding: Theme.space-md;
+                            spacing: Theme.space-xs;
+                            alignment: center;
+                            Caption {
+                                text: "GAIN REDUCTION";
+                                horizontal-alignment: left;
+                            }
+                            Text {
+                                private property <float> db: OutputMaster.reductions[root.edit.port];
+                                text: !root.edit.limiter-on ? "OFF" : (self.db > -0.05 ? "0.0" : round(self.db * 10) / 10) + " dB";
+                                color: root.edit.limiter-on && self.db < -0.05 ? Theme.accent : Theme.text-muted;
+                                font-size: Theme.font-headline;
+                                font-weight: Theme.weight-semibold;
+                            }
+                            ReductionMeter {
+                                bar-height: 12px;
+                                db: OutputMaster.reductions[root.edit.port];
+                                on: root.edit.limiter-on;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -407,6 +740,7 @@ export component RoutingView inherits Rectangle {
                                 output: output;
                                 level-a: root.output-levels[output.port];
                                 level-b: root.output-levels[output.port + 1];
+                                reduction: OutputMaster.reductions[output.port];
                                 step-source(port, delta) => {
                                     root.step-source(port, delta);
                                 }
@@ -454,5 +788,10 @@ export component RoutingView inherits Rectangle {
                 }
             }
         }
+    }
+
+    if root.available && OutputMaster.edit.shown: MasterPanel {
+        width: root.width;
+        height: root.height;
     }
 }

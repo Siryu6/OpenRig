@@ -236,7 +236,7 @@ impl NotificationHandler for Notifications {
 
 /// Audio callback: input → tuner → effect chain (with its returns and
 /// sends) → looper → output mixer (the main mix, the sends and the inputs
-/// on the outputs)
+/// on the outputs) → output EQ and limiter
 pub struct PedalboardProcessor {
     /// Time spent in the callback vs. the buffer period
     meter: Arc<DspMeter>,
@@ -335,9 +335,17 @@ impl ProcessHandler for PedalboardProcessor {
         for (bus, [l, r]) in buses[1..].iter_mut().zip(&self.sends) {
             *bus = [&l[..n], &r[..n]];
         }
-        for (port, out) in self.out_ports.iter_mut().enumerate() {
+        // Every output filled, then the EQ and limiter of each output or
+        // pair (a pair's limiter sees both sides)
+        let count = self.out_ports.len().min(MAX_PORTS);
+        let mut outs: [&mut [f32]; MAX_PORTS] = Default::default();
+        for ((port, out), slot) in self.out_ports.iter_mut().enumerate().zip(outs.iter_mut()) {
             let out = out.as_mut_slice(ps);
             self.router.render(port, &buses, passed, out);
+            *slot = out;
+        }
+        self.router.master(&mut outs[..count], &self.ports);
+        for (port, out) in outs[..count].iter().enumerate() {
             self.ports.record_output(port, out);
         }
         for (port, input) in inputs.iter().take(ports).enumerate() {

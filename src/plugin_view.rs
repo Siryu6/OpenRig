@@ -14,7 +14,9 @@ use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use pedalboard::plugins::scanner::{PluginInfo, PortInfo};
 use pedalboard::state::AppState;
 
-use crate::{block_uri, dynamics_ui, eq_ui, id, model, scope_ui, App, PlotEvents};
+use crate::{
+    block_uri, dynamics_ui, eq_ui, id, model, routing_ui, scope_ui, App, OutputMaster, PlotEvents,
+};
 
 /// Path coordinates: a plot is VIEW high and VIEW × its aspect wide (a Path
 /// keeps the proportions of its box)
@@ -155,6 +157,10 @@ pub(crate) fn resized(app: &App, state: &AppState, width: f32, height: f32) {
 
 /// A handle was dragged to (`x`, `y`)
 pub(crate) fn drag(app: &App, state: &AppState, handle: &str, x: f32, y: f32) {
+    if let Some(band) = routing_ui::eq_band(handle) {
+        app.global::<OutputMaster>().invoke_drag(band as i32, x, y);
+        return;
+    }
     match handle {
         "threshold" | "ratio" => dynamics_ui::drag(app, state, handle, x, y),
         "time" | "feedback" => scope_ui::drag(app, state, handle, x, y),
@@ -173,6 +179,10 @@ pub(crate) fn released() {
 
 /// A handle was double-tapped
 pub(crate) fn double_tapped(app: &App, state: &AppState, handle: &str) {
+    if let Some(band) = routing_ui::eq_band(handle) {
+        app.global::<OutputMaster>().invoke_toggle_band(band as i32);
+        return;
+    }
     if let Some(band) = band(handle) {
         eq_ui::toggle(app, state, band);
     }

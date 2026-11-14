@@ -24,6 +24,7 @@ export global FreqAxis {
 export component Plot inherits Rectangle {
     in property <bool> wide: false;
     in property <[float]> rows: [0.2, 0.4, 0.6, 0.8];
+    callback sized(length, length);         // laid out, wide or not
     clip: true;
     border-width: 1px;
     border-color: Theme.border;
@@ -37,6 +38,7 @@ export component Plot inherits Rectangle {
         root.laid-out();
     }
     function laid-out() {
+        root.sized(root.width, root.height);
         if root.wide {
             PlotEvents.resized(root.width, root.height);
         }

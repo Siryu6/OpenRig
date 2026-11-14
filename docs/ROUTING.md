@@ -33,6 +33,9 @@ In the JACK callback, for each period:
    or an input passed straight through, with level, balance, mute, solo and
    polarity. Every change is ramped over 10 ms; a change of source fades the
    old one out, then the new one in.
+5. Each output or stereo pair then goes through its **EQ** and its
+   **limiter**, after the level and before the meters. A stereo pair shares
+   one limiter, so the image does not move.
 
 While the tuner mutes, the returns and the inputs passed straight through
 are silent too. During a preset crossfade, the old chain's sends fade out
@@ -40,6 +43,26 @@ with its sound and the new chain's sends fade in. A send in the unselected
 branch of an A/B split is silent, as that branch is not processed. Level,
 mix and bypass changes of a send or return are ramped over 10 ms; a change
 of bus or input fades out, switches, then fades in.
+
+## Output EQ and limiter
+
+They set how the rig sounds on a given system, whatever the preset. Open
+them from **EQ** or **LIMIT** on an output card.
+
+- The **EQ** has 6 bands: low cut, low shelf, mid 1, mid 2, high shelf and
+  high cut. The cuts are 12 dB/octave. The responses are those of the RBJ
+  cookbook filters, run as state-variable filters so that changes are
+  smooth. Each band can be turned off; the EQ is off by default.
+- The **limiter** keeps every sample under the ceiling (−1 dBFS by
+  default, −12 to 0 dB). It looks 1 ms ahead, so a peak is caught before
+  it plays, with no clipping. The release (100 ms by default, 10 to
+  1000 ms) sets how fast the level comes back. It is on by default.
+- The limiter works on sample peaks. A converter can still make peaks a
+  little higher between samples, so −1 dB leaves room for them.
+- While the limiter is on, the output is 1 ms late. Outputs without a
+  limiter are not delayed, so two outputs can be 1 ms apart.
+- The **GR** meter under each output shows how much the limiter takes off.
+- Turning the EQ, a band or the limiter on or off fades over 10 ms.
 
 All of this runs without allocation or locks: the inputs and buses are
 arrays on the stack or buffers sized when JACK's buffer size changes, and
@@ -61,7 +84,11 @@ the chain and the main mix plays on outputs 1 and 2.
     { "port": 2, "stereo": false, "source": { "send": 0 }, "fold": "sum",
       "gain_db": -3.0, "pan": 0.0, "mute": false, "solo": false, "invert": false },
     { "port": 3, "stereo": false, "source": { "input": 1 },
-      "gain_db": 0.0, "pan": 0.0, "mute": false, "solo": false, "invert": false }
+      "gain_db": 0.0, "pan": 0.0, "mute": false, "solo": false, "invert": false,
+      "eq": { "on": true,
+              "low_cut": { "on": true, "freq": 80.0 },
+              "mid_1": { "on": true, "freq": 400.0, "gain_db": -3.0, "q": 1.4 } },
+      "limiter": { "on": true, "ceiling_db": -1.0, "release_ms": 100.0 } }
   ]
 }
 ```
@@ -77,9 +104,16 @@ the chain and the main mix plays on outputs 1 and 2.
 | `pan` | Balance of a stereo strip, or where an input sits in it, −1 (left) to 1 (right) |
 | `solo` | While any strip is soloed, only soloed strips play |
 | `invert` | Flip the polarity |
+| `eq.on` | The EQ of the strip is on |
+| `eq.<band>` | `low_cut`, `low_shelf`, `mid_1`, `mid_2`, `high_shelf`, `high_cut`: `on`, `freq` (20 to 20000 Hz), `gain_db` (−12 to +12, shelves and mids), `q` (0.3 to 8, mids) |
+| `limiter.on` | The limiter of the strip is on |
+| `limiter.ceiling_db` | −12 to 0 dB |
+| `limiter.release_ms` | 10 to 1000 ms |
 
 Only `port`, `stereo` and `source` are required; the other fields default
-to 0 or off, and `fold` to `"sum"`.
+to 0 or off, and `fold` to `"sum"`. A missing `eq` or band takes its
+default: the EQ off, every band flat. A missing `limiter` is on at −1 dB: a file from an
+older version loads with the limiter on.
 
 An output in no strip is silent. A file with two strips on the same output,
 an input or send that cannot exist, or a level that is not a number is
@@ -105,6 +139,8 @@ on a larger interface still loads.
 
 - `src/audio/routing.rs`: `Routing`, `Strip`, and `OutputRouter` (the
   audio-thread side).
+- `src/audio/master.rs`: the output EQ and limiter (`OutputEq`, `Limiter`,
+  `MasterProc`).
 - `src/plugins/scanner.rs`: the Send and Return blocks (`SEND_URI`,
   `RETURN_URI`, their parameters).
 - `src/plugins/chain.rs`: `ChainIo`, and `RouteProc` that runs those
