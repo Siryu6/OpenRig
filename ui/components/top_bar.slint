@@ -225,37 +225,38 @@ export component TopBar inherits Rectangle {
                 : root.resources.level == 2 ? Theme.danger
                 : root.resources.level == 1 ? Theme.warning : Theme.success;
 
-            HorizontalLayout {
-                alignment: center;
-                spacing: 6px;
-                VerticalLayout {
-                    alignment: center;
-                    Rectangle {
-                        width: 8px;
-                        height: 8px;
-                        border-radius: 4px;
-                        background: monitor.state-color;
-                    }
-                }
-                VerticalLayout {
-                    alignment: center;
-                    spacing: 0px;
-                    Text {
-                        text: !root.audio-running ? "No audio"
-                            : root.resources.dsp-load < 0 ? "Audio"
-                            : "DSP " + round(root.resources.dsp-load * 100) + "%";
-                        color: root.audio-running ? Theme.text-primary : Theme.text-muted;
-                        font-size: Theme.font-caption;
-                        font-weight: Theme.weight-bold;
-                    }
-                    Text {
-                        text: root.resources.temperature >= 0 ? round(root.resources.temperature) + " °C"
-                            : root.resources.cpu >= 0 ? "CPU " + round(root.resources.cpu * 100) + "%" : "";
-                        visible: self.text != "";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-caption;
-                    }
-                }
+            // Placed by hand, not in a layout: these texts change every
+            // second, and in a layout their size reaches the window's
+            // layout, so the whole page under the bar was drawn again each
+            // time (and streamed to the web remote).
+            property <length> text-width: max(dsp-text.preferred-width, info-text.visible ? info-text.preferred-width : 0px);
+            property <length> text-height: dsp-text.preferred-height + (info-text.visible ? info-text.preferred-height : 0px);
+            Rectangle {
+                x: (parent.width - 8px - 6px - monitor.text-width) / 2;
+                y: (parent.height - 8px) / 2;
+                width: 8px;
+                height: 8px;
+                border-radius: 4px;
+                background: monitor.state-color;
+            }
+            dsp-text := Text {
+                x: (parent.width - 8px - 6px - monitor.text-width) / 2 + 14px;
+                y: (parent.height - monitor.text-height) / 2;
+                text: !root.audio-running ? "No audio"
+                    : root.resources.dsp-load < 0 ? "Audio"
+                    : "DSP " + round(root.resources.dsp-load * 100) + "%";
+                color: root.audio-running ? Theme.text-primary : Theme.text-muted;
+                font-size: Theme.font-caption;
+                font-weight: Theme.weight-bold;
+            }
+            info-text := Text {
+                x: dsp-text.x;
+                y: dsp-text.y + dsp-text.preferred-height;
+                text: root.resources.temperature >= 0 ? round(root.resources.temperature) + " °C"
+                    : root.resources.cpu >= 0 ? "CPU " + round(root.resources.cpu * 100) + "%" : "";
+                visible: self.text != "";
+                color: Theme.text-secondary;
+                font-size: Theme.font-caption;
             }
 
             monitor-ta := TouchArea {
