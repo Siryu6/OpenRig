@@ -1,4 +1,5 @@
 import { Theme } from "../theme.slint";
+import { Features } from "../features.slint";
 import { Spectrum, ScopeView, ScopeLive } from "../types.slint";
 import { BlockHandle, BlockPlot, Caption, DbLabels, FreqGrid, InOut, Plot, PlotPath, Tag } from "plot.slint";
 
@@ -89,6 +90,23 @@ export component ScopeGraph inherits Rectangle {
             accent: root.line;
         }
         if root.scope.right == "echoes": Rectangle {
+            // The tempo's beats, bars stronger
+            for beat in root.scope.echo-beats: Rectangle {
+                x: beat.x * wide.width;
+                width: 1px;
+                background: beat.bar ? Theme.border-strong : Theme.border;
+            }
+            // Each echo's tail, fading until the next one
+            for tap[i] in root.scope.echo-taps: Rectangle {
+                visible: i > 0;
+                x: tap.x * wide.width;
+                y: (1 - tap.height) * wide.height;
+                width: (i + 1 < root.scope.echo-taps.length ? root.scope.echo-taps[i + 1].x * wide.width : wide.width)
+                    - self.x;
+                height: tap.height * wide.height;
+                background: Features.flat ? root.line.with-alpha(0.14)
+                    : @linear-gradient(90deg, root.line.with-alpha(0.32) 0%, root.line.with-alpha(0) 100%);
+            }
             // The dry sound first, grey
             for tap[i] in root.scope.echo-taps: Rectangle {
                 x: tap.x * wide.width - 2px;

@@ -67,6 +67,24 @@ export global Theme {
     // Status LEDs (blocks on, pedal engaged)
     out property <color> led-green: #8ee27a;
     out property <color> led-red: #ff5a4a;
+
+    // --- OpenRig FX plates (gear: the same in both themes). The plate
+    // colour itself comes from the plugin (openrig:faceColor) ---
+    out property <color> plate-silk: #ece5d0;          // silk-screened labels
+    out property <color> plate-silk-muted: #ece5d099;  // scales, taglines
+    out property <color> plate-edge: #000000a6;        // dark outline
+    out property <color> plate-bevel: #ffffff2e;       // lit top edge
+    out property <color> plate-window: #08090a;        // recessed windows (views, readouts)
+    out property <color> screw: #9a9c9f;
+    out property <color> screw-slot: #3a3b3e;
+    out property <color> knob-black: #141517;
+    out property <color> knob-black-top: #2a2c30;
+    out property <color> knob-skirt-light: #8d9095;    // knurled skirt under a black cap
+    out property <color> knob-line: #f2eee4;           // pointer line on a plate knob
+    out property <brush> knob-alu: @linear-gradient(160deg, #e4e6e8 0%, #a9adb2 55%, #7d8186 100%);
+    out property <color> knob-alu-flat: #b4b7bb;
+    out property <brush> knob-steel: @linear-gradient(170deg, #6a6e74 0%, #3a3d41 50%, #1f2124 100%);
+    out property <color> knob-steel-flat: #3d4045;
     // Outline of the selected block (reads on every block colour)
     out property <color> selection: light ? #1b1c1f : #ecebe7;
     out property <color> on-semantic: #0c0e13;

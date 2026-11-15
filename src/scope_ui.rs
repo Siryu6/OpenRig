@@ -13,7 +13,7 @@ use pedalboard::state::AppState;
 
 use crate::level_history::{amplitude_up, down, History};
 use crate::plugin_view::{self, line, Cache, Controls, VIEW};
-use crate::{App, EchoTap, PlotHandle, ScopeLive, ScopeView};
+use crate::{App, EchoBeat, EchoTap, PlotHandle, ScopeLive, ScopeView};
 
 /// How fast the shown levels fall back, dB per second: fast, so a reverb's
 /// tail or a delay's echoes show as they are, not as a meter falls
@@ -35,8 +35,9 @@ thread_local! {
 /// Show what the selected block does, if it has no EQ or level curve
 pub(crate) fn refresh(app: &App, state: &AppState) {
     let current = app.get_selected_scope();
-    let (mut view, taps) = view(app, state).unwrap_or_default();
+    let (mut view, taps, beats) = view(app, state).unwrap_or_default();
     view.echo_taps = plugin_view::in_place(&current.echo_taps, taps);
+    view.echo_beats = plugin_view::in_place(&current.echo_beats, beats);
     if view != current {
         app.set_selected_scope(view);
     }
@@ -69,6 +70,27 @@ impl Layout {
     }
 }
 
+/// Beats drawn behind the echoes: none when they would be too close
+const MOST_BEATS: usize = 48;
+
+/// The tempo's beats across a plot `span` seconds wide (4/4 bars)
+fn beats(bpm: f32, span: f32) -> Vec<EchoBeat> {
+    if !bpm.is_finite() || !span.is_finite() || bpm <= 0.0 || span <= 0.0 {
+        return Vec::new();
+    }
+    let beat = 60.0 / bpm;
+    let count = (span / beat).floor() as usize;
+    if count > MOST_BEATS {
+        return Vec::new();
+    }
+    (1..=count)
+        .map(|k| EchoBeat {
+            x: x(k as f32 * beat, span),
+            bar: k % 4 == 0,
+        })
+        .collect()
+}
+
 /// Where `seconds` sits across a plot `span` seconds wide, 0 to 1, and back
 fn x(seconds: f32, span: f32) -> f32 {
     (MARGIN + (VIEW - 2.0 * MARGIN) * seconds / span) / VIEW
@@ -78,7 +100,8 @@ fn seconds_at(x: f32, span: f32) -> f32 {
     (x * VIEW - MARGIN) / (VIEW - 2.0 * MARGIN) * span
 }
 
-fn view(app: &App, state: &AppState) -> Option<(ScopeView, Vec<EchoTap>)> {
+/// The view, the dry sound and echoes, and the beats behind them
+fn view(app: &App, state: &AppState) -> Option<(ScopeView, Vec<EchoTap>, Vec<EchoBeat>)> {
     if app.get_selected_eq().shown || app.get_selected_dyn().shown {
         return None;
     }
@@ -99,7 +122,7 @@ fn view(app: &App, state: &AppState) -> Option<(ScopeView, Vec<EchoTap>)> {
         ScopeKind::Modulation | ScopeKind::Cabinet => view.right = "spectrum".into(),
     }
     let Some(echoes) = scope.echoes else {
-        return Some((view, Vec::new()));
+        return Some((view, Vec::new(), Vec::new()));
     };
     let Some(layout) = Layout::of(&echoes, &value) else {
         view.summary = if echoes.synced(&value) {
@@ -108,7 +131,7 @@ fn view(app: &App, state: &AppState) -> Option<(ScopeView, Vec<EchoTap>)> {
             "no delay"
         }
         .into();
-        return Some((view, Vec::new()));
+        return Some((view, Vec::new(), Vec::new()));
     };
     let Layout { time, first, .. } = layout;
     view.left = "history".into();
@@ -145,7 +168,7 @@ fn view(app: &App, state: &AppState) -> Option<(ScopeView, Vec<EchoTap>)> {
         if count == 1 { "" } else { "es" }
     )
     .into();
-    Some((view, taps))
+    Some((view, taps, beats(state.tempo(), layout.span)))
 }
 
 /// A delay's first echo dragged across to `x` (its time), or its second up
@@ -257,5 +280,19 @@ mod tests {
     #[test]
     fn the_time_axis_goes_both_ways() {
         assert!((seconds_at(x(0.25, 1.0), 1.0) - 0.25).abs() < 1e-5);
+    }
+
+    #[test]
+    fn beats_follow_the_tempo() {
+        // 120 BPM over 2.1 s: four beats, the fourth starts a bar
+        let b = beats(120.0, 2.1);
+        assert_eq!(b.len(), 4);
+        assert!(b.windows(2).all(|w| w[0].x < w[1].x));
+        assert_eq!(b.iter().filter(|b| b.bar).count(), 1);
+        assert!(b.last().is_some_and(|b| b.bar));
+        // Too many, or no tempo: none
+        assert!(beats(300.0, 60.0).is_empty());
+        assert!(beats(0.0, 2.0).is_empty());
+        assert!(beats(f32::NAN, 2.0).is_empty());
     }
 }

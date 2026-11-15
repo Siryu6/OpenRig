@@ -308,6 +308,119 @@ pub fn glyph(category: &super::scanner::PluginCategory) -> &'static str {
     }
 }
 
+/// xorshift64*: the grain and wear of a plate, the same for a seed
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    /// 0 to 1
+    fn unit(&mut self) -> f32 {
+        (self.next() >> 40) as f32 / (1u64 << 24) as f32
+    }
+}
+
+impl Plate {
+    /// The plate's picture at `w` x `h` pixels, opaque RGBA rows: its
+    /// colour lit from above, grain, brushed streaks, scratches and rubbed
+    /// edges in one image, so the UI draws a single picture under its
+    /// knobs. Wear is drawn at the real size: scratches keep their length
+    /// in pixels whatever the size. Small plates (rack blocks, seen from
+    /// further away) get finer detail.
+    pub fn render(&self, w: u32, h: u32) -> Vec<u8> {
+        let (w, h) = (w.max(1) as usize, h.max(1) as usize);
+        let small = w.min(h) < 200;
+        let brushed = self.finish == Finish::Brushed;
+        let grain = if brushed { 0.8 } else { 1.0 } * if small { 0.45 } else { 1.0 };
+        let mut rng = Rng(self.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        // Lightness added to the base colour, per pixel
+        let mut light = vec![0f32; w * h];
+
+        // Light from above: +18 % at the top, -30 % at the bottom
+        for (y, row) in light.chunks_exact_mut(w).enumerate() {
+            let t = y as f32 / h as f32;
+            let f = if t < 0.4 {
+                0.18 * (1.0 - t / 0.4)
+            } else {
+                -0.30 * (t - 0.4) / 0.6
+            };
+            row.fill(f * 60.0);
+        }
+        // Grain: sparse light and dark specks
+        for v in light.iter_mut() {
+            let r = rng.unit();
+            if r < 0.10 {
+                *v += 14.0 * grain * rng.unit();
+            } else if r < 0.32 {
+                *v -= 16.0 * grain * rng.unit();
+            }
+        }
+        // Brushed: noise smeared along x, a different strength per row
+        if brushed {
+            const RUN: usize = 24;
+            let mut noise = vec![0f32; w + RUN];
+            for row in light.chunks_exact_mut(w) {
+                let gain = 0.5 + rng.unit();
+                noise.iter_mut().for_each(|n| *n = rng.unit() - 0.5);
+                let mut sum: f32 = noise.iter().take(RUN).sum();
+                for (x, v) in row.iter_mut().enumerate() {
+                    *v += sum / RUN as f32 * 70.0 * gain;
+                    sum += noise.get(x + RUN).copied().unwrap_or(0.0)
+                        - noise.get(x).copied().unwrap_or(0.0);
+                }
+            }
+        }
+        // Wear: thin light scratches, a density per area
+        let scratches = ((w * h) as f32 / 2600.0 * self.wear) as usize;
+        for _ in 0..scratches {
+            let (x0, y0) = (rng.unit() * w as f32, rng.unit() * h as f32);
+            let angle = rng.unit() * std::f32::consts::PI;
+            let len = (6.0 + rng.unit() * 40.0).min(w.min(h) as f32 * 0.35);
+            let strength = (20.0 + rng.unit() * 45.0) * if small { 0.6 } else { 1.0 };
+            let (dx, dy) = (angle.cos(), angle.sin());
+            let mut t = 0.0;
+            while t < len {
+                let (x, y) = (x0 + t * dx, y0 + t * dy);
+                if x >= 0.0 && y >= 0.0 && (x as usize) < w && (y as usize) < h {
+                    let fade = 1.0 - (t / len - 0.5).abs() * 2.0;
+                    if let Some(v) = light.get_mut(y as usize * w + x as usize) {
+                        *v = v.max(strength * fade);
+                    }
+                }
+                t += 0.7;
+            }
+        }
+        // Rubbed rim: the paint worn through near the edges
+        let rim = (w.min(h) as f32 * 0.03).clamp(3.0, 10.0);
+        for (y, row) in light.chunks_exact_mut(w).enumerate() {
+            for (x, v) in row.iter_mut().enumerate() {
+                let d = x.min(y).min(w - 1 - x).min(h - 1 - y) as f32;
+                if d < rim && rng.unit() < (rim - d) / rim * 0.6 * self.wear {
+                    *v = v.max(30.0 + rng.unit() * 50.0);
+                }
+            }
+        }
+
+        let base = [
+            (self.color >> 16) & 0xff,
+            (self.color >> 8) & 0xff,
+            self.color & 0xff,
+        ]
+        .map(|c| c as f32);
+        let mut pixels = Vec::with_capacity(w * h * 4);
+        for l in light {
+            pixels.extend(base.map(|b| (b + l).clamp(0.0, 255.0) as u8));
+            pixels.push(255);
+        }
+        pixels
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,16 +484,16 @@ mod tests {
         let mut terms = green_terms();
         terms.finish = Some("Brushed".into());
         terms.wear = Some(3.0);
-        terms.plate_name = Some("FRACTURE GLITCH UNIT".into());
+        terms.plate_name = Some("SPLINTER GLITCH UNIT".into());
         terms.tagline = Some(format!("{}.", "x".repeat(60)));
         terms.knob_style = Some("Mystery".into());
-        let face = terms.faceplate(GREEN, "OR Fracture").unwrap();
+        let face = terms.faceplate(GREEN, "OR Splinter").unwrap();
         let plate = face.plate.unwrap();
         assert_eq!(plate.finish, Finish::Brushed);
         assert_eq!(plate.wear, 1.0);
         assert_eq!(plate.knob_style, KnobStyle::Plain);
-        assert_eq!(face.name, "FRACTURE GLI");
-        assert_eq!(face.short_name, "FRACTURE GLI");
+        assert_eq!(face.name, "SPLINTER GLI");
+        assert_eq!(face.short_name, "SPLINTER GLI");
         assert_eq!(face.tagline.chars().count(), TAGLINE_MAX);
     }
 
@@ -421,5 +534,34 @@ mod tests {
             seed: 0,
         };
         assert!(steel.steel_caps());
+    }
+
+    #[test]
+    fn plates_render_the_same_every_time() {
+        let plate = Plate {
+            color: 0x2E5A3A,
+            knob_style: KnobStyle::Skirted,
+            finish: Finish::Painted,
+            wear: 0.55,
+            seed: seed("https://openrig.eu/plugins/green-drive"),
+        };
+        let a = plate.render(120, 80);
+        assert_eq!(a.len(), 120 * 80 * 4);
+        assert_eq!(a, plate.render(120, 80));
+        assert!(a.iter().skip(3).step_by(4).all(|&alpha| alpha == 255));
+        // Lit from above
+        let row = |y: usize| -> u32 { a[y * 480..(y + 1) * 480].iter().map(|&c| c as u32).sum() };
+        assert!(row(10) > row(70));
+        // Brushed and worn plates differ from painted and new ones
+        let brushed = Plate {
+            finish: Finish::Brushed,
+            ..plate
+        };
+        assert_ne!(brushed.render(120, 80), a);
+        let new = Plate { wear: 0.0, ..plate };
+        assert_ne!(new.render(120, 80), a);
+        // Degenerate sizes do not panic
+        assert_eq!(plate.render(0, 0).len(), 4);
+        assert_eq!(plate.render(1, 300).len(), 300 * 4);
     }
 }

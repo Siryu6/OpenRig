@@ -19,6 +19,7 @@ mod midi_io;
 mod midi_ui;
 #[cfg(feature = "midi")]
 mod network_midi_ui;
+mod plates;
 mod plugin_view;
 #[cfg(feature = "remote")]
 mod remote_ui;
@@ -563,6 +564,7 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
     app.set_selected_plugin_name(view.name.into());
     app.set_selected_plugin_category(view.category.into());
     app.set_selected_plugin_look(faceplate::look(view.faceplate.as_ref()).into());
+    plates::refresh_editor(app, view.faceplate.as_ref());
     app.set_selected_plugin_bypassed(view.bypassed);
     app.set_selected_bypass_midi(midi_label(chain, view.instance_id, MidiTarget::Bypass));
     app.set_selected_parameters(model(parameters));
@@ -1926,6 +1928,7 @@ fn main() -> Result<()> {
     #[cfg(feature = "tone3000")]
     tone3000_ui::setup(&app, &state);
     wifi_ui::setup(&app);
+    plates::setup(&app);
     menu_ui::setup(&app);
     #[cfg(feature = "update")]
     update_ui::setup(&app);
