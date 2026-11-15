@@ -1,32 +1,34 @@
-import { Theme } from "../theme.slint";
+import { PlotColors, Theme } from "../theme.slint";
 import { Features } from "../features.slint";
 import { Spectrum, ScopeView, ScopeLive } from "../types.slint";
 import { BlockHandle, BlockPlot, Caption, DbLabels, FreqGrid, InOut, Plot, PlotPath, Tag } from "plot.slint";
 
 // What a delay, reverb, drive, modulation or cabinet block does to the sound:
-// a delay's echoes across, which drag (time, feedback), and measured on what
-// goes through, in (grey) and out (block colour): its level over the last
-// seconds, its spectrum, or its waves in and out.
+// a delay's echoes across, which drag (time, feedback), a drive's response
+// at its settings, and measured on what goes through, in (grey) and out
+// (block colour): its level over the last seconds or its spectrum.
 export component ScopeGraph inherits Rectangle {
     in property <ScopeView> scope;
     in property <ScopeLive> live;
     in property <Spectrum> spectrum;
-    in property <color> accent: Theme.accent;
+    in property <PlotColors> colors: Theme.plot;
+    in property <color> accent: root.colors.accent;
     in property <bool> bypassed: false;
 
-    private property <color> line: !root.bypassed ? root.accent : Theme.text-muted;
+    private property <color> line: !root.bypassed ? root.accent : root.colors.muted;
     private property <bool> has-left: root.scope.left != "";
     private property <length> side: root.height - 34px;
 
     border-radius: Theme.radius-lg;
-    background: Theme.surface;
+    background: root.colors.surface;
     border-width: 1px;
-    border-color: Theme.border;
+    border-color: root.colors.grid;
 
     // For the history, left of it
     if root.scope.left == "history" || (!root.has-left && root.scope.right == "history"): DbLabels {
         top: 12px;
         side: root.side;
+        colors: root.colors;
     }
 
     square := Plot {
@@ -35,36 +37,13 @@ export component ScopeGraph inherits Rectangle {
         width: root.has-left ? root.side : 0;
         height: root.side;
         visible: root.has-left;
+        colors: root.colors;
 
-        if root.scope.left == "wave": Rectangle {
-            Rectangle {
-                y: square.height / 2;
-                width: square.width;
-                height: 1px;
-                background: Theme.border-strong;
-            }
-            PlotPath {
-                commands: root.live.wave-in;
-                stroke: Theme.text-muted;
-                stroke-width: 1.5px;
-            }
-            PlotPath {
-                commands: root.live.wave-out;
-                stroke: root.line;
-                stroke-width: 2px;
-            }
-            if root.live.gain != "": Tag {
-                x: square.width - self.width - 6px;
-                y: square.height - self.height - 6px;
-                text: root.live.gain;
-                text-color: Theme.text-secondary;
-                font-size: Theme.font-small;
-            }
-        }
         if root.scope.left == "history": InOut {
             input: root.live.history-in;
             output: root.live.history-out;
             accent: root.line;
+            colors: root.colors;
         }
     }
 
@@ -73,28 +52,37 @@ export component ScopeGraph inherits Rectangle {
         y: 12px;
         width: root.width - self.x - 12px;
         height: root.side;
+        colors: root.colors;
 
         if root.scope.right == "spectrum": Rectangle {
             FreqGrid {
                 labels: true;
+                colors: root.colors;
             }
             InOut {
                 input: root.spectrum.input;
                 output: root.spectrum.output;
                 accent: root.line;
+                colors: root.colors;
+            }
+            PlotPath {
+                commands: root.scope.response;
+                stroke: root.line;
+                stroke-width: 2px;
             }
         }
         if root.scope.right == "history": InOut {
             input: root.live.history-in;
             output: root.live.history-out;
             accent: root.line;
+            colors: root.colors;
         }
         if root.scope.right == "echoes": Rectangle {
             // The tempo's beats, bars stronger
             for beat in root.scope.echo-beats: Rectangle {
                 x: beat.x * wide.width;
                 width: 1px;
-                background: beat.bar ? Theme.border-strong : Theme.border;
+                background: beat.bar ? root.colors.grid-strong : root.colors.grid;
             }
             // Each echo's tail, fading until the next one
             for tap[i] in root.scope.echo-taps: Rectangle {
@@ -113,12 +101,13 @@ export component ScopeGraph inherits Rectangle {
                 y: (1 - tap.height) * wide.height;
                 width: 4px;
                 height: tap.height * wide.height;
-                background: i == 0 ? Theme.text-muted : root.line;
+                background: i == 0 ? root.colors.muted : root.line;
             }
             if root.scope.echo-span != "": Tag {
                 x: wide.width - self.width - 6px;
                 y: wide.height - self.height - 6px;
                 text: root.scope.echo-span;
+                colors: root.colors;
             }
         }
         // The kind, and what the fills are (top right over the echoes,
@@ -130,6 +119,7 @@ export component ScopeGraph inherits Rectangle {
             input: root.scope.right == "" ? "" : root.scope.right == "echoes" ? "dry" : "in";
             output: root.scope.right == "echoes" ? "echoes" : "out";
             accent: root.line;
+            colors: root.colors;
         }
     }
 
@@ -137,6 +127,7 @@ export component ScopeGraph inherits Rectangle {
     BlockHandle {
         handle: root.scope.echo-feedback;
         accent: root.line;
+        colors: root.colors;
         plot-x: wide.x;
         plot-y: wide.y;
         plot-width: wide.width;
@@ -145,6 +136,7 @@ export component ScopeGraph inherits Rectangle {
     BlockHandle {
         handle: root.scope.echo-time;
         accent: root.line;
+        colors: root.colors;
         plot-x: wide.x;
         plot-y: wide.y;
         plot-width: wide.width;

@@ -22,8 +22,11 @@ What OpenRig does, in more technical detail than the
   [STORE.md](STORE.md).
 - **Plugin views**: above an LV2 block's controls, the editor draws an EQ's
   response, a compressor's level curve or a delay's echoes (each with its
-  fading tail, over the beats of the tempo), with points to drag, over the sound measured in and out of that block (spectrum, levels,
-  waves). They are inferred from the plugin's LV2 class and the names and
+  fading tail, over the beats of the tempo), with points to drag, over the sound measured in and out of that block (spectrum, levels).
+  A drive shows its tone: its small-signal frequency response, measured
+  on an instance of its own at the current settings (a quiet click after a
+  short silence, on the chain builder thread) and drawn again when a
+  control moves. They are inferred from the plugin's LV2 class and the names and
   units of its ports, never configured per plugin; a plugin read without
   confidence keeps its knobs alone.
 - **OpenRig FX faceplates**: plugins whose URI starts with
@@ -50,7 +53,8 @@ What OpenRig does, in more technical detail than the
   from above, grain, brushed streaks, scratches and rubbed edges from the
   wear, seeded by the URI so a plate never changes) and kept in memory, four
   screws, knobs in its knob style (a steel cap on a very dark plate), values
-  in amber readout windows, its silk name, tagline and green "on" LED. The
+  in amber readout windows, a view window that stays dark with amber
+  lines in both themes (the gear colours of `Theme.plot-gear`), its silk name, tagline and green "on" LED. The
   web remote draws plates flat, in their colour only.
   In the rack, a signature block is a mini pedal on its plate: two small
   knobs, the green LED, its silk name and a footswitch (tap, hold and drag
