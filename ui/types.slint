@@ -45,6 +45,10 @@ export struct PositionedNode {
     look: string,        // OpenRig FX look: "" (generic), "basic" or "signature"
     face-name: string,   // the name an OpenRig FX block carries ("Echo", "GREEN")
     glyph: string,       // basic block: a drawing of what it does (path, 50 x 14)
+    plate: image,        // signature block: its plate (empty when flat)
+    plate-color: color,
+    knob-style: string,
+    steel: bool,
 }
 
 // Where a dragged block can be dropped (layout units)

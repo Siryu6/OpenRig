@@ -293,6 +293,9 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
         ..
     } = chain_layout::layout_chain_with(&chain.nodes, &state.signal_map(&chain));
 
+    // A signature block's plate: 72 x 60, as BlockShape draws it
+    let flat = plates::flat(app);
+    let (block_w, block_h) = (plates::physical(app, 72.0), plates::physical(app, 60.0));
     let nodes: Vec<PositionedNode> = nodes
         .into_iter()
         .map(|n| {
@@ -301,6 +304,7 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
             let look = (!n.is_split)
                 .then(|| state.plugin_faceplate(&n.uri))
                 .flatten();
+            let plate = look.as_ref().and_then(|f| f.plate);
             let face = if n.is_split || look.is_some() {
                 None
             } else {
@@ -347,6 +351,13 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
                     .map(|c| faceplate::glyph(&c))
                     .unwrap_or_default()
                     .into(),
+                plate: plate
+                    .filter(|_| !flat)
+                    .map(|p| plates::image(&p, block_w, block_h))
+                    .unwrap_or_default(),
+                plate_color: rgb(plate.map_or(0, |p| p.color)),
+                knob_style: plate.map_or("", |p| p.knob_style.as_str()).into(),
+                steel: plate.is_some_and(|p| p.steel_caps()),
             }
         })
         .collect();
@@ -441,7 +452,8 @@ pub(crate) fn block_name(
     }
 }
 
-/// Colour of a block: the user's, else the colour of its family
+/// Colour of a block: the user's, else its plate's, else the colour of its
+/// family
 pub(crate) fn block_tint(
     state: &AppState,
     chain: &EffectChainState,
@@ -449,6 +461,11 @@ pub(crate) fn block_tint(
     uri: &str,
 ) -> u32 {
     let chosen = chain.colors.get(&instance_id).map(String::as_str);
+    if chosen.and_then(views::block_color).is_none() {
+        if let Some(plate) = state.plugin_faceplate(uri).and_then(|f| f.plate) {
+            return plate.tint();
+        }
+    }
     let category = state.plugin_category(uri);
     views::rack_color(chosen, scanner::shape(uri), category.as_ref()).1
 }

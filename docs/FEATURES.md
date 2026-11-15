@@ -48,6 +48,11 @@ What OpenRig does, in more technical detail than the
   screws, knobs in its knob style (a steel cap on a very dark plate), values
   in amber readout windows, its silk name, tagline and green "on" LED. The
   web remote draws plates flat, in their colour only.
+  In the rack, a signature block is a mini pedal on its plate: two small
+  knobs, the green LED, its silk name and a footswitch (tap, hold and drag
+  as on any block; bypassed, it goes dark). Its default colour, on the rack
+  and the knob strip, is its plate colour, lifted when too dark to show on
+  the stage.
 - **Amp, Amp + Cab and Pedal blocks** (feature `nam`, default): built-in neural blocks
   running Neural Amp Modeler `.nam` captures (and RTNeural `.json` /
   `.aidax` models) through [NeuralAudio](https://github.com/mikeoliphant/NeuralAudio).

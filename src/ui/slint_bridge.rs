@@ -285,7 +285,11 @@ pub fn selected_node_view(state: &AppState, instance_id: usize) -> Option<Select
                     .map(|e| format!(".{e}"))
                     .collect::<Vec<_>>()
                     .join(", "),
-                auto_color: default_block_color(scanner::shape(uri), info.map(|i| &i.category)),
+                // A plate's colour, else the family's
+                auto_color: info.and_then(|i| i.faceplate.as_ref()?.plate).map_or_else(
+                    || default_block_color(scanner::shape(uri), info.map(|i| &i.category)),
+                    |plate| plate.tint(),
+                ),
                 faceplate: info.and_then(|i| i.faceplate.clone()),
             })
         }
