@@ -133,7 +133,9 @@ mod tests {
             .map(|n| CLICK * (1.0 - a) * a.powi(n as i32))
             .collect();
         // Points close together, as on a plot: each reads a narrow band
-        let freqs = [50.0, 55.0, 950.0, 1000.0, 1050.0, 9500.0, 10_000.0, 10_500.0];
+        let freqs = [
+            50.0, 55.0, 950.0, 1000.0, 1050.0, 9500.0, 10_000.0, 10_500.0,
+        ];
         let gains = gains(&mut response, 48_000.0, &freqs);
         assert!(gains[0].abs() < 0.5, "{gains:?}");
         assert!((gains[3] + 3.0).abs() < 0.5, "{gains:?}");
