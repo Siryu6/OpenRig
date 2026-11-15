@@ -89,12 +89,13 @@ export component ScopeGraph inherits Rectangle {
             if root.scope.echo-lanes: Rectangle {
                 y: wide.height / 2;
                 height: 1px;
-                background: Theme.border-strong;
+                background: root.colors.grid-strong;
             }
             for lane[k] in (root.scope.echo-lanes ? ["L", "R"] : []): Tag {
                 x: 4px;
                 y: k * wide.height / 2 + 6px;
                 text: lane;
+                colors: root.colors;
             }
             for tap[i] in root.scope.echo-taps: Rectangle {
                 visible: i > 0;
