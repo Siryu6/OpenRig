@@ -527,7 +527,8 @@ mod discovery {
                 );
                 let (min, max) = (a.min(b), a.max(b));
                 let default = finite(&range.default).unwrap_or(min).min(max).max(min);
-                let scale_points = port
+                // By value: RDF has no order, lilv gives them as stored
+                let mut scale_points: Vec<(String, f32)> = port
                     .scale_points()
                     .iter()
                     .filter_map(|sp| {
@@ -535,6 +536,7 @@ mod discovery {
                         Some((sp.label().as_str()?.to_string(), value))
                     })
                     .collect();
+                scale_points.sort_by(|a, b| a.1.total_cmp(&b.1));
 
                 let unit_name = port.get(&unit).and_then(|u| unit_symbol(world, &u));
                 ports.push(PortInfo {

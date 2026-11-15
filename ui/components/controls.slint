@@ -263,6 +263,8 @@ export component Toggle inherits Rectangle {
     in property <bool> checked: false;
     in property <bool> enabled: true;
     in property <color> accent: Theme.accent;
+    // Its slot: a plate passes its own dark window colour (gear stays dark)
+    in property <color> well: Theme.display;
     callback toggled(bool);
 
     width: 56px;
@@ -274,7 +276,7 @@ export component Toggle inherits Rectangle {
         width: 100%;
         height: 28px;
         border-radius: Theme.radius-sm;
-        background: Theme.display;
+        background: root.well;
         border-width: Theme.border-width;
         border-color: Theme.edge-dark;
 
@@ -656,9 +658,64 @@ export component Knob inherits Rectangle {
     }
 }
 
+// One key of a Segmented control
+component SegmentKey inherits Rectangle {
+    in property <string> label;
+    in property <bool> on;
+    in property <bool> plate;
+    in property <length> font-size;
+    callback clicked();
+
+    border-radius: Theme.radius-sm;
+    background: root.plate ? transparent : root.on ? Theme.key : (ta.pressed ? Theme.surface-hover : transparent);
+    border-width: !root.plate && root.on ? 1px : 0px;
+    border-color: Theme.edge-dark-soft;
+
+    if !root.plate && root.on: Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: parent.height - 5px;
+        width: min(parent.width - 12px, 28px);
+        height: 2px;
+        background: Theme.accent;
+    }
+    // On a plate: an LED, lit on the chosen mode
+    if root.plate: Rectangle {
+        x: 4px;
+        y: (parent.height - self.height) / 2;
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        background: root.on ? Theme.accent : Theme.led-off;
+        border-width: 1px;
+        border-color: #000000;
+    }
+
+    Text {
+        x: root.plate ? 22px : 0px;
+        width: parent.width - self.x;
+        text: root.plate ? root.label.to-uppercase() : root.label;
+        color: root.plate ? (root.on ? Theme.plate-silk : Theme.plate-silk-muted)
+            : root.on ? Theme.text-primary : Theme.text-secondary;
+        font-size: root.font-size;
+        font-weight: root.plate ? Theme.weight-bold : Theme.weight-semibold;
+        letter-spacing: root.plate ? 0.8px : 0px;
+        horizontal-alignment: root.plate ? left : center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    ta := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
-// Segmented control (equal-width options). Controlled: parent updates
-// `current-index` in response to `activated(index)`.
+// Segmented control (equal-size options). Controlled: parent updates
+// `current-index` in response to `activated(index)`. `vertical` stacks the
+// keys (give it a height); `plate` draws them silk-screened on a faceplate,
+// an LED by each label, as a pedal's mode selector.
 // ---------------------------------------------------------------------------
 export component Segmented inherits Rectangle {
     in property <bool> focused: false;
@@ -666,47 +723,48 @@ export component Segmented inherits Rectangle {
     in property <[string]> options;
     in property <int> current-index: 0;
     in property <length> font-size: Theme.font-small;
+    in property <bool> vertical: false;
+    in property <bool> plate: false;
     callback activated(int);
 
-    min-height: Theme.touch-target;
+    property <length> pad: root.plate ? 0px : 3px;
+    property <length> gap: 2px;
+    property <length> key-height: (root.height - 2 * root.pad - (root.options.length - 1) * root.gap) / max(1, root.options.length);
+    property <[string]> in-row: root.vertical ? [] : root.options;
+
+    min-height: root.vertical ? 0px : Theme.touch-target;
     border-radius: Theme.radius-md;
-    background: Theme.surface-raised;
-    border-width: Theme.border-width;
+    background: root.plate ? transparent : Theme.surface-raised;
+    border-width: root.plate ? 0px : Theme.border-width;
     border-color: Theme.border;
 
     HorizontalLayout {
-        padding: 3px;
-        spacing: 2px;
-        for option[i] in root.options: Rectangle {
+        padding: root.pad;
+        spacing: root.gap;
+        for option[i] in root.in-row: SegmentKey {
             horizontal-stretch: 1;
             min-width: 36px;
-            border-radius: Theme.radius-sm;
-            background: i == root.current-index ? Theme.key : (seg-ta.pressed ? Theme.surface-hover : transparent);
-            border-width: i == root.current-index ? 1px : 0px;
-            border-color: Theme.edge-dark-soft;
-
-            if i == root.current-index: Rectangle {
-                x: (parent.width - self.width) / 2;
-                y: parent.height - 5px;
-                width: min(parent.width - 12px, 28px);
-                height: 2px;
-                background: Theme.accent;
+            label: option;
+            on: i == root.current-index;
+            plate: root.plate;
+            font-size: root.font-size;
+            clicked => {
+                root.activated(i);
             }
-
-            Text {
-                text: option;
-                color: i == root.current-index ? Theme.text-primary : Theme.text-secondary;
-                font-size: root.font-size;
-                font-weight: Theme.weight-semibold;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                overflow: elide;
-            }
-
-            seg-ta := TouchArea {
-                clicked => {
-                    root.activated(i);
-                }
+        }
+    }
+    if root.vertical: Rectangle {
+        for option[i] in root.options: SegmentKey {
+            x: root.pad;
+            y: root.pad + i * (root.key-height + root.gap);
+            width: root.width - 2 * root.pad;
+            height: root.key-height;
+            label: option;
+            on: i == root.current-index;
+            plate: root.plate;
+            font-size: root.font-size;
+            clicked => {
+                root.activated(i);
             }
         }
     }
