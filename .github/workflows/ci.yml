@@ -50,6 +50,8 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       # The build without NAM nor TONE3000 (no cmake / C++)
       - run: cargo clippy --all-targets --locked --no-default-features --features winit,lv2,midi -- -D warnings
+      # GPIO footswitches and encoders, built only for the Pi image
+      - run: cargo clippy --all-targets --locked --features gpio -- -D warnings
 
   test:
     name: Tests
