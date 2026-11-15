@@ -60,20 +60,29 @@ pub fn block_size(app: &App, zoom: f32) -> Option<(u32, u32)> {
     (!flat(app)).then(|| (physical(app, BLOCK.0 * zoom), physical(app, BLOCK.1 * zoom)))
 }
 
-/// How the block of a plugin with `face` looks: generic (no face), basic,
-/// or signature with its plate picture at `size` (from [`block_size`])
+/// How the block of plugin `uri` with `face` looks, wherever it is drawn
+/// (rack, Add effect page, store, editor): generic (no face), basic, or
+/// signature with its plate picture at `size` (from [`block_size`])
 pub fn block_face(
+    uri: &str,
     face: Option<&Faceplate>,
     category: Option<&PluginCategory>,
     size: Option<(u32, u32)>,
 ) -> BlockFace {
+    let suite = faceplate::trusted(uri);
     let Some(face) = face else {
-        return BlockFace::default();
+        return BlockFace {
+            suite,
+            ..BlockFace::default()
+        };
     };
     let plate = face.plate;
     BlockFace {
-        look: faceplate::look(Some(face)).into(),
+        suite,
+        look: face.look().into(),
         name: face.short_name.as_str().into(),
+        title: face.name.as_str().into(),
+        tagline: face.tagline.as_str().into(),
         glyph: category.map(faceplate::glyph).unwrap_or_default().into(),
         plate: plate
             .zip(size)
@@ -95,17 +104,16 @@ pub fn flat(app: &App) -> bool {
     app.global::<Features>().get_flat()
 }
 
-/// The editor's plate, for the selected block's face
-pub fn refresh_editor(app: &App, face: Option<&Faceplate>) {
-    let plate = face.and_then(|f| f.plate);
-    EDITED.set(plate);
-    app.set_selected_face_name(face.map(|f| f.name.as_str()).unwrap_or_default().into());
-    app.set_selected_tagline(face.map(|f| f.tagline.as_str()).unwrap_or_default().into());
-    if let Some(plate) = plate {
-        app.set_selected_plate_color(rgb(plate.color));
-        app.set_selected_knob_style(plate.knob_style.as_str().into());
-        app.set_selected_steel_knobs(plate.steel_caps());
-    }
+/// The editor's face, for the selected block of plugin `uri`; its plate
+/// is drawn at the face's size
+pub fn refresh_editor(
+    app: &App,
+    uri: &str,
+    face: Option<&Faceplate>,
+    category: Option<&PluginCategory>,
+) {
+    EDITED.set(face.and_then(|f| f.plate));
+    app.set_selected_face(block_face(uri, face, category, None));
     draw_editor(app);
 }
 

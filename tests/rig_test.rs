@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use pedalboard::audio::{ChainNode, SplitType};
 use pedalboard::midi::{MidiAssign, MidiTarget};
-use pedalboard::plugins::scanner::PluginCategory;
+use pedalboard::plugins::scanner::{PluginCategory, PluginInfo};
 use pedalboard::presets::{Preset, PresetChain, SavedMidiAssign, SceneSnapshot};
 use pedalboard::rigs::export::{self, Options};
 use pedalboard::rigs::format::{BlockKind, Code, Level, Rig, Source};
@@ -158,15 +158,18 @@ fn exported(options: Options) -> export::Exported {
 /// compressor installed
 fn export_from(preset: &Preset, models: &Path, options: Options) -> export::Exported {
     let catalog = catalog();
-    let name = |uri: &str| (uri == COMP).then(|| "ZamComp".to_string());
-    let class = |uri: &str| {
-        (uri == COMP).then(|| (PluginCategory::Dynamics, "CompressorPlugin".to_string()))
+    let comp = PluginInfo {
+        uri: COMP.into(),
+        name: "ZamComp".into(),
+        category: PluginCategory::Dynamics,
+        class: "CompressorPlugin".into(),
+        ..PluginInfo::default()
     };
+    let plugin = |uri: &str| (uri == COMP).then_some(&comp);
     let context = export::Context {
         models_dir: models,
         catalog: &catalog,
-        plugin_name: &name,
-        plugin_class: &class,
+        plugin: &plugin,
         author: "  Siryu ".into(),
         app_version: "0.11.0",
         created: "2026-11-06T18:30:00Z".into(),

@@ -178,7 +178,7 @@ pub fn plugin_views(state: &AppState) -> Vec<PluginView> {
             category: format!("{:?}", info.category),
             kind: scanner::shape(&info.uri).to_string(),
             hint: scanner::hint(&info.uri).to_string(),
-            color: plugin_color(&info.uri, Some(info)),
+            color: rack_color(None, &info.uri, Some(info)).1,
             faceplate: info.faceplate.clone(),
         })
         .collect();
@@ -270,7 +270,9 @@ pub fn selected_node_view(state: &AppState, instance_id: usize) -> Option<Select
                 instance_id,
                 uri: uri.clone(),
                 name: state.plugin_name(uri),
+                // No family rather than "Unknown"
                 category: info
+                    .filter(|i| i.category != PluginCategory::Unknown)
                     .map(|i| format!("{:?}", i.category))
                     .unwrap_or_default(),
                 bypassed: !enabled,
@@ -285,7 +287,7 @@ pub fn selected_node_view(state: &AppState, instance_id: usize) -> Option<Select
                     .map(|e| format!(".{e}"))
                     .collect::<Vec<_>>()
                     .join(", "),
-                auto_color: plugin_color(uri, info),
+                auto_color: rack_color(None, uri, info).1,
                 faceplate: info.and_then(|i| i.faceplate.clone()),
             })
         }
@@ -304,7 +306,7 @@ pub fn selected_node_view(state: &AppState, instance_id: usize) -> Option<Select
             file: String::new(),
             file_label: String::new(),
             file_types: String::new(),
-            auto_color: default_block_color("", None),
+            auto_color: rack_color(None, "", None).1,
             faceplate: None,
         }),
     }
@@ -390,22 +392,9 @@ pub const BLOCK_COLORS: [(&str, &str, u32); 10] = [
     ("silver", "Silver", 0x696c72),
 ];
 
-/// Colour of a block the user has not coloured: its family, like the
-/// category colours of hardware modelers (amps red, delays green...)
-pub fn default_block_color(shape: &str, category: Option<&PluginCategory>) -> u32 {
-    block_color(default_block_color_name(shape, category)).unwrap_or(BLOCK_COLORS[0].2)
-}
-
-/// Colour of the block of plugin `uri` the user has not coloured: its
-/// plate's (signature OpenRig FX plugins), else its family's
-pub fn plugin_color(uri: &str, info: Option<&PluginInfo>) -> u32 {
-    match info.and_then(|i| i.faceplate.as_ref()?.plate) {
-        Some(plate) => plate.tint(),
-        None => default_block_color(scanner::shape(uri), info.map(|i| &i.category)),
-    }
-}
-
-/// Name of the colour of a block the user has not coloured
+/// Name of the colour of a block the user has not coloured: its family,
+/// like the category colours of hardware modelers (amps red, delays
+/// green...)
 pub fn default_block_color_name(shape: &str, category: Option<&PluginCategory>) -> &'static str {
     match (shape, category) {
         ("amp" | "combo", _) => "red",
@@ -421,20 +410,26 @@ pub fn default_block_color_name(shape: &str, category: Option<&PluginCategory>) 
     }
 }
 
-/// Colour a block is drawn in, name and RGB: the user's `chosen` one when
-/// it is a colour of the palette, else its family's
+/// Colour the block of plugin `uri` is drawn in, name of the palette and
+/// RGB: the user's `chosen` colour when it is one of the palette, else its
+/// plate's tint (signature OpenRig FX plugins; named after its family),
+/// else its family's
 pub fn rack_color(
     chosen: Option<&str>,
-    shape: &str,
-    category: Option<&PluginCategory>,
+    uri: &str,
+    info: Option<&PluginInfo>,
 ) -> (&'static str, u32) {
-    chosen
-        .and_then(|name| BLOCK_COLORS.iter().skip(1).find(|(n, _, _)| *n == name))
-        .map(|(name, _, rgb)| (*name, *rgb))
-        .unwrap_or_else(|| {
-            let name = default_block_color_name(shape, category);
-            (name, block_color(name).unwrap_or(BLOCK_COLORS[0].2))
-        })
+    if let Some(&(name, _, rgb)) =
+        chosen.and_then(|chosen| BLOCK_COLORS.iter().skip(1).find(|(n, _, _)| *n == chosen))
+    {
+        return (name, rgb);
+    }
+    let name = default_block_color_name(scanner::shape(uri), info.map(|i| &i.category));
+    let rgb = match info.and_then(|i| i.faceplate.as_ref()?.plate) {
+        Some(plate) => plate.tint(),
+        None => block_color(name).unwrap_or(BLOCK_COLORS[0].2),
+    };
+    (name, rgb)
 }
 
 /// RGB of a colour name; None for the default look or an unknown name
@@ -547,17 +542,56 @@ mod tests {
     #[test]
     fn blocks_take_the_colour_of_their_family() {
         let color = |name| block_color(name).unwrap();
-        assert_eq!(default_block_color("amp", None), color("red"));
-        assert_eq!(default_block_color("cab", None), color("orange"));
+        let nam = scanner::FILE_BLOCKS
+            .iter()
+            .find(|b| b.shape == "amp")
+            .unwrap()
+            .uri;
+        assert_eq!(rack_color(None, nam, None), ("red", color("red")));
+        assert_eq!(rack_color(Some("teal"), nam, None), ("teal", color("teal")));
+        assert_eq!(rack_color(Some("auto"), nam, None), ("red", color("red")));
+        assert_eq!(default_block_color_name("cab", None), "orange");
         assert_eq!(
-            default_block_color("", Some(&PluginCategory::Delay)),
-            color("green")
+            default_block_color_name("", Some(&PluginCategory::Delay)),
+            "green"
         );
         assert_eq!(
-            default_block_color("", Some(&PluginCategory::Unknown)),
-            color("silver")
+            default_block_color_name("", Some(&PluginCategory::Unknown)),
+            "silver"
         );
-        assert_eq!(default_block_color("", None), color("silver"));
+        assert_eq!(rack_color(None, "", None), ("silver", color("silver")));
+    }
+
+    #[test]
+    fn a_plate_tints_its_block_unless_the_user_chose_a_colour() {
+        use crate::plugins::faceplate::{Finish, KnobStyle, Plate};
+        let plate = Plate {
+            color: 0x2e5a3a,
+            knob_style: KnobStyle::Skirted,
+            finish: Finish::Painted,
+            wear: 0.0,
+            seed: 1,
+        };
+        let info = PluginInfo {
+            uri: "https://openrig.eu/plugins/green-drive".into(),
+            category: PluginCategory::Distortion,
+            faceplate: Some(Faceplate {
+                plate: Some(plate),
+                name: "GREEN".into(),
+                short_name: "GREEN".into(),
+                tagline: String::new(),
+            }),
+            ..PluginInfo::default()
+        };
+        // Named after its family (rigs keep a palette name), drawn in its tint
+        assert_eq!(
+            rack_color(None, &info.uri, Some(&info)),
+            ("yellow", plate.tint())
+        );
+        assert_eq!(
+            rack_color(Some("blue"), &info.uri, Some(&info)),
+            ("blue", block_color("blue").unwrap())
+        );
     }
 
     #[test]

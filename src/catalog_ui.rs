@@ -13,12 +13,11 @@ use std::time::{Duration, Instant};
 use slint::{Color, ComponentHandle, Image, Weak};
 use tracing::{info, warn};
 
-use pedalboard::plugins::faceplate;
 use pedalboard::state::AppState;
 use pedalboard::store::index::{Index, Package, Plugin};
 use pedalboard::store::install::Installed;
 use pedalboard::store::{self, Status, Store};
-use pedalboard::ui::slint_bridge::block_color;
+use pedalboard::ui::slint_bridge::{block_color, rack_color};
 
 use crate::{model, plates, rgb, spawn, ui, App, CatalogFamily, CatalogItem};
 
@@ -187,8 +186,9 @@ impl Page {
             note: note.into(),
             progress,
             kind: plugin.kind.as_str().into(),
-            color: match face.and_then(|f| f.plate) {
-                Some(plate) => rgb(plate.tint()),
+            // Once installed, as its block in the rack
+            color: match info {
+                Some(info) => rgb(rack_color(None, &info.uri, Some(info)).1),
                 None => colour(plugin),
             },
             picture: picture.cloned().unwrap_or_default(),
@@ -200,8 +200,7 @@ impl Page {
                 .map(|p| format!("{}, {}", p.credit, p.license))
                 .unwrap_or_default()
                 .into(),
-            or_fx: faceplate::trusted(&plugin.uri),
-            faceplate: plates::block_face(face, info.map(|i| &i.category), plate_size),
+            faceplate: plates::block_face(&plugin.uri, face, info.map(|i| &i.category), plate_size),
         }
     }
 

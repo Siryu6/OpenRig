@@ -1,5 +1,5 @@
 import { Theme } from "../theme.slint";
-import { ParameterInfo, ModelChoice, FileSlot, ColorChoice, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive } from "../types.slint";
+import { BlockFace, ParameterInfo, ModelChoice, FileSlot, ColorChoice, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive } from "../types.slint";
 import { EqGraph } from "../components/eq_graph.slint";
 import { PlotEvents } from "../components/plot.slint";
 import { DynamicsGraph } from "../components/dynamics_graph.slint";
@@ -409,18 +409,13 @@ export component PluginEditor {
     in property <int> instance-id: -1;
     in property <string> plugin-name: "";
     in property <string> category: "";
-    // OpenRig FX look: "" for any plugin, "basic" or "signature" for the
+    // OpenRig FX look: generic for any plugin, basic or signature for the
     // OpenRig FX ones (their mark in the header, the view always shown,
-    // modes as keys)
-    in property <string> look: "";
-    // A signature plugin's plate: its picture (empty on the web remote,
-    // flat), colour, knob style, name and tagline
+    // modes as keys); a signature plate's colour, knobs, name and tagline
+    in property <BlockFace> face;
+    // A signature plugin's plate picture at the face's size (empty on the
+    // web remote, flat)
     in property <image> plate;
-    in property <color> plate-color;
-    in property <string> knob-style;
-    in property <bool> steel-knobs;
-    in property <string> face-name;
-    in property <string> tagline;
     // The face's size changed: the plate is drawn again at this size
     callback plate-sized(length, length);
     in property <bool> bypassed: false;
@@ -509,8 +504,8 @@ export component PluginEditor {
     private property <length> card-pad: root.short ? 4px : Theme.space-sm;
     private property <int> cards: (root.uses-file ? 1 : 0) + (root.factory-presets.length > 0 ? 1 : 0) + root.file-slots.length;
     private property <bool> has-graph: root.scope.shown || root.dyn.shown || root.eq.shown;
-    private property <bool> faced: root.look != "";
-    private property <bool> signature: root.look == "signature";
+    private property <bool> faced: root.face.look != "";
+    private property <bool> signature: root.face.look == "signature";
     private property <length> plate-pad: root.short ? Theme.space-md : Theme.space-lg;
     // Height left for the graph (and its bar) and the parameters
     private property <length> room: root.height - 2 * root.pad - root.header-height - root.vgap
@@ -596,17 +591,11 @@ export component PluginEditor {
                         font-weight: Theme.weight-semibold;
                         overflow: elide;
                     }
-                    if root.faced: Text {
-                        text: (root.category != "" ? root.category.to-uppercase() + "  ·  " : "") + "OPENRIG FX " + root.look.to-uppercase();
-                        color: root.bypassed ? Theme.text-muted : Theme.accent;
-                        font-size: Theme.font-caption;
-                        font-weight: Theme.weight-bold;
-                        letter-spacing: 0.8px;
-                        overflow: elide;
-                    }
-                    if !root.faced: Text {
-                        // Latency before the rest: elided last on a small screen
-                        text: (root.category != "" ? root.category + "  ·  " : "")
+                    Text {
+                        // The OpenRig FX mark, then latency before the rest:
+                        // elided last on a small screen
+                        text: (root.faced ? "OpenRig FX  ·  " : "")
+                            + (root.category != "" ? root.category + "  ·  " : "")
                             + (root.latency-ms > 0.05 ? round(root.latency-ms * 10) / 10 + " ms latency  ·  " : "")
                             + root.parameters.length + (root.parameters.length == 1 ? " parameter" : " parameters")
                             + (root.cpu < 0 ? "" : root.cpu < 0.01 ? "  ·  CPU < 1 %" : "  ·  CPU " + round(root.cpu * 100) + " %");
@@ -1035,7 +1024,7 @@ export component PluginEditor {
             }
             if root.signature: Rectangle {
                 border-radius: Theme.radius-md;
-                background: root.plate-color;
+                background: root.face.plate-color;
                 clip: true;
                 Image {
                     width: 100%;
@@ -1249,8 +1238,8 @@ export component PluginEditor {
                                     integer: p.kind == "int";
                                     focused: i == root.focused-param;
                                     accent: root.signature ? Theme.accent : root.color-value;
-                                    knob-style: root.signature ? root.knob-style : "";
-                                    steel: root.steel-knobs;
+                                    knob-style: root.signature ? root.face.knob-style : "";
+                                    steel: root.face.steel;
                                     changed(v) => {
                                         root.parameter-changed(p.index, v);
                                     }
@@ -1471,7 +1460,7 @@ export component PluginEditor {
                     height: root.short ? 22px : 40px;
                     spacing: Theme.space-md;
                     Text {
-                        text: root.face-name.to-uppercase();
+                        text: root.face.title.to-uppercase();
                         color: Theme.plate-silk;
                         font-size: root.short ? Theme.font-title : 28px;
                         font-weight: 900;
@@ -1480,7 +1469,7 @@ export component PluginEditor {
                         horizontal-stretch: 0;
                     }
                     Text {
-                        text: root.tagline.to-uppercase();
+                        text: root.face.tagline.to-uppercase();
                         color: Theme.plate-silk-muted;
                         font-size: Theme.font-caption;
                         font-weight: Theme.weight-bold;

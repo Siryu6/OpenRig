@@ -106,7 +106,7 @@ impl PortInfo {
 }
 
 /// Plugin metadata from LV2 discovery
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PluginInfo {
     pub uri: String,
     pub name: String,
@@ -288,7 +288,7 @@ impl PluginInfo {
 }
 
 /// Plugin categories (LV2 classes)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum PluginCategory {
     Dynamics,   // Compressor, Limiter, Gate
     Distortion, // Overdrive, Fuzz, Distortion
@@ -300,6 +300,7 @@ pub enum PluginCategory {
     Utility,    // Tuner, Analyzer, Mixer
     Generator,  // Oscillator, Noise
     Routing,    // Sends and returns (built in)
+    #[default]
     Unknown,
 }
 

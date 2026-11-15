@@ -224,18 +224,12 @@ pub(crate) fn export_preset(
 ) -> anyhow::Result<export::Exported> {
     let catalog = catalog();
     let scanner = state.lv2_host.scanner();
-    let plugin_name = |uri: &str| scanner.find_by_uri(uri).map(|p| p.name.clone());
-    let plugin_class = |uri: &str| {
-        scanner
-            .find_by_uri(uri)
-            .map(|p| (p.category.clone(), p.class.clone()))
-    };
+    let plugin = |uri: &str| scanner.find_by_uri(uri);
     let models_dir = state.models_dir();
     let context = export::Context {
         models_dir: &models_dir,
         catalog: &catalog,
-        plugin_name: &plugin_name,
-        plugin_class: &plugin_class,
+        plugin: &plugin,
         author,
         app_version: env!("CARGO_PKG_VERSION"),
         created: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),

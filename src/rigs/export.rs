@@ -10,7 +10,7 @@ use super::format::{
     RackDisplay, Report, Rig, Source, Tone3000Model,
 };
 use super::CatalogPlugin;
-use crate::plugins::scanner::{self, PluginCategory};
+use crate::plugins::scanner::{self, PluginCategory, PluginInfo};
 use crate::presets::Preset;
 use crate::tone_info::ToneInfo;
 use crate::ui::slint_bridge::rack_color;
@@ -21,10 +21,8 @@ pub struct Context<'a> {
     pub models_dir: &'a Path,
     /// The plugins of the store catalog
     pub catalog: &'a [CatalogPlugin],
-    /// Display name of an installed plugin
-    pub plugin_name: &'a dyn Fn(&str) -> Option<String>,
-    /// Family and LV2 class of an installed plugin
-    pub plugin_class: &'a dyn Fn(&str) -> Option<(PluginCategory, String)>,
+    /// An installed plugin (its name, family, LV2 class and face)
+    pub plugin: &'a dyn Fn(&str) -> Option<&'a PluginInfo>,
     /// Who exports it, as the user set it once (may be empty)
     pub author: String,
     /// Version of this app
@@ -179,7 +177,8 @@ fn builtin_kind(uri: &str) -> Option<&str> {
 }
 
 fn resolve_plugin(uri: &str, context: &Context) -> PluginDependency {
-    let name = (context.plugin_name)(uri)
+    let name = (context.plugin)(uri)
+        .map(|p| p.name.clone())
         .or_else(|| scanner::file_block(uri).map(|b| b.name.to_string()))
         .unwrap_or_else(|| {
             uri.rsplit(['/', '#', ':'])
@@ -220,16 +219,15 @@ fn display(rig: &Rig, context: &Context) -> RackDisplay {
         .map(|placed| {
             let block = placed.block;
             let shape = scanner::shape(&block.uri);
-            let (category, class) = (context.plugin_class)(&block.uri).unzip();
-            let (color, rgb) = rack_color(block.color.as_deref(), shape, category.as_ref());
+            let info = (context.plugin)(&block.uri);
+            let (color, rgb) = rack_color(block.color.as_deref(), &block.uri, info);
             let look = BlockDisplay {
                 kind: if shape.is_empty() { "plugin" } else { shape }.to_string(),
-                category: category
-                    .as_ref()
-                    .and_then(category_name)
+                category: info
+                    .and_then(|i| category_name(&i.category))
                     .unwrap_or_default()
                     .to_string(),
-                lv2_class: class.unwrap_or_default(),
+                lv2_class: info.map(|i| i.class.clone()).unwrap_or_default(),
                 color: color.to_string(),
                 color_hex: format!("#{rgb:06x}"),
             };

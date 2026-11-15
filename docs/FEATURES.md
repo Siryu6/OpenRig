@@ -38,7 +38,8 @@ What OpenRig does, in more technical detail than the
   look; these terms are ignored outside that prefix, and a signature plugin
   without a valid colour is drawn as a basic one. A basic plugin has the
   OpenRig look: an amber left edge and an "OR FX" mark on its rack block with
-  a glyph of its category, the OpenRig mark in the editor header, its view
+  a glyph of its category, the OpenRig mark in the editor header (and
+  "OpenRig FX" before the family, latency, parameters and CPU), its view
   always shown, and modes of three choices or fewer as keys when the
   control has room for them.
   A signature plugin's controls and view sit on its plate in the editor:
@@ -50,9 +51,10 @@ What OpenRig does, in more technical detail than the
   web remote draws plates flat, in their colour only.
   In the rack, a signature block is a mini pedal on its plate: two small
   knobs, the green LED, its silk name and a footswitch (tap, hold and drag
-  as on any block; bypassed, it goes dark). Its default colour, on the rack
-  and the knob strip, is its plate colour, lifted when too dark to show on
-  the stage.
+  as on any block; bypassed, it goes dark). Its default colour, on the rack,
+  the knob strip and in an exported rig (`color_hex`; `color` stays the
+  family's palette name), is its plate colour, lifted when too dark to show
+  on the stage.
   The Add effect page and the store mark the suite's plugins with an
   "OR FX" badge (by URI prefix, so before they are installed too) and show
   an installed one's block as the rack draws it: the same `BlockShape` and

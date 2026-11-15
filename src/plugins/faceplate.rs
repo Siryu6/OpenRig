@@ -119,22 +119,22 @@ pub struct Faceplate {
     pub tagline: String,
 }
 
-/// Name of the look a block is drawn with: "" (generic), "basic" or
-/// "signature", as the UI takes it
-pub fn look(face: Option<&Faceplate>) -> &'static str {
-    match face.map(Faceplate::family) {
-        None => "",
-        Some(Family::Basic) => "basic",
-        Some(Family::Signature) => "signature",
-    }
-}
-
 impl Faceplate {
     pub fn family(&self) -> Family {
         if self.plate.is_some() {
             Family::Signature
         } else {
             Family::Basic
+        }
+    }
+
+    /// Name of the look its block is drawn with, as the UI takes it
+    /// ("basic" or "signature"; a plugin without a face has the generic
+    /// look, "")
+    pub fn look(&self) -> &'static str {
+        match self.family() {
+            Family::Basic => "basic",
+            Family::Signature => "signature",
         }
     }
 }

@@ -5,6 +5,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::sync::Mutex;
 
+use crate::plugins::scanner::PluginInfo;
 use crate::presets::{Preset, PresetChain};
 use crate::rigs::format::Source;
 use crate::rigs::{export, import, CatalogPlugin};
@@ -663,14 +664,17 @@ fn published_rig() -> Vec<u8> {
         ..PresetChain::default()
     });
     let catalog = catalog();
-    let none = |_: &str| None;
+    let comp = PluginInfo {
+        name: "ZamComp".into(),
+        ..PluginInfo::default()
+    };
+    let plugin = |_: &str| Some(&comp);
     let exported = export::export(
         &preset,
         &export::Context {
             models_dir: Path::new("/nowhere"),
             catalog: &catalog,
-            plugin_name: &|_| Some("ZamComp".into()),
-            plugin_class: &none,
+            plugin: &plugin,
             author: "marta".into(),
             app_version: "0.11.0",
             created: String::new(),
