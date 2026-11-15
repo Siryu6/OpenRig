@@ -1,18 +1,21 @@
 import { Features } from "../features.slint";
 import { Theme } from "../theme.slint";
-import { CatalogItem, CatalogFamily } from "../types.slint";
+import { BlockFace, CatalogItem, CatalogFamily } from "../types.slint";
 import { Badge, Button, Chip, EmptyState, Icon } from "../components/controls.slint";
 import { BlockShape } from "../components/block_shape.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 
-// Picture of a store entry, on its family's colour: the author's own picture
-// when it has one, else the gear it is drawn as in the rack
+// Picture of a store entry, on its family's colour: an installed OpenRig FX
+// plugin's own face, else the author's own picture when it has one, else the
+// gear it is drawn as in the rack
 component Artwork inherits Rectangle {
     in property <string> kind;
     in property <string> label;
     in property <color> tint;
     in property <image> picture;
     in property <bool> has-picture;
+    in property <BlockFace> faceplate;
+    private property <bool> shows-picture: root.has-picture && root.faceplate.look == "";
 
     border-radius: Theme.radius-lg;
     clip: true;
@@ -36,7 +39,7 @@ component Artwork inherits Rectangle {
     private property <bool> strip: root.crop-strips && root.picture.width > 2.2 * root.picture.height;
     in property <bool> crop-strips: true;
 
-    if root.has-picture: Image {
+    if root.shows-picture: Image {
         x: root.strip ? 0 : parent.width * 0.08;
         y: root.strip ? 0 : parent.height * 0.08;
         width: root.strip ? parent.width : parent.width * 0.84;
@@ -45,10 +48,11 @@ component Artwork inherits Rectangle {
         image-fit: root.strip ? cover : contain;
     }
 
-    if !root.has-picture: BlockShape {
-        kind: root.kind;
+    if !root.shows-picture: BlockShape {
+        kind: root.faceplate.look == "" ? root.kind : "";
         name: root.label;
         tint: root.tint;
+        faceplate: root.faceplate;
         x: (parent.width - self.width) / 2;
         y: parent.height * 0.6 - self.height * 0.5;
         transform-origin: { x: self.width / 2, y: self.height / 2 };
@@ -283,6 +287,7 @@ export component CatalogView {
                         tint: item.color;
                         picture: item.picture;
                         has-picture: item.has-picture;
+                        faceplate: item.faceplate;
                     }
 
                     VerticalLayout {
@@ -362,6 +367,10 @@ export component CatalogView {
                             Badge {
                                 text: item.license;
                             }
+                            if item.or-fx: Badge {
+                                text: "OR FX";
+                                tone: "accent";
+                            }
                             if item.note != "": Text {
                                 horizontal-stretch: 1;
                                 text: item.note;
@@ -417,6 +426,7 @@ export component CatalogView {
                     tint: item.color;
                     picture: item.picture;
                     has-picture: item.has-picture;
+                    faceplate: item.faceplate;
                 }
                 VerticalLayout {
                     spacing: Theme.space-sm;
@@ -500,6 +510,10 @@ export component CatalogView {
                     alignment: start;
                     Badge {
                         text: item.license;
+                    }
+                    if item.or-fx: Badge {
+                        text: "OR FX";
+                        tone: "accent";
                     }
                     Badge {
                         text: item.official ? "OFFICIAL" : "OPENRIG BUILD";

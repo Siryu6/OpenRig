@@ -293,9 +293,7 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
         ..
     } = chain_layout::layout_chain_with(&chain.nodes, &state.signal_map(&chain));
 
-    // A signature block's plate: 72 x 60, as BlockShape draws it
-    let flat = plates::flat(app);
-    let (block_w, block_h) = (plates::physical(app, 72.0), plates::physical(app, 60.0));
+    let plate_size = plates::block_size(app, 1.0);
     let nodes: Vec<PositionedNode> = nodes
         .into_iter()
         .map(|n| {
@@ -304,7 +302,6 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
             let look = (!n.is_split)
                 .then(|| state.plugin_faceplate(&n.uri))
                 .flatten();
-            let plate = look.as_ref().and_then(|f| f.plate);
             let face = if n.is_split || look.is_some() {
                 None
             } else {
@@ -339,25 +336,11 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
                         .is_some_and(|p| p.tone3000),
                 has_picture: face.is_some(),
                 picture: face.map(|(p, _)| p).unwrap_or_default(),
-                look: faceplate::look(look.as_ref()).into(),
-                face_name: look
-                    .as_ref()
-                    .map(|f| f.short_name.as_str())
-                    .unwrap_or_default()
-                    .into(),
-                glyph: look
-                    .as_ref()
-                    .and_then(|_| state.plugin_category(&n.uri))
-                    .map(|c| faceplate::glyph(&c))
-                    .unwrap_or_default()
-                    .into(),
-                plate: plate
-                    .filter(|_| !flat)
-                    .map(|p| plates::image(&p, block_w, block_h))
-                    .unwrap_or_default(),
-                plate_color: rgb(plate.map_or(0, |p| p.color)),
-                knob_style: plate.map_or("", |p| p.knob_style.as_str()).into(),
-                steel: plate.is_some_and(|p| p.steel_caps()),
+                faceplate: plates::block_face(
+                    look.as_ref(),
+                    state.plugin_category(&n.uri).as_ref(),
+                    plate_size,
+                ),
             }
         })
         .collect();
@@ -460,14 +443,11 @@ pub(crate) fn block_tint(
     instance_id: usize,
     uri: &str,
 ) -> u32 {
-    let chosen = chain.colors.get(&instance_id).map(String::as_str);
-    if chosen.and_then(views::block_color).is_none() {
-        if let Some(plate) = state.plugin_faceplate(uri).and_then(|f| f.plate) {
-            return plate.tint();
-        }
-    }
-    let category = state.plugin_category(uri);
-    views::rack_color(chosen, scanner::shape(uri), category.as_ref()).1
+    chain
+        .colors
+        .get(&instance_id)
+        .and_then(|name| views::block_color(name))
+        .unwrap_or_else(|| views::plugin_color(uri, state.lv2_host.scanner().find_by_uri(uri)))
 }
 
 /// URI of the plugin `instance_id`, if it is one
@@ -492,11 +472,15 @@ fn store_picture(uri: &str) -> Option<(slint::Image, bool)> {
 
 /// The plugins of the Add effect page, from the latest LV2 scan
 pub(crate) fn set_available_plugins(app: &App, state: &AppState) {
+    let plate_size = plates::block_size(app, 1.0);
     let plugins: Vec<PluginItem> = views::plugin_views(state)
         .into_iter()
         .map(|p| {
             let picture = store_picture(&p.uri).map(|(p, _)| p);
+            let category = state.plugin_category(&p.uri);
             PluginItem {
+                or_fx: faceplate::trusted(&p.uri),
+                faceplate: plates::block_face(p.faceplate.as_ref(), category.as_ref(), plate_size),
                 has_picture: picture.is_some(),
                 picture: picture.unwrap_or_default(),
                 uri: p.uri.into(),

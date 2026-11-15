@@ -1,5 +1,6 @@
 import { Features } from "../features.slint";
 import { Theme } from "../theme.slint";
+import { BlockFace } from "../types.slint";
 import { T3kMark } from "tone3000_brand.slint";
 import { LogoMark } from "logo.slint";
 
@@ -25,14 +26,9 @@ export component BlockShape {
     in property <bool> t3k: false;      // loads a TONE3000 tone: carries its mark
     in property <image> picture;        // the plugin's own face, from the store
     in property <bool> has-picture: false;
-    in property <string> look;          // OpenRig FX look: "" generic, "basic", "signature"
-    in property <string> face-name;     // its name on the block
-    in property <string> glyph;         // basic: what it does, path in a 50 x 14 box
-    // Signature: a small pedal on its plate (picture, or colour when flat)
-    in property <image> plate;
-    in property <color> plate-color;
-    in property <string> knob-style;    // "plain", "skirted", "chickenhead", "domed"
-    in property <bool> steel;           // steel knob caps (very dark plate)
+    // OpenRig FX look; signature: a small pedal on its plate (picture, or
+    // colour when flat)
+    in property <BlockFace> faceplate;
 
     // Picture: fitted in 84 x 60, wide strips cropped to 36 high
     private property <float> aspect: root.picture.width / max(1, root.picture.height);
@@ -47,8 +43,8 @@ export component BlockShape {
         : root.jack ? 40px : 52px;
 
     private property <bool> gear: root.kind != "";
-    private property <bool> basic: root.look == "basic";
-    private property <bool> signature: root.look == "signature";
+    private property <bool> basic: root.faceplate.look == "basic";
+    private property <bool> signature: root.faceplate.look == "signature";
     // Frame and trim colour
     private property <color> trim: root.bypassed ? #34363b : root.tint;
     private property <color> face: root.pressed ? #2a2b2f : #1b1c1f;
@@ -249,7 +245,7 @@ export component BlockShape {
                 y: 15px;
                 width: parent.width - 14px;
                 height: 18px;
-                text: root.face-name;
+                text: root.faceplate.name;
                 color: root.bypassed ? Theme.text-muted : #ffffff;
                 font-size: Theme.font-small;
                 font-weight: Theme.weight-bold;
@@ -266,7 +262,7 @@ export component BlockShape {
                 stroke: root.bypassed ? Theme.text-muted : Theme.accent;
                 stroke-width: 1.5px;
                 fill: transparent;
-                commands: root.glyph;
+                commands: root.faceplate.glyph;
             }
         }
     }
@@ -275,12 +271,12 @@ export component BlockShape {
     // style, its silk name and a footswitch (the LED is the block's own)
     if root.signature: Rectangle {
         border-radius: root.radius;
-        background: root.plate-color;
+        background: root.faceplate.plate-color;
         clip: true;
         Image {
             width: parent.width;
             height: parent.height;
-            source: root.plate;
+            source: root.faceplate.plate;
             image-fit: fill;
         }
         Rectangle {
@@ -296,25 +292,25 @@ export component BlockShape {
             width: 13px;
             height: 13px;
             border-radius: self.width / 2;
-            background: root.knob-style == "domed" ? (Features.flat ? Theme.knob-alu-flat : Theme.knob-alu)
-                : root.steel ? (Features.flat ? Theme.knob-steel-flat : Theme.knob-steel)
+            background: root.faceplate.knob-style == "domed" ? (Features.flat ? Theme.knob-alu-flat : Theme.knob-alu)
+                : root.faceplate.steel ? (Features.flat ? Theme.knob-steel-flat : Theme.knob-steel)
                 : Theme.knob-black;
-            border-width: root.knob-style == "skirted" ? 2px : 1px;
-            border-color: root.knob-style == "skirted" && !root.steel ? Theme.knob-skirt-light : #00000099;
+            border-width: root.faceplate.knob-style == "skirted" ? 2px : 1px;
+            border-color: root.faceplate.knob-style == "skirted" && !root.faceplate.steel ? Theme.knob-skirt-light : #00000099;
             // Pointer: a dot on a dome, a line otherwise
             Rectangle {
                 x: parent.width / 2 - 1px + (k == 0 ? -2px : 2px);
                 y: 2px;
                 width: 2px;
-                height: root.knob-style == "domed" ? 2px : 4px;
-                background: root.knob-style == "domed" ? Theme.knob-black : Theme.knob-line;
+                height: root.faceplate.knob-style == "domed" ? 2px : 4px;
+                background: root.faceplate.knob-style == "domed" ? Theme.knob-black : Theme.knob-line;
             }
         }
         Text {
             y: 22px;
             width: parent.width;
             height: 16px;
-            text: root.face-name;
+            text: root.faceplate.name;
             color: Theme.plate-silk;
             font-size: Theme.font-small;
             font-weight: 900;

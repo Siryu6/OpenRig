@@ -8,7 +8,7 @@ use crate::audio::split_chain::walk;
 use crate::audio::ChainNode;
 use crate::monitor::Levels;
 use crate::plugins::faceplate::Faceplate;
-use crate::plugins::scanner::{self, PluginCategory, PortInfo};
+use crate::plugins::scanner::{self, PluginCategory, PluginInfo, PortInfo};
 use crate::state::AppState;
 
 /// One entry of the plugin browser
@@ -178,7 +178,7 @@ pub fn plugin_views(state: &AppState) -> Vec<PluginView> {
             category: format!("{:?}", info.category),
             kind: scanner::shape(&info.uri).to_string(),
             hint: scanner::hint(&info.uri).to_string(),
-            color: default_block_color(scanner::shape(&info.uri), Some(&info.category)),
+            color: plugin_color(&info.uri, Some(info)),
             faceplate: info.faceplate.clone(),
         })
         .collect();
@@ -285,11 +285,7 @@ pub fn selected_node_view(state: &AppState, instance_id: usize) -> Option<Select
                     .map(|e| format!(".{e}"))
                     .collect::<Vec<_>>()
                     .join(", "),
-                // A plate's colour, else the family's
-                auto_color: info.and_then(|i| i.faceplate.as_ref()?.plate).map_or_else(
-                    || default_block_color(scanner::shape(uri), info.map(|i| &i.category)),
-                    |plate| plate.tint(),
-                ),
+                auto_color: plugin_color(uri, info),
                 faceplate: info.and_then(|i| i.faceplate.clone()),
             })
         }
@@ -398,6 +394,15 @@ pub const BLOCK_COLORS: [(&str, &str, u32); 10] = [
 /// category colours of hardware modelers (amps red, delays green...)
 pub fn default_block_color(shape: &str, category: Option<&PluginCategory>) -> u32 {
     block_color(default_block_color_name(shape, category)).unwrap_or(BLOCK_COLORS[0].2)
+}
+
+/// Colour of the block of plugin `uri` the user has not coloured: its
+/// plate's (signature OpenRig FX plugins), else its family's
+pub fn plugin_color(uri: &str, info: Option<&PluginInfo>) -> u32 {
+    match info.and_then(|i| i.faceplate.as_ref()?.plate) {
+        Some(plate) => plate.tint(),
+        None => default_block_color(scanner::shape(uri), info.map(|i| &i.category)),
+    }
 }
 
 /// Name of the colour of a block the user has not coloured

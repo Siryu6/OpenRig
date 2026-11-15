@@ -609,7 +609,7 @@ export component App inherits Window {
         // Fallback display values; Rust overwrites them in select-node
         root.selected-plugin-name = root.positioned-nodes[idx].name;
         root.selected-plugin-category = "";
-        root.selected-plugin-look = root.positioned-nodes[idx].look;
+        root.selected-plugin-look = root.positioned-nodes[idx].faceplate.look;
         root.selected-plugin-bypassed = root.positioned-nodes[idx].bypassed;
         root.selected-parameters = [];
         root.selected-uses-file = false;
