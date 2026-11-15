@@ -1,4 +1,4 @@
-import { Theme } from "../theme.slint";
+import { PlotColors, Theme } from "../theme.slint";
 import { EqView, PlotHandle, Spectrum } from "../types.slint";
 import { FreqAxis, FreqGrid, Handle, InOut, Plot, PlotPath } from "plot.slint";
 
@@ -11,21 +11,24 @@ export component EqGraph inherits Rectangle {
     in property <[PlotHandle]> points;
     // The sound in (grey) and out (in the block's colour), behind the curve
     in property <Spectrum> spectrum;
-    in property <color> accent: Theme.accent;
+    in property <PlotColors> colors: Theme.plot;
+    in property <color> accent: root.colors.accent;
     in property <bool> bypassed: false;
     callback sized(length, length);         // the plot was laid out
     callback drag(int, float, float);       // point, where to, 0..1 from the plot's bottom left
     callback released();                    // the point dragged was let go
     callback double-tapped(int);            // point
 
-    private property <color> line: root.eq.enabled && !root.bypassed ? root.accent : Theme.text-muted;
+    private property <color> line: root.eq.enabled && !root.bypassed ? root.accent : root.colors.muted;
 
     border-radius: Theme.radius-lg;
-    background: Theme.surface;
+    background: root.colors.surface;
     border-width: 1px;
-    border-color: Theme.border;
+    border-color: root.colors.grid;
 
     plot := Plot {
+
+        colors: root.colors;
         x: 40px;
         y: 12px;
         width: parent.width - 52px;
@@ -40,10 +43,11 @@ export component EqGraph inherits Rectangle {
             y: (0.5 - db / (2 * root.eq.range)) * plot.height;
             width: plot.width;
             height: 1px;
-            background: db == 0 ? Theme.text-muted : Theme.border;
+            background: db == 0 ? root.colors.muted : root.colors.grid;
         }
         FreqGrid { }
         InOut {
+            colors: root.colors;
             input: root.spectrum.input;
             output: root.spectrum.output;
             accent: root.line;
@@ -66,7 +70,7 @@ export component EqGraph inherits Rectangle {
         y: plot.y + (0.5 - t.db / (2 * root.eq.range)) * plot.height - 7px;
         width: 32px;
         text: t.text;
-        color: Theme.text-muted;
+        color: root.colors.muted;
         font-size: Theme.font-caption;
         horizontal-alignment: right;
     }
@@ -75,13 +79,14 @@ export component EqGraph inherits Rectangle {
         y: plot.y + plot.height + 3px;
         width: 40px;
         text: d.text;
-        color: Theme.text-muted;
+        color: root.colors.muted;
         font-size: Theme.font-caption;
         horizontal-alignment: center;
     }
 
     // Band points, over the curve
     for p[i] in root.points: Handle {
+        colors: root.colors;
         handle: p;
         accent: root.line;
         plot-x: plot.x;

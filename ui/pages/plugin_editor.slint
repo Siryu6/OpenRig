@@ -1,4 +1,4 @@
-import { Theme } from "../theme.slint";
+import { PlotColors, Theme } from "../theme.slint";
 import { BlockFace, ParameterInfo, ModelChoice, FileSlot, ColorChoice, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive } from "../types.slint";
 import { EqGraph } from "../components/eq_graph.slint";
 import { PlotEvents } from "../components/plot.slint";
@@ -506,6 +506,11 @@ export component PluginEditor {
     private property <bool> has-graph: root.scope.shown || root.dyn.shown || root.eq.shown;
     private property <bool> faced: root.face.look != "";
     private property <bool> signature: root.face.look == "signature";
+    // The view: in a signature plate's window, the gear's colours (dark in
+    // both themes, amber curves); else the theme's, curves in the block's
+    // colour
+    private property <PlotColors> plot-colors: root.signature ? Theme.plot-gear : Theme.plot;
+    private property <color> plot-accent: root.signature ? Theme.plot-gear.accent : root.color-value;
     private property <length> plate-pad: root.short ? Theme.space-md : Theme.space-lg;
     // Height left for the graph (and its bar) and the parameters
     private property <length> room: root.height - 2 * root.pad - root.header-height - root.vgap
@@ -592,13 +597,19 @@ export component PluginEditor {
                         overflow: elide;
                     }
                     Text {
-                        // The OpenRig FX mark, then latency before the rest:
-                        // elided last on a small screen
-                        text: (root.faced ? "OpenRig FX  ·  " : "")
-                            + (root.category != "" ? root.category + "  ·  " : "")
-                            + (root.latency-ms > 0.05 ? round(root.latency-ms * 10) / 10 + " ms latency  ·  " : "")
-                            + root.parameters.length + (root.parameters.length == 1 ? " parameter" : " parameters")
-                            + (root.cpu < 0 ? "" : root.cpu < 0.01 ? "  ·  CPU < 1 %" : "  ·  CPU " + round(root.cpu * 100) + " %");
+                        // The suite's name, then latency before the rest, elided
+                        // last; a narrow screen leaves out what shows elsewhere
+                        // (the suite's mark is left of it, the grid holds the
+                        // parameters) and tightens the dots
+                        property <bool> narrow: root.width < 1000px;
+                        property <string> dot: self.narrow ? " · " : "  ·  ";
+                        text: (root.faced && !self.narrow ? "OpenRig FX" + self.dot : "")
+                            + (root.category != "" ? root.category + self.dot : "")
+                            + (root.latency-ms > 0.05 ? round(root.latency-ms * 10) / 10 + " ms latency" + self.dot : "")
+                            + (self.narrow && root.cpu >= 0 ? self.load
+                                : root.parameters.length + (root.parameters.length == 1 ? " parameter" : " parameters")
+                                    + (root.cpu < 0 ? "" : self.dot + self.load));
+                        property <string> load: root.cpu < 0.01 ? "CPU < 1 %" : "CPU " + round(root.cpu * 100) + " %";
                         color: Theme.text-secondary;
                         font-size: Theme.font-small;
                         overflow: elide;
@@ -1104,7 +1115,8 @@ export component PluginEditor {
                     scope: root.scope;
                     live: root.scope-live;
                     spectrum: root.spectrum;
-                    accent: root.color-value;
+                    colors: root.plot-colors;
+                    accent: root.plot-accent;
                     bypassed: root.bypassed;
                 }
 
@@ -1113,7 +1125,8 @@ export component PluginEditor {
                     vertical-stretch: 0;
                     dyn: root.dyn;
                     live: root.dyn-live;
-                    accent: root.color-value;
+                    colors: root.plot-colors;
+                    accent: root.plot-accent;
                     bypassed: root.bypassed;
                 }
 
@@ -1123,7 +1136,8 @@ export component PluginEditor {
                     eq: root.eq;
                     points: root.eq-points;
                     spectrum: root.spectrum;
-                    accent: root.color-value;
+                    colors: root.plot-colors;
+                    accent: root.plot-accent;
                     bypassed: root.bypassed;
                     sized(w, h) => {
                         PlotEvents.resized(w, h);
@@ -1191,10 +1205,12 @@ export component PluginEditor {
                             y: floor(i / root.columns) * (grid.cell-height + root.gap);
                             width: grid.cell-width;
                             height: grid.cell-height;
-                            // An OpenRig FX plugin's modes are keys when the cell
-                            // has room for them (three at most)
-                            property <bool> keys: p.kind == "enum" && root.faced && p.options.length <= 3
-                                && self.width - 2 * Theme.space-sm >= p.options.length * 1.5 * Theme.touch-target;
+                            // An OpenRig FX plugin's modes (three at most) are a
+                            // switch: an LED selector on a plate, else keys, stacked
+                            // when the cell is too narrow for a row of them
+                            property <bool> keys: p.kind == "enum" && root.faced && p.options.length <= 3;
+                            property <bool> stacked: root.signature
+                                || self.width - 2 * Theme.space-sm < p.options.length * 1.5 * Theme.touch-target;
                             border-radius: Theme.radius-lg;
                             // On a plate: silk-screened, no card
                             background: root.signature ? transparent : Theme.surface;
@@ -1271,6 +1287,7 @@ export component PluginEditor {
                             // On/off switch
                             if p.kind == "toggle": Toggle {
                                 accent: root.color-value;
+                                well: root.signature ? Theme.plate-window : Theme.display;
                                 x: (parent.width - self.width) / 2;
                                 y: grid.top + (parent.height - grid.top - grid.bottom - self.height) / 2;
                                 checked: p.value > (p.min + p.max) / 2;
@@ -1293,11 +1310,15 @@ export component PluginEditor {
                             // Enumeration: keys, else the current label, tap to open
                             // the picker
                             if cell.keys: Segmented {
-                                x: Theme.space-sm;
-                                y: grid.top + (parent.height - grid.top - grid.bottom - self.height) / 2;
-                                width: parent.width - 2 * Theme.space-sm;
-                                height: Theme.touch-target;
+                                width: root.signature ? min(parent.width - 2 * Theme.space-sm, 140px) : parent.width - 2 * Theme.space-sm;
+                                height: !cell.stacked ? Theme.touch-target
+                                    : min(p.options.length * (root.signature ? 30px : 36px), parent.height - grid.top - Theme.space-sm);
+                                x: (parent.width - self.width) / 2;
+                                y: cell.stacked ? grid.top + (parent.height - grid.top - Theme.space-sm - self.height) / 2
+                                    : grid.top + (parent.height - grid.top - grid.bottom - self.height) / 2;
                                 options: p.options;
+                                vertical: cell.stacked;
+                                plate: root.signature;
                                 font-size: Theme.font-caption;
                                 focused: i == root.focused-param;
                                 adjusting: i == root.focused-param && root.adjusting;
@@ -1343,12 +1364,13 @@ export component PluginEditor {
                                     }
                                 }
                             }
-                            if p.kind == "enum" && !cell.keys: Text {
+                            // How many choices the picker holds (on a generic plugin)
+                            if p.kind == "enum" && !root.faced: Text {
                                 y: parent.height - (grid.compact ? 24px : 32px);
                                 width: parent.width;
                                 height: 22px;
                                 text: p.options.length + " options";
-                                color: root.signature ? Theme.plate-silk-muted : Theme.text-muted;
+                                color: Theme.text-muted;
                                 font-size: Theme.font-small;
                                 horizontal-alignment: center;
                             }

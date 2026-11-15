@@ -29,6 +29,7 @@ use super::dsp_pool;
 use super::latency::EffectsLatency;
 use crate::midi::RawMidi;
 use crate::plugins::chain::{ChainCommand, ChainIo, ChainSpec, EffectChain};
+use crate::plugins::response::{self, Probe};
 use crate::plugins::Lv2Host;
 
 /// Number of recent commands kept for replay
@@ -154,6 +155,8 @@ pub struct ChainControl {
     pub midi_tx: Sender<RawMidi>,
     /// Plugin load errors reported by the background builder
     pub error_rx: Receiver<String>,
+    /// Responses to measure on the builder thread (see plugins::response)
+    pub probe_tx: Sender<Probe>,
 }
 
 /// Double-buffered chain switcher with crossfading (owned by the audio thread)
@@ -193,6 +196,7 @@ impl ChainSwitcher {
         let (midi_tx, midi_rx) = bounded(MIDI_CAPACITY);
         let (error_tx, error_rx) = unbounded();
         let (rebuild_tx, rebuild_rx) = bounded(1);
+        let (probe_tx, probe_rx) = unbounded();
 
         std::thread::Builder::new()
             .name("chain-builder".to_string())
@@ -203,6 +207,7 @@ impl ChainSwitcher {
                         specs: spec_rx,
                         garbage: garbage_rx,
                         rebuilds: rebuild_rx,
+                        probes: probe_rx,
                     },
                     ready_tx,
                     error_tx,
@@ -242,6 +247,7 @@ impl ChainSwitcher {
                 command_tx,
                 midi_tx,
                 error_rx,
+                probe_tx,
             },
         ))
     }
@@ -439,6 +445,9 @@ struct Inbox {
     garbage: Receiver<EffectChain>,
     /// The latest chain again, from the audio thread after a panic
     rebuilds: Receiver<()>,
+    /// Responses to measure, from the UI: here, as plugins are made and
+    /// freed on this thread only
+    probes: Receiver<Probe>,
 }
 
 fn builder_thread(
@@ -509,6 +518,29 @@ fn builder_thread(
                 rebuilds.push_back(now);
                 warn!(generation = spec.generation, "Effect chain failed: rebuilding it");
                 build(spec).map(|chain| (spec.generation, chain))
+            }
+            recv(inbox.probes) -> probe => {
+                let Ok(mut probe) = probe else { break };
+                // Only the latest matters
+                while let Ok(newer) = inbox.probes.try_recv() {
+                    probe = newer;
+                }
+                let Probe { uri, values, freqs, done } = probe;
+                let measured = catch_unwind(AssertUnwindSafe(|| {
+                    response::measure(&host, &uri, &values, &freqs, sample_rate)
+                }));
+                match measured {
+                    Ok(Ok(gains)) => done(Some(gains)),
+                    Ok(Err(e)) => {
+                        debug!(error = %e, "Response not measured");
+                        done(None);
+                    }
+                    Err(_) => {
+                        warn!(uri, "A plugin panicked while its response was measured");
+                        done(None);
+                    }
+                }
+                None
             }
             recv(inbox.garbage) -> chain => {
                 let Ok(chain) = chain else { break };

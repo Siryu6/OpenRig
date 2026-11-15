@@ -22,8 +22,11 @@ What OpenRig does, in more technical detail than the
   [STORE.md](STORE.md).
 - **Plugin views**: above an LV2 block's controls, the editor draws an EQ's
   response, a compressor's level curve or a delay's echoes (each with its
-  fading tail, over the beats of the tempo), with points to drag, over the sound measured in and out of that block (spectrum, levels,
-  waves). They are inferred from the plugin's LV2 class and the names and
+  fading tail, over the beats of the tempo), with points to drag, over the sound measured in and out of that block (spectrum, levels).
+  A drive shows its tone: its small-signal frequency response, measured
+  on an instance of its own at the current settings (a quiet click after a
+  short silence, on the chain builder thread) and drawn again when a
+  control moves. They are inferred from the plugin's LV2 class and the names and
   units of its ports, never configured per plugin; a plugin read without
   confidence keeps its knobs alone.
 - **OpenRig FX faceplates**: plugins whose URI starts with
@@ -49,15 +52,19 @@ What OpenRig does, in more technical detail than the
   without a valid colour is drawn as a basic one. A basic plugin has the
   OpenRig look: an amber left edge and an "OR FX" mark on its rack block with
   a glyph of its category, the OpenRig mark in the editor header (and
-  "OpenRig FX" before the family, latency, parameters and CPU), its view
-  always shown, and modes of three choices or fewer as keys when the
-  control has room for them.
+  "OpenRig FX" before the family, latency, parameters and CPU; on a screen
+  under 1000 px wide, only the family, latency and CPU), its view always
+  shown, and modes of three choices or fewer always as a switch: keys in a
+  row, stacked when the control is too narrow for them (on a signature
+  plate, a column of silk labels each with an LED). Choices come in the
+  order of their values on every plugin.
   A signature plugin's controls and view sit on its plate in the editor:
   a picture drawn once per plate and size by `Plate::render` (its colour lit
   from above, grain, brushed streaks, scratches and rubbed edges from the
   wear, seeded by the URI so a plate never changes) and kept in memory, four
   screws, knobs in its knob style (a steel cap on a very dark plate), values
-  in amber readout windows, its silk name, tagline and green "on" LED. The
+  in amber readout windows, a view window that stays dark with amber
+  lines in both themes (the gear colours of `Theme.plot-gear`), its silk name, tagline and green "on" LED. The
   web remote draws plates flat, in their colour only.
   In the rack, a signature block is a mini pedal on its plate: two small
   knobs, the green LED, its silk name and a footswitch (tap, hold and drag

@@ -11,6 +11,20 @@
 // danger. A light theme, for daylight, swaps the panels and the text.
 // Target: 800x480 touchscreen, GPU or software renderer (no blur).
 
+// Colours of the views drawn over a block's parameters (plot.slint): the
+// theme's (Theme.plot), or the gear's in a signature plate's window
+// (Theme.plot-gear, dark in both themes)
+export struct PlotColors {
+    surface: color,      // behind the view and its tags
+    grid: color,         // frame and grid lines
+    grid-strong: color,  // the 0 dB line, bars, curves of reference
+    muted: color,        // scale labels, the sound in, handles off
+    text: color,         // captions
+    strong: color,       // values that matter (gain reduction)
+    display: color,      // inset meters
+    accent: color,       // curves and the sound out on the gear
+}
+
 export global Theme {
     // Light theme (Settings → Display): light panels and text, for daylight.
     // The gear keeps its dark look in both: rack blocks, knobs, faders,
@@ -52,6 +66,11 @@ export global Theme {
     out property <color> text-primary: light ? #1b1c1f : #ededee;
     out property <color> text-secondary: light ? #55565c : #9c9da3;
     out property <color> text-muted: light ? #86878c : #5f6066;
+    // A view over a block's parameters, in the theme
+    out property <PlotColors> plot: {
+        surface: surface, grid: border, grid-strong: border-strong, muted: text-muted,
+        text: text-secondary, strong: text-primary, display: display, accent: accent,
+    };
 
     // --- Accent (the only "brand" colour) ---
     out property <color> accent: light ? #c47712 : #f0a43c;
@@ -75,6 +94,11 @@ export global Theme {
     out property <color> plate-edge: #000000a6;        // dark outline
     out property <color> plate-bevel: #ffffff2e;       // lit top edge
     out property <color> plate-window: #08090a;        // recessed windows (views, readouts)
+    // A view in a plate's window: the dark theme's colours, amber curves
+    out property <PlotColors> plot-gear: {
+        surface: #08090a, grid: #1e1f22, grid-strong: #36383d, muted: #6f7076,
+        text: #9c9da3, strong: #ededee, display: #050506, accent: #f0a43c,
+    };
     out property <color> screw: #9a9c9f;
     out property <color> screw-slot: #3a3b3e;
     out property <color> knob-black: #141517;

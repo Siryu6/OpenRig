@@ -90,7 +90,10 @@ const TTL: &str = r#"
     <http://lv2plug.in/ns/ext/patch#writable> <urn:pedalboard:test:gain#ir> ;
     lv2:port [
         a lv2:InputPort, lv2:ControlPort ; lv2:index 0 ; lv2:symbol "gain" ; lv2:name "Gain" ;
-        lv2:default 1.0 ; lv2:minimum 0.0 ; lv2:maximum 2.0 ; units:unit units:coef
+        lv2:default 1.0 ; lv2:minimum 0.0 ; lv2:maximum 2.0 ; units:unit units:coef ;
+        lv2:scalePoint [ rdfs:label "Loud" ; <http://www.w3.org/1999/02/22-rdf-syntax-ns#value> 2.0 ] ,
+            [ rdfs:label "Mute" ; <http://www.w3.org/1999/02/22-rdf-syntax-ns#value> 0.0 ] ,
+            [ rdfs:label "Unity" ; <http://www.w3.org/1999/02/22-rdf-syntax-ns#value> 1.0 ]
     ] , [
         a lv2:InputPort, lv2:AudioPort ; lv2:index 1 ; lv2:symbol "in" ; lv2:name "In"
     ] , [
@@ -115,6 +118,10 @@ fn hosts_a_real_lv2_plugin() {
         .clone();
     assert_eq!(info.name, "Test Gain");
     assert_eq!(info.default_parameters(), vec![1.0]);
+    // Scale points come by value, whatever the order of the file
+    let gain = info.control_inputs().next().unwrap();
+    let labels: Vec<&str> = gain.scale_points.iter().map(|(l, _)| l.as_str()).collect();
+    assert_eq!(labels, ["Mute", "Unity", "Loud"]);
 
     // Its file parameter, and the preset of its bundle with a file
     let ir = "urn:pedalboard:test:gain#ir";

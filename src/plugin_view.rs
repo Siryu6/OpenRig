@@ -86,6 +86,18 @@ impl Controls {
         Some(self.values.get(i).copied().unwrap_or(port.default))
     }
 
+    /// Value of every control, by its row (as `PluginInstance::set_parameter`
+    /// takes it)
+    pub fn values(&self) -> Vec<(usize, f32)> {
+        let mut values: Vec<(usize, f32)> = self
+            .ports
+            .values()
+            .map(|(i, port)| (*i, self.values.get(i).copied().unwrap_or(port.default)))
+            .collect();
+        values.sort_by_key(|(i, _)| *i);
+        values
+    }
+
     /// The control exists (a handle on it can be dragged)
     pub fn has(&self, symbol: Option<&str>) -> bool {
         symbol.is_some_and(|s| self.ports.contains_key(s))
