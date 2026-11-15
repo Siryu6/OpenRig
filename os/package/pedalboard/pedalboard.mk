@@ -37,16 +37,18 @@ PEDALBOARD_CARGO_ENV = \
 	TARGET_CMAKE_TOOLCHAIN_FILE="$(HOST_DIR)/share/buildroot/toolchainfile.cmake"
 
 # The cargo infrastructure vendors the crates when it downloads a source
-# archive; a local source is not downloaded, so vendor it before the build
-# (cargo is ready by then, unlike at the rsync step). Needs network
-# access the first time (crates are cached in the Buildroot download dir).
+# archive; a local source is not downloaded, so vendor it before each
+# build (cargo is ready by then, unlike at the rsync step). Before the
+# build rather than the configure step, so `pedalboard-rebuild` picks up a
+# changed Cargo.lock. Needs network access for new crates (they are cached
+# in the Buildroot download dir).
 define PEDALBOARD_VENDOR_CRATES
 	cd $(@D) && mkdir -p .cargo $(BR_CARGO_HOME) && \
 		$(HOST_MAKE_ENV) CARGO_HOME=$(BR_CARGO_HOME) \
 		flock $(BR_CARGO_HOME)/.br-lock \
 		cargo vendor --locked VENDOR > .cargo/config.toml
 endef
-PEDALBOARD_PRE_CONFIGURE_HOOKS += PEDALBOARD_VENDOR_CRATES
+PEDALBOARD_PRE_BUILD_HOOKS += PEDALBOARD_VENDOR_CRATES
 
 # Install the binary built above rather than rebuilding it with cargo install
 define PEDALBOARD_INSTALL_TARGET_CMDS
