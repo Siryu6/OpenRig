@@ -50,7 +50,7 @@ use pedalboard::audio::{jack_client, AudioEngine, ChainNode, SplitType};
 use pedalboard::midi::MidiTarget;
 use pedalboard::monitor::{self, Level, SystemMonitor};
 use pedalboard::plugins::guard::{GuardBoard, Trip};
-use pedalboard::plugins::scanner;
+use pedalboard::plugins::{faceplate, scanner};
 use pedalboard::state::param_layout::Layout;
 use pedalboard::state::{AppState, EffectChainState, ModelPack};
 use pedalboard::ui::slint_bridge as views;
@@ -295,8 +295,12 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
     let nodes: Vec<PositionedNode> = nodes
         .into_iter()
         .map(|n| {
-            // Only a picture of the gear's face stands for the block
-            let face = if n.is_split {
+            // An OpenRig FX block is drawn in its own look; else only a
+            // picture of the gear's face stands for the block
+            let look = (!n.is_split)
+                .then(|| state.plugin_faceplate(&n.uri))
+                .flatten();
+            let face = if n.is_split || look.is_some() {
                 None
             } else {
                 store_picture(&n.uri).filter(|(_, face)| *face)
@@ -330,6 +334,18 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
                         .is_some_and(|p| p.tone3000),
                 has_picture: face.is_some(),
                 picture: face.map(|(p, _)| p).unwrap_or_default(),
+                look: faceplate::look(look.as_ref()).into(),
+                face_name: look
+                    .as_ref()
+                    .map(|f| f.short_name.as_str())
+                    .unwrap_or_default()
+                    .into(),
+                glyph: look
+                    .as_ref()
+                    .and_then(|_| state.plugin_category(&n.uri))
+                    .map(|c| faceplate::glyph(&c))
+                    .unwrap_or_default()
+                    .into(),
             }
         })
         .collect();
@@ -546,6 +562,7 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
     app.set_selected_color(color.into());
     app.set_selected_plugin_name(view.name.into());
     app.set_selected_plugin_category(view.category.into());
+    app.set_selected_plugin_look(faceplate::look(view.faceplate.as_ref()).into());
     app.set_selected_plugin_bypassed(view.bypassed);
     app.set_selected_bypass_midi(midi_label(chain, view.instance_id, MidiTarget::Bypass));
     app.set_selected_parameters(model(parameters));

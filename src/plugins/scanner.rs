@@ -71,6 +71,10 @@ pub struct PortInfo {
     /// running bypassed and plays its own tail
     #[serde(default)]
     pub enabled: bool,
+    /// Place on an OpenRig FX faceplate (`openrig:order`, from 1): read
+    /// only for trusted plugins (see [`super::faceplate`])
+    #[serde(default)]
+    pub order: Option<u32>,
 }
 
 impl PortInfo {
@@ -121,6 +125,9 @@ pub struct PluginInfo {
     /// Presets shipped in the plugin's bundle (`pset:Preset`), by label
     #[serde(default)]
     pub presets: Vec<FactoryPreset>,
+    /// The OpenRig FX look (basic or signature); `None`: the generic look
+    #[serde(default)]
+    pub faceplate: Option<super::faceplate::Faceplate>,
 }
 
 /// A preset an LV2 bundle ships (`pset:Preset`), shown as a factory setting
@@ -810,6 +817,7 @@ fn demo_plugin(
         ports,
         file_params: Vec::new(),
         presets: Vec::new(),
+        faceplate: None,
     }
 }
 

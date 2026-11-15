@@ -1,6 +1,7 @@
 import { Features } from "../features.slint";
 import { Theme } from "../theme.slint";
 import { T3kMark } from "tone3000_brand.slint";
+import { LogoMark } from "logo.slint";
 
 // Rack block drawn after the gear it stands for, so the chain reads at a
 // glance: an amp head is a flat box with its control panel, a combo adds a
@@ -11,6 +12,9 @@ import { T3kMark } from "tone3000_brand.slint";
 // Faces are dark (black tolex, grilles, graphite enclosures): the block's
 // colour (its family's, or the user's) is only its frame and trim, plus a
 // faint glow while it plays. A bypassed block loses its colour and its LED.
+// An OpenRig FX block carries its origin: a basic one is the plain card
+// with an amber left edge, the OR FX mark, its name and a drawing of what
+// it does.
 export component BlockShape {
     in property <string> kind;          // "amp" | "combo" | "cab" | "pedal" | "space" | "send" | "return" | ""
     in property <string> name;
@@ -21,6 +25,9 @@ export component BlockShape {
     in property <bool> t3k: false;      // loads a TONE3000 tone: carries its mark
     in property <image> picture;        // the plugin's own face, from the store
     in property <bool> has-picture: false;
+    in property <string> look;          // OpenRig FX look: "" generic, "basic", "signature"
+    in property <string> face-name;     // its name on the block
+    in property <string> glyph;         // basic: what it does, path in a 50 x 14 box
 
     // Picture: fitted in 84 x 60, wide strips cropped to 36 high
     private property <float> aspect: root.picture.width / max(1, root.picture.height);
@@ -35,6 +42,7 @@ export component BlockShape {
         : root.jack ? 40px : 52px;
 
     private property <bool> gear: root.kind != "";
+    private property <bool> basic: root.look != "";
     // Frame and trim colour
     private property <color> trim: root.bypassed ? #34363b : root.tint;
     private property <color> face: root.pressed ? #2a2b2f : #1b1c1f;
@@ -174,7 +182,7 @@ export component BlockShape {
             y: root.has-panel ? root.panel-h : root.kind == "pedal" ? 15px : 3px;
             width: parent.width - 6px - (root.jack ? root.socket + 5px : 0px);
             height: parent.height - self.y - (root.kind == "pedal" ? 17px : 2px);
-            visible: !root.has-picture;
+            visible: !root.has-picture && !root.basic;
             text: root.name;
             color: root.bypassed ? Theme.text-muted : #ffffff;
             font-size: root.kind == "pedal" || root.kind == "cab" || root.jack ? 10px : Theme.font-caption;
@@ -200,6 +208,59 @@ export component BlockShape {
             border-radius: root.radius;
             border-width: 2px;
             border-color: root.trim;
+        }
+
+        // OpenRig FX, basic: amber edge, mark, name, what it does
+        if root.basic: Rectangle {
+            Rectangle {
+                x: 2px;
+                y: 2px;
+                width: 3px;
+                height: parent.height - 4px;
+                background: root.bypassed ? Theme.led-off : Theme.accent;
+            }
+            HorizontalLayout {
+                x: 9px;
+                y: 4px;
+                height: 10px;
+                spacing: 3px;
+                LogoMark {
+                    size: 9px;
+                    color: root.bypassed ? Theme.text-muted : Theme.accent;
+                }
+                Text {
+                    text: "OR FX";
+                    color: root.bypassed ? Theme.text-muted : Theme.accent;
+                    font-size: Theme.font-micro;
+                    font-weight: Theme.weight-bold;
+                    letter-spacing: 0.8px;
+                    vertical-alignment: center;
+                }
+            }
+            Text {
+                x: 9px;
+                y: 15px;
+                width: parent.width - 14px;
+                height: 18px;
+                text: root.face-name;
+                color: root.bypassed ? Theme.text-muted : #ffffff;
+                font-size: Theme.font-small;
+                font-weight: Theme.weight-bold;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Path {
+                x: 10px;
+                y: 35px;
+                width: parent.width - 20px;
+                height: 11px;
+                viewbox-width: 50;
+                viewbox-height: 14;
+                stroke: root.bypassed ? Theme.text-muted : Theme.accent;
+                stroke-width: 1.5px;
+                fill: transparent;
+                commands: root.glyph;
+            }
         }
     }
 

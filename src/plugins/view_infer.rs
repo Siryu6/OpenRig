@@ -543,6 +543,7 @@ mod tests {
             ports,
             file_params: Vec::new(),
             presets: Vec::new(),
+            faceplate: None,
         }
     }
 
@@ -936,6 +937,7 @@ mod tests {
                 ports,
                 file_params: Vec::new(),
                 presets: Vec::new(),
+                faceplate: None,
             }
         }
     }

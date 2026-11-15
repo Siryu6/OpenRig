@@ -7,6 +7,7 @@ use chrono::{Local, TimeZone};
 use crate::audio::split_chain::walk;
 use crate::audio::ChainNode;
 use crate::monitor::Levels;
+use crate::plugins::faceplate::Faceplate;
 use crate::plugins::scanner::{self, PluginCategory, PortInfo};
 use crate::state::AppState;
 
@@ -23,6 +24,8 @@ pub struct PluginView {
     pub hint: String,
     /// Colour of its family (RGB), as drawn in the rack
     pub color: u32,
+    /// OpenRig FX look, if it is one of them
+    pub faceplate: Option<Faceplate>,
 }
 
 /// How a parameter is edited
@@ -62,6 +65,9 @@ pub struct ParameterView {
     pub off_value: Option<f32>,
     /// Shown in the rack's knob strip
     pub in_strip: bool,
+    /// Place on an OpenRig FX faceplate (`openrig:order`); `None`: only in
+    /// the full control list
+    pub face_order: Option<u32>,
 }
 
 impl ParameterView {
@@ -93,6 +99,7 @@ impl ParameterView {
             option_values: port.scale_points.iter().map(|(_, v)| *v).collect(),
             off_value: port.off_value,
             in_strip: true,
+            face_order: port.order,
         }
     }
 }
@@ -116,6 +123,8 @@ pub struct SelectedNodeView {
     pub file_types: String,
     /// Colour of the block when the user has not chosen one (RGB)
     pub auto_color: u32,
+    /// OpenRig FX look, if the plugin is one of them
+    pub faceplate: Option<Faceplate>,
 }
 
 #[derive(Clone, Debug)]
@@ -170,6 +179,7 @@ pub fn plugin_views(state: &AppState) -> Vec<PluginView> {
             kind: scanner::shape(&info.uri).to_string(),
             hint: scanner::hint(&info.uri).to_string(),
             color: default_block_color(scanner::shape(&info.uri), Some(&info.category)),
+            faceplate: info.faceplate.clone(),
         })
         .collect();
     // Built-in blocks first: they are what the pedalboard is made for; the
@@ -249,9 +259,10 @@ pub fn selected_node_view(state: &AppState, instance_id: usize) -> Option<Select
                         .collect()
                 })
                 .unwrap_or_default();
-            // As arranged in the editor
+            // As arranged in the editor, else in the plugin's face order,
+            // else in its port order
             let layout = state.param_layout(uri);
-            parameters.sort_by_key(|p| layout.rank(&p.symbol));
+            parameters.sort_by_key(|p| (layout.rank(&p.symbol), p.face_order.unwrap_or(u32::MAX)));
             for p in &mut parameters {
                 p.in_strip = layout.in_strip(&p.symbol);
             }
@@ -275,6 +286,7 @@ pub fn selected_node_view(state: &AppState, instance_id: usize) -> Option<Select
                     .collect::<Vec<_>>()
                     .join(", "),
                 auto_color: default_block_color(scanner::shape(uri), info.map(|i| &i.category)),
+                faceplate: info.and_then(|i| i.faceplate.clone()),
             })
         }
         ChainNode::Split {
@@ -293,6 +305,7 @@ pub fn selected_node_view(state: &AppState, instance_id: usize) -> Option<Select
             file_label: String::new(),
             file_types: String::new(),
             auto_color: default_block_color("", None),
+            faceplate: None,
         }),
     }
 }

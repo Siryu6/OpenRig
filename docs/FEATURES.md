@@ -26,6 +26,21 @@ What OpenRig does, in more technical detail than the
   waves). They are inferred from the plugin's LV2 class and the names and
   units of its ports, never configured per plugin; a plugin read without
   confidence keeps its knobs alone.
+- **OpenRig FX faceplates**: plugins whose URI starts with
+  `https://openrig.eu/plugins/` (the [OpenRig FX](https://github.com/Siryu6/openrig-fx)
+  suite) may describe their face in Turtle, in the `https://openrig.eu/ns/view#`
+  namespace: `openrig:family` (`Basic` or `Signature`), `faceColor`
+  (`"#RRGGBB"`), `knobStyle` (`Plain`, `Skirted`, `Chickenhead`, `Domed`),
+  `finish` (`Painted`, `Brushed`), `wear` (0 to 1), `plateName` (12
+  characters at most), `tagline` (48 at most) and, per control, `order`
+  (the face order: controls the user has not arranged follow it, then the
+  port order). Any other plugin, or one with no family, keeps the generic
+  look; these terms are ignored outside that prefix, and a signature plugin
+  without a valid colour is drawn as a basic one. A basic plugin has the
+  OpenRig look: an amber left edge and an "OR FX" mark on its rack block with
+  a glyph of its category, the OpenRig mark in the editor header, its view
+  always shown, and modes of three choices or fewer as keys when the
+  control has room for them.
 - **Amp, Amp + Cab and Pedal blocks** (feature `nam`, default): built-in neural blocks
   running Neural Amp Modeler `.nam` captures (and RTNeural `.json` /
   `.aidax` models) through [NeuralAudio](https://github.com/mikeoliphant/NeuralAudio).
@@ -112,7 +127,7 @@ What OpenRig does, in more technical detail than the
   a stereo one.
 - **Touch rack**: blocks are drawn after their gear (flat amp head, combo,
   cabinet with speakers, pedal with footswitch, reverb pill; LV2 plugins keep
-  a plain card), coloured by family (amp red, cab orange, drive yellow,
+  a plain card, OpenRig FX plugins their faceplate), coloured by family (amp red, cab orange, drive yellow,
   reverb teal, delay green, modulation blue…) or with a colour picked in the
   block editor. The UI is styled like dark, minimal hardware: near-square
   corners, amber accent, key-like buttons with status LEDs, recessed displays,

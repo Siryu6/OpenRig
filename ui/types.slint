@@ -42,6 +42,9 @@ export struct PositionedNode {
     t3k: bool,           // loads a TONE3000 download: shows the T3K mark
     picture: image,      // its store picture, drawn instead of the gear
     has-picture: bool,
+    look: string,        // OpenRig FX look: "" (generic), "basic" or "signature"
+    face-name: string,   // the name an OpenRig FX block carries ("Echo", "GREEN")
+    glyph: string,       // basic block: a drawing of what it does (path, 50 x 14)
 }
 
 // Where a dragged block can be dropped (layout units)
