@@ -338,6 +338,9 @@ export component PluginRack {
                             t3k: node.t3k;
                             picture: node.picture;
                             has-picture: node.has-picture;
+                            look: node.look;
+                            face-name: node.face-name;
+                            glyph: node.glyph;
                             selected: node-el.selected;
                             pressed: node-ta.pressed && idx != root.drag-index;
                         }
@@ -1154,6 +1157,9 @@ export component PluginRack {
         t3k: root.dragged.t3k;
         picture: root.dragged.picture;
         has-picture: root.dragged.has-picture;
+        look: root.dragged.look;
+        face-name: root.dragged.face-name;
+        glyph: root.dragged.glyph;
         selected: true;
     }
     if root.drag-index >= 0 && root.dragged.is-split: Rectangle {

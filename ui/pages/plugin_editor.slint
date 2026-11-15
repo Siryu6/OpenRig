@@ -4,7 +4,8 @@ import { EqGraph } from "../components/eq_graph.slint";
 import { PlotEvents } from "../components/plot.slint";
 import { DynamicsGraph } from "../components/dynamics_graph.slint";
 import { ScopeGraph } from "../components/scope_graph.slint";
-import { Button, Badge, Card, EmptyState, FocusHighlight, Icon, Knob, Stepper, Toggle } from "../components/controls.slint";
+import { Button, Badge, Card, EmptyState, FocusHighlight, Icon, Knob, Segmented, Stepper, Toggle } from "../components/controls.slint";
+import { LogoMark } from "../components/logo.slint";
 import { Features } from "../features.slint";
 import { T3kMark, T3kPicture } from "../components/tone3000_brand.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
@@ -407,6 +408,10 @@ export component PluginEditor {
     in property <int> instance-id: -1;
     in property <string> plugin-name: "";
     in property <string> category: "";
+    // OpenRig FX look: "" for any plugin, "basic" or "signature" for the
+    // OpenRig FX ones (their mark in the header, the view always shown,
+    // modes as keys)
+    in property <string> look: "";
     in property <bool> bypassed: false;
     in property <[ParameterInfo]> parameters: [];
     in property <EqView> eq;                        // its curve, when its ports describe one
@@ -493,6 +498,7 @@ export component PluginEditor {
     private property <length> card-pad: root.short ? 4px : Theme.space-sm;
     private property <int> cards: (root.uses-file ? 1 : 0) + (root.factory-presets.length > 0 ? 1 : 0) + root.file-slots.length;
     private property <bool> has-graph: root.scope.shown || root.dyn.shown || root.eq.shown;
+    private property <bool> faced: root.look != "";
     // Height left for the graph (and its bar) and the parameters
     private property <length> room: root.height - 2 * root.pad - root.header-height - root.vgap
         - root.cards * (root.card-height + root.vgap);
@@ -501,7 +507,7 @@ export component PluginEditor {
         root.room - root.graph-bar - 2 * root.vgap - 112px);
     // 0: shown when there is room, 1: shown, 2: hidden (bar on short screens)
     private property <int> graph-choice: 0;
-    private property <bool> graph-open: !root.short || root.graph-choice == 1
+    private property <bool> graph-open: !root.short || root.faced || root.graph-choice == 1
         || (root.graph-choice == 0 && root.graph-fit >= 96px);
     private property <length> graph-height: root.short ? max(96px, root.graph-fit) : min(240px, root.height * 0.36);
     private property <int> picker-pos: -1;  // position in `parameters` of the open enum picker
@@ -527,13 +533,31 @@ export component PluginEditor {
         // ---------------- Header ----------------
         Card {
             height: root.header-height;
+            // The OpenRig FX mark of a panel: an amber left edge
+            if root.faced: Rectangle {
+                x: 0;
+                width: 3px;
+                background: root.bypassed ? Theme.led-off : Theme.accent;
+            }
             HorizontalLayout {
                 padding: Theme.space-md;
                 padding-left: Theme.space-lg;
                 spacing: Theme.space-md;
 
-                // The block's colour, dark when bypassed
-                Rectangle {
+                // The block's colour, dark when bypassed; the OpenRig mark
+                // for an OpenRig FX plugin
+                if root.faced: Rectangle {
+                    width: 44px;
+                    border-radius: Theme.radius-md;
+                    background: Theme.display;
+                    border-width: 1px;
+                    border-color: root.bypassed ? Theme.border-strong : Theme.accent;
+                    LogoMark {
+                        size: 26px;
+                        color: root.bypassed ? Theme.text-muted : Theme.accent;
+                    }
+                }
+                if !root.faced: Rectangle {
                     width: 44px;
                     border-radius: Theme.radius-md;
                     background: root.bypassed ? Theme.surface-raised
@@ -558,7 +582,15 @@ export component PluginEditor {
                         font-weight: Theme.weight-semibold;
                         overflow: elide;
                     }
-                    Text {
+                    if root.faced: Text {
+                        text: (root.category != "" ? root.category.to-uppercase() + "  ·  " : "") + "OPENRIG FX " + root.look.to-uppercase();
+                        color: root.bypassed ? Theme.text-muted : Theme.accent;
+                        font-size: Theme.font-caption;
+                        font-weight: Theme.weight-bold;
+                        letter-spacing: 0.8px;
+                        overflow: elide;
+                    }
+                    if !root.faced: Text {
                         // Latency before the rest: elided last on a small screen
                         text: (root.category != "" ? root.category + "  ·  " : "")
                             + (root.latency-ms > 0.05 ? round(root.latency-ms * 10) / 10 + " ms latency  ·  " : "")
@@ -978,7 +1010,7 @@ export component PluginEditor {
 
         // ---------------- EQ curve, level curve or scope ----------------
         // Short screens: a bar shows or hides it
-        if root.short && root.has-graph: Rectangle {
+        if root.short && root.has-graph && !root.faced: Rectangle {
             height: root.graph-bar;
             border-radius: Theme.radius-md;
             background: graph-ta.pressed ? Theme.surface-hover : Theme.surface;
@@ -1106,11 +1138,15 @@ export component PluginEditor {
                     }
                 }
 
-                for p[i] in root.parameters: Rectangle {
+                for p[i] in root.parameters: cell := Rectangle {
                     x: mod(i, root.columns) * (grid.cell-width + root.gap);
                     y: floor(i / root.columns) * (grid.cell-height + root.gap);
                     width: grid.cell-width;
                     height: grid.cell-height;
+                    // An OpenRig FX plugin's modes are keys when the cell
+                    // has room for them (three at most)
+                    property <bool> keys: p.kind == "enum" && root.faced && p.options.length <= 3
+                        && self.width - 2 * Theme.space-sm >= p.options.length * 1.5 * Theme.touch-target;
                     border-radius: Theme.radius-lg;
                     background: Theme.surface;
                     // Learning: only the control being learned is highlighted
@@ -1190,8 +1226,24 @@ export component PluginEditor {
                         horizontal-alignment: center;
                     }
 
-                    // Enumeration: current label, tap to open the picker
-                    if p.kind == "enum": Rectangle {
+                    // Enumeration: keys, else the current label, tap to open
+                    // the picker
+                    if cell.keys: Segmented {
+                        x: Theme.space-sm;
+                        y: grid.top + (parent.height - grid.top - grid.bottom - self.height) / 2;
+                        width: parent.width - 2 * Theme.space-sm;
+                        height: Theme.touch-target;
+                        options: p.options;
+                        font-size: Theme.font-caption;
+                        focused: i == root.focused-param;
+                        adjusting: i == root.focused-param && root.adjusting;
+                        current-index: abs(p.option-values[0] - p.value) < 0.0001 ? 0
+                            : abs(p.option-values[1] - p.value) < 0.0001 ? 1 : 2;
+                        activated(k) => {
+                            root.parameter-changed(p.index, p.option-values[k]);
+                        }
+                    }
+                    if p.kind == "enum" && !cell.keys: Rectangle {
                         x: Theme.space-sm;
                         y: grid.top + (parent.height - grid.top - grid.bottom - self.height) / 2;
                         width: parent.width - 2 * Theme.space-sm;
@@ -1227,7 +1279,7 @@ export component PluginEditor {
                             }
                         }
                     }
-                    if p.kind == "enum": Text {
+                    if p.kind == "enum" && !cell.keys: Text {
                         y: parent.height - (grid.compact ? 24px : 32px);
                         width: parent.width;
                         height: 22px;

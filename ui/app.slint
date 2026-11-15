@@ -223,6 +223,7 @@ export component App inherits Window {
     in-out property <int> selected-instance-id: -1;
     in-out property <string> selected-plugin-name: "";
     in-out property <string> selected-plugin-category: "";
+    in-out property <string> selected-plugin-look: "";      // OpenRig FX look ("" generic)
     in-out property <bool> selected-plugin-bypassed: false;
     in-out property <[ParameterInfo]> selected-parameters: [];
     in property <EqView> selected-eq;
@@ -597,6 +598,7 @@ export component App inherits Window {
         // Fallback display values; Rust overwrites them in select-node
         root.selected-plugin-name = root.positioned-nodes[idx].name;
         root.selected-plugin-category = "";
+        root.selected-plugin-look = root.positioned-nodes[idx].look;
         root.selected-plugin-bypassed = root.positioned-nodes[idx].bypassed;
         root.selected-parameters = [];
         root.selected-uses-file = false;
@@ -1281,6 +1283,7 @@ export component App inherits Window {
                 instance-id: root.selected-instance-id;
                 plugin-name: root.selected-plugin-name;
                 category: root.selected-plugin-category;
+                look: root.selected-plugin-look;
                 bypassed: root.selected-plugin-bypassed;
                 parameters: root.selected-parameters;
                 eq: root.selected-eq;

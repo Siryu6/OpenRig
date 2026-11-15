@@ -1362,6 +1362,14 @@ impl AppState {
             .map(|info| info.category.clone())
     }
 
+    /// The OpenRig FX look of plugin `uri`; `None`: the generic look
+    pub fn plugin_faceplate(&self, uri: &str) -> Option<crate::plugins::faceplate::Faceplate> {
+        self.lv2_host
+            .scanner()
+            .find_by_uri(uri)
+            .and_then(|info| info.faceplate.clone())
+    }
+
     // === Chain editing ===
 
     pub fn add_plugin(&self, uri: &str) -> Result<usize> {
@@ -2860,6 +2868,7 @@ mod tests {
             ports,
             file_params: Vec::new(),
             presets: Vec::new(),
+            faceplate: None,
         }
     }
 
