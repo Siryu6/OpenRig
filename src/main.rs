@@ -51,7 +51,7 @@ use pedalboard::audio::{jack_client, AudioEngine, ChainNode, SplitType};
 use pedalboard::midi::MidiTarget;
 use pedalboard::monitor::{self, Level, SystemMonitor};
 use pedalboard::plugins::guard::{GuardBoard, Trip};
-use pedalboard::plugins::{faceplate, scanner};
+use pedalboard::plugins::scanner;
 use pedalboard::state::param_layout::Layout;
 use pedalboard::state::{AppState, EffectChainState, ModelPack};
 use pedalboard::ui::slint_bridge as views;
@@ -337,6 +337,7 @@ pub(crate) fn refresh_chain(app: &App, state: &AppState) {
                 has_picture: face.is_some(),
                 picture: face.map(|(p, _)| p).unwrap_or_default(),
                 faceplate: plates::block_face(
+                    &n.uri,
                     look.as_ref(),
                     state.plugin_category(&n.uri).as_ref(),
                     plate_size,
@@ -443,11 +444,8 @@ pub(crate) fn block_tint(
     instance_id: usize,
     uri: &str,
 ) -> u32 {
-    chain
-        .colors
-        .get(&instance_id)
-        .and_then(|name| views::block_color(name))
-        .unwrap_or_else(|| views::plugin_color(uri, state.lv2_host.scanner().find_by_uri(uri)))
+    let chosen = chain.colors.get(&instance_id).map(String::as_str);
+    views::rack_color(chosen, uri, state.lv2_host.scanner().find_by_uri(uri)).1
 }
 
 /// URI of the plugin `instance_id`, if it is one
@@ -479,8 +477,12 @@ pub(crate) fn set_available_plugins(app: &App, state: &AppState) {
             let picture = store_picture(&p.uri).map(|(p, _)| p);
             let category = state.plugin_category(&p.uri);
             PluginItem {
-                or_fx: faceplate::trusted(&p.uri),
-                faceplate: plates::block_face(p.faceplate.as_ref(), category.as_ref(), plate_size),
+                faceplate: plates::block_face(
+                    &p.uri,
+                    p.faceplate.as_ref(),
+                    category.as_ref(),
+                    plate_size,
+                ),
                 has_picture: picture.is_some(),
                 picture: picture.unwrap_or_default(),
                 uri: p.uri.into(),
@@ -564,8 +566,12 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
     app.set_selected_color(color.into());
     app.set_selected_plugin_name(view.name.into());
     app.set_selected_plugin_category(view.category.into());
-    app.set_selected_plugin_look(faceplate::look(view.faceplate.as_ref()).into());
-    plates::refresh_editor(app, view.faceplate.as_ref());
+    plates::refresh_editor(
+        app,
+        &view.uri,
+        view.faceplate.as_ref(),
+        state.plugin_category(&view.uri).as_ref(),
+    );
     app.set_selected_plugin_bypassed(view.bypassed);
     app.set_selected_bypass_midi(midi_label(chain, view.instance_id, MidiTarget::Bypass));
     app.set_selected_parameters(model(parameters));

@@ -367,7 +367,7 @@ export component CatalogView {
                             Badge {
                                 text: item.license;
                             }
-                            if item.or-fx: Badge {
+                            if item.faceplate.suite: Badge {
                                 text: "OR FX";
                                 tone: "accent";
                             }
@@ -511,7 +511,7 @@ export component CatalogView {
                     Badge {
                         text: item.license;
                     }
-                    if item.or-fx: Badge {
+                    if item.faceplate.suite: Badge {
                         text: "OR FX";
                         tone: "accent";
                     }

@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
 import {
     View, PositionedNode, Connector, ParameterInfo, PluginItem, PresetInfo, SceneInfo, SceneSlotInfo, MenuItem, LooperState, SavedLoopInfo, ResourceStatus,
-    T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile, RoutingOutput, RoutingBlock, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot, SystemSetting, NetMidiDevice
+    BlockFace, T3kTone, T3kModel, ModelChoice, DropSlotView, ColorChoice, WifiNetwork, Levels, LiveTile, RoutingOutput, RoutingBlock, CatalogItem, CatalogFamily, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, EchoTap, FileSlot, SystemSetting, NetMidiDevice
 } from "types.slint";
 // Pages
 import { PluginRack } from "pages/rack.slint";
@@ -223,14 +223,8 @@ export component App inherits Window {
     in-out property <int> selected-instance-id: -1;
     in-out property <string> selected-plugin-name: "";
     in-out property <string> selected-plugin-category: "";
-    in-out property <string> selected-plugin-look: "";      // OpenRig FX look ("" generic)
-    // A signature plugin's plate (see PluginEditor)
-    in property <image> selected-plate;
-    in property <color> selected-plate-color;
-    in property <string> selected-knob-style;
-    in property <bool> selected-steel-knobs;
-    in property <string> selected-face-name;
-    in property <string> selected-tagline;
+    in-out property <BlockFace> selected-face;              // its OpenRig FX look (see PluginEditor)
+    in property <image> selected-plate;                     // a signature plugin's plate, at the face's size
     // The editor's face size, in logical pixels, for the plate's picture
     out property <length> plate-width;
     out property <length> plate-height;
@@ -609,7 +603,7 @@ export component App inherits Window {
         // Fallback display values; Rust overwrites them in select-node
         root.selected-plugin-name = root.positioned-nodes[idx].name;
         root.selected-plugin-category = "";
-        root.selected-plugin-look = root.positioned-nodes[idx].faceplate.look;
+        root.selected-face = root.positioned-nodes[idx].faceplate;
         root.selected-plugin-bypassed = root.positioned-nodes[idx].bypassed;
         root.selected-parameters = [];
         root.selected-uses-file = false;
@@ -1294,13 +1288,8 @@ export component App inherits Window {
                 instance-id: root.selected-instance-id;
                 plugin-name: root.selected-plugin-name;
                 category: root.selected-plugin-category;
-                look: root.selected-plugin-look;
+                face: root.selected-face;
                 plate: root.selected-plate;
-                plate-color: root.selected-plate-color;
-                knob-style: root.selected-knob-style;
-                steel-knobs: root.selected-steel-knobs;
-                face-name: root.selected-face-name;
-                tagline: root.selected-tagline;
                 plate-sized(w, h) => {
                     root.plate-width = w;
                     root.plate-height = h;

@@ -22,8 +22,11 @@ export enum View {
 // How an OpenRig FX plugin's block looks, wherever it is drawn (rack, Add
 // effect page, store)
 export struct BlockFace {
+    suite: bool,         // one of the OpenRig FX suite (by its URI, even before it is installed)
     look: string,        // "" (generic), "basic" or "signature"
     name: string,        // the name the block carries ("Echo", "GREEN")
+    title: string,       // the name on the editor's plate
+    tagline: string,     // signature plate: what it is, under its name
     glyph: string,       // basic block: a drawing of what it does (path, 50 x 14)
     plate: image,        // signature block: its plate (empty when flat)
     plate-color: color,
@@ -109,7 +112,6 @@ export struct PluginItem {
     color: color,       // colour of its family, as in the rack
     picture: image,     // its store picture, once downloaded
     has-picture: bool,
-    or-fx: bool,        // one of the OpenRig FX suite
     faceplate: BlockFace,
 }
 
@@ -348,8 +350,7 @@ export struct CatalogItem {
     picture: image,         // the author's own picture, when it has one
     has-picture: bool,      // else the gear is drawn
     picture-credit: string, // "Michael Willis, GPL-3.0"
-    or-fx: bool,            // one of the OpenRig FX suite
-    faceplate: BlockFace,   // its face, once installed
+    faceplate: BlockFace,   // its face (the look once installed)
 }
 
 // A family chip of the store, with how many entries match the search
