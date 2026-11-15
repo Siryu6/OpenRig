@@ -1,4 +1,4 @@
-import { Theme } from "../theme.slint";
+import { PlotColors, Theme } from "../theme.slint";
 import { BlockFace, ParameterInfo, ModelChoice, FileSlot, ColorChoice, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive } from "../types.slint";
 import { EqGraph } from "../components/eq_graph.slint";
 import { PlotEvents } from "../components/plot.slint";
@@ -506,6 +506,11 @@ export component PluginEditor {
     private property <bool> has-graph: root.scope.shown || root.dyn.shown || root.eq.shown;
     private property <bool> faced: root.face.look != "";
     private property <bool> signature: root.face.look == "signature";
+    // The view: in a signature plate's window, the gear's colours (dark in
+    // both themes, amber curves); else the theme's, curves in the block's
+    // colour
+    private property <PlotColors> plot-colors: root.signature ? Theme.plot-gear : Theme.plot;
+    private property <color> plot-accent: root.signature ? Theme.plot-gear.accent : root.color-value;
     private property <length> plate-pad: root.short ? Theme.space-md : Theme.space-lg;
     // Height left for the graph (and its bar) and the parameters
     private property <length> room: root.height - 2 * root.pad - root.header-height - root.vgap
@@ -1104,7 +1109,8 @@ export component PluginEditor {
                     scope: root.scope;
                     live: root.scope-live;
                     spectrum: root.spectrum;
-                    accent: root.color-value;
+                    colors: root.plot-colors;
+                    accent: root.plot-accent;
                     bypassed: root.bypassed;
                 }
 
@@ -1113,7 +1119,8 @@ export component PluginEditor {
                     vertical-stretch: 0;
                     dyn: root.dyn;
                     live: root.dyn-live;
-                    accent: root.color-value;
+                    colors: root.plot-colors;
+                    accent: root.plot-accent;
                     bypassed: root.bypassed;
                 }
 
@@ -1123,7 +1130,8 @@ export component PluginEditor {
                     eq: root.eq;
                     points: root.eq-points;
                     spectrum: root.spectrum;
-                    accent: root.color-value;
+                    colors: root.plot-colors;
+                    accent: root.plot-accent;
                     bypassed: root.bypassed;
                     sized(w, h) => {
                         PlotEvents.resized(w, h);

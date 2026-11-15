@@ -1,4 +1,4 @@
-import { Theme } from "../theme.slint";
+import { PlotColors, Theme } from "../theme.slint";
 import { PlotHandle } from "../types.slint";
 
 // Pieces of the views drawn above a block's parameters (EQ, level curve,
@@ -25,10 +25,11 @@ export global FreqAxis {
 // across it are drawn for its proportions.
 export component Plot inherits Rectangle {
     in property <[float]> rows: [0.2, 0.4, 0.6, 0.8];
+    in property <PlotColors> colors: Theme.plot;
     callback sized(length, length);
     clip: true;
     border-width: 1px;
-    border-color: Theme.border;
+    border-color: root.colors.grid;
     init => {
         root.laid-out();
     }
@@ -46,7 +47,7 @@ export component Plot inherits Rectangle {
         y: f * root.height;
         width: root.width;
         height: 1px;
-        background: Theme.border;
+        background: root.colors.grid;
     }
     @children
 }
@@ -63,10 +64,11 @@ export component InOut inherits Rectangle {
     in property <string> input;
     in property <string> output;
     in property <color> accent;
+    in property <PlotColors> colors: Theme.plot;
     in property <float> input-alpha: 0.45;
     PlotPath {
         commands: root.input;
-        fill: Theme.text-muted.with-alpha(root.input-alpha);
+        fill: root.colors.muted.with-alpha(root.input-alpha);
     }
     PlotPath {
         commands: root.output;
@@ -77,18 +79,19 @@ export component InOut inherits Rectangle {
 // Lines at the frequency axis' steps, and its decades named inside
 export component FreqGrid inherits Rectangle {
     in property <bool> labels: false;
+    in property <PlotColors> colors: Theme.plot;
     for x in FreqAxis.lines: Rectangle {
         x: x * root.width;
         width: 1px;
         height: root.height;
-        background: Theme.border;
+        background: root.colors.grid;
     }
     if root.labels: Rectangle {
         for d in FreqAxis.decades: Text {
             x: d.x * root.width + 4px;
             y: 4px;
             text: d.text;
-            color: Theme.text-muted;
+            color: root.colors.muted;
             font-size: Theme.font-caption;
         }
     }
@@ -98,12 +101,13 @@ export component FreqGrid inherits Rectangle {
 export component DbLabels inherits Rectangle {
     in property <length> top;
     in property <length> side;
+    in property <PlotColors> colors: Theme.plot;
     for t in [{ f: 0.0, text: "0" }, { f: 0.4, text: "-24" }, { f: 0.8, text: "-48" }]: Text {
         x: 4px;
         y: root.top + t.f * root.side - (t.f == 0 ? 0px : 7px);
         width: 32px;
         text: t.text;
-        color: Theme.text-muted;
+        color: root.colors.muted;
         font-size: Theme.font-caption;
         horizontal-alignment: right;
     }
@@ -112,14 +116,15 @@ export component DbLabels inherits Rectangle {
 // Text on an opaque backdrop, over what a plot draws
 export component Tag inherits Rectangle {
     in property <string> text;
-    in property <color> text-color: Theme.text-muted;
+    in property <PlotColors> colors: Theme.plot;
+    in property <color> text-color: root.colors.muted;
     in property <length> font-size: Theme.font-caption;
     width: label.preferred-width + 12px;
     height: label.preferred-height + 4px;
     border-radius: Theme.radius-sm;
-    background: Theme.surface;
+    background: root.colors.surface;
     border-width: 1px;
-    border-color: Theme.border;
+    border-color: root.colors.grid;
     label := Text {
         x: 6px;
         text: root.text;
@@ -132,6 +137,7 @@ export component Tag inherits Rectangle {
 component Swatch inherits HorizontalLayout {
     in property <color> accent;
     in property <string> text;
+    in property <PlotColors> colors: Theme.plot;
     padding-left: 6px;
     spacing: 6px;
     Rectangle {
@@ -145,7 +151,7 @@ component Swatch inherits HorizontalLayout {
     }
     Text {
         text: root.text;
-        color: Theme.text-muted;
+        color: root.colors.muted;
         font-size: Theme.font-caption;
         vertical-alignment: center;
     }
@@ -158,12 +164,13 @@ export component Caption inherits Rectangle {
     in property <string> input;
     in property <string> output;
     in property <color> accent;
+    in property <PlotColors> colors: Theme.plot;
     width: row.preferred-width + 12px;
     height: row.preferred-height + 4px;
     border-radius: Theme.radius-sm;
-    background: Theme.surface;
+    background: root.colors.surface;
     border-width: 1px;
-    border-color: Theme.border;
+    border-color: root.colors.grid;
     row := HorizontalLayout {
         x: 6px;
         // Not stretched to the backdrop (a layout fills its parent)
@@ -172,17 +179,19 @@ export component Caption inherits Rectangle {
         spacing: 6px;
         Text {
             text: root.text;
-            color: Theme.text-secondary;
+            color: root.colors.text;
             font-size: Theme.font-small;
             vertical-alignment: center;
         }
         if root.input != "": Swatch {
-            accent: Theme.text-muted;
+            accent: root.colors.muted;
             text: root.input;
+            colors: root.colors;
         }
         if root.input != "": Swatch {
             accent: root.accent;
             text: root.output;
+            colors: root.colors;
         }
     }
 }
@@ -197,6 +206,7 @@ export component Handle inherits Rectangle {
     callback released();
     callback double-tapped();
     in property <color> accent;
+    in property <PlotColors> colors: Theme.plot;
     in property <length> plot-x;
     in property <length> plot-y;
     in property <length> plot-width;
@@ -213,12 +223,12 @@ export component Handle inherits Rectangle {
         width: root.size;
         height: root.size;
         border-radius: self.width / 2;
-        background: root.handle.on ? (touch.pressed ? root.accent : root.accent.with-alpha(0.85)) : Theme.surface;
+        background: root.handle.on ? (touch.pressed ? root.accent : root.accent.with-alpha(0.85)) : root.colors.surface;
         border-width: 2px;
-        border-color: root.handle.on ? root.accent : Theme.text-muted;
+        border-color: root.handle.on ? root.accent : root.colors.muted;
         Text {
             text: root.handle.label;
-            color: root.handle.on ? Theme.surface : Theme.text-muted;
+            color: root.handle.on ? root.colors.surface : root.colors.muted;
             font-size: Theme.font-caption;
             font-weight: Theme.weight-bold;
             horizontal-alignment: center;

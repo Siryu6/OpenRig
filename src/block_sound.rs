@@ -101,8 +101,7 @@ pub(crate) fn start(app: &App, state: &Arc<AppState>) -> slint::Timer {
                 watch.dynamics.frame(&app, &state, tap, recent, elapsed);
             }
             if scope.shown {
-                let window = (new > 0).then_some((&input[..], &output[..]));
-                watch.scope.frame(&app, recent, window, elapsed);
+                watch.scope.frame(&app, recent, elapsed);
             }
             if !eq_shown && scope.right != "spectrum" {
                 return;

@@ -15,6 +15,7 @@ pub mod lv2_host;
 pub mod lv2_worker;
 #[cfg(feature = "nam")]
 pub mod nam;
+pub mod response;
 pub mod scanner;
 pub mod scope;
 pub mod view_infer;
