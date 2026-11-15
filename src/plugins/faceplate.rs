@@ -25,6 +25,18 @@ pub fn trusted(uri: &str) -> bool {
     uri.starts_with(TRUSTED_PREFIX)
 }
 
+/// The view a plugin states (`openrig:view`, with `openrig:dynamics` for
+/// a level curve), among those the app draws. A view the app does not draw
+/// leaves the view to inference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum View {
+    Eq,
+    Compressor,
+    Limiter,
+    Gate,
+    EchoTimeline,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Family {
     Basic,
@@ -117,6 +129,9 @@ pub struct Faceplate {
     pub short_name: String,
     /// `openrig:tagline`, at most [`TAGLINE_MAX`] characters
     pub tagline: String,
+    /// `openrig:view`: the view drawn above the controls; `None`: inferred
+    #[serde(default)]
+    pub view: Option<View>,
 }
 
 impl Faceplate {
@@ -151,6 +166,8 @@ pub struct Terms {
     pub wear: Option<f32>,
     pub plate_name: Option<String>,
     pub tagline: Option<String>,
+    pub view: Option<String>,
+    pub dynamics: Option<String>,
 }
 
 impl Terms {
@@ -210,11 +227,20 @@ impl Terms {
             .as_deref()
             .map(|t| clip(t.trim().trim_end_matches('.'), TAGLINE_MAX))
             .unwrap_or_default();
+        let view = match (self.view.as_deref(), self.dynamics.as_deref()) {
+            (Some("EqView"), _) => Some(View::Eq),
+            (Some("DynamicsView"), Some("Compressor")) => Some(View::Compressor),
+            (Some("DynamicsView"), Some("Limiter")) => Some(View::Limiter),
+            (Some("DynamicsView"), Some("Gate" | "Expander")) => Some(View::Gate),
+            (Some("EchoTimelineView"), _) => Some(View::EchoTimeline),
+            _ => None,
+        };
         Some(Faceplate {
             plate,
             name: full,
             short_name,
             tagline,
+            view,
         })
     }
 }
@@ -472,6 +498,32 @@ mod tests {
         assert_eq!(face.name, "Green Drive");
         assert_eq!(face.short_name, "Green");
         assert_eq!(face.tagline, "The mid-hump overdrive, in circuit");
+    }
+
+    #[test]
+    fn the_stated_view_is_kept_when_the_app_draws_it() {
+        let view = |view: &str, dynamics: Option<&str>| {
+            let terms = Terms {
+                view: Some(view.into()),
+                dynamics: dynamics.map(str::to_string),
+                ..green_terms()
+            };
+            terms
+                .faceplate(GREEN, "OR Green Drive")
+                .and_then(|f| f.view)
+        };
+        assert_eq!(view("EqView", None), Some(View::Eq));
+        assert_eq!(view("DynamicsView", Some("Gate")), Some(View::Gate));
+        assert_eq!(view("EchoTimelineView", None), Some(View::EchoTimeline));
+        // Not drawn by the app, or a level curve of no known kind
+        assert_eq!(view("LfoView", None), None);
+        assert_eq!(view("DynamicsView", None), None);
+        assert_eq!(
+            green_terms()
+                .faceplate(GREEN, "OR Green Drive")
+                .and_then(|f| f.view),
+            None
+        );
     }
 
     #[test]

@@ -43,6 +43,8 @@ pub struct Echoes {
     /// Toggle that makes the time follow the tempo instead (its meaning
     /// varies: no echoes are drawn while it is on)
     pub sync: Option<String>,
+    /// Toggle that sends the echoes left and right in turn
+    pub ping_pong: Option<String>,
 }
 
 /// A 0 to 1 amount read from a control: its range, or dB
@@ -92,6 +94,14 @@ impl Echoes {
     /// The time comes from the tempo
     pub fn synced(&self, value: &impl Fn(&str) -> Option<f32>) -> bool {
         self.sync
+            .as_deref()
+            .and_then(value)
+            .is_some_and(|v| v >= 0.5)
+    }
+
+    /// The echoes go left and right in turn, the first on the left
+    pub fn ping_pong(&self, value: &impl Fn(&str) -> Option<f32>) -> bool {
+        self.ping_pong
             .as_deref()
             .and_then(value)
             .is_some_and(|v| v >= 0.5)
@@ -154,6 +164,7 @@ mod tests {
             mix: Some(level("drywet")),
             crossfade: true,
             sync: Some("sync".into()),
+            ping_pong: Some("pp".into()),
         }
     }
 

@@ -32,9 +32,19 @@ What OpenRig does, in more technical detail than the
   namespace: `openrig:family` (`Basic` or `Signature`), `faceColor`
   (`"#RRGGBB"`), `knobStyle` (`Plain`, `Skirted`, `Chickenhead`, `Domed`),
   `finish` (`Painted`, `Brushed`), `wear` (0 to 1), `plateName` (12
-  characters at most), `tagline` (48 at most) and, per control, `order`
-  (the face order: controls the user has not arranged follow it, then the
-  port order). Any other plugin, or one with no family, keeps the generic
+  characters at most), `tagline` (48 at most), `view` (`EqView`,
+  `DynamicsView` with `dynamics` `Compressor`, `Limiter` or `Gate`,
+  `EchoTimelineView`; a view the app does not draw leaves it to inference)
+  and, per control, `order` (the face order: controls the user has not
+  arranged follow it, then the port order), `role` (what the control means
+  to the view: `threshold`, `ratio`, `knee`, `makeup`, `inputGain`, `range`,
+  `gainReduction`, `delayTime`, `feedback`, `mix`, `wetLevel`,
+  `delayTempoDivision`, `pingPong`) and `primary` (its rank in the rack's
+  knob strip, before the other controls, unless the user arranged them).
+  A stated view or role wins over what the view infers from names; the
+  rest is inferred as for any plugin. With ping-pong on, a delay's echoes
+  alternate between a left lane (top) and a right lane (bottom); a toggle
+  named "Ping Pong" is read the same way on any delay. Any other plugin, or one with no family, keeps the generic
   look; these terms are ignored outside that prefix, and a signature plugin
   without a valid colour is drawn as a basic one. A basic plugin has the
   OpenRig look: an amber left edge and an "OR FX" mark on its rack block with

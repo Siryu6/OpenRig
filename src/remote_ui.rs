@@ -623,7 +623,7 @@ fn build_snapshot(app: &App, state: &AppState, editor: bool) -> Snapshot {
                                 .zip(p.option_values)
                                 .map(|(label, value)| ParamOption { label, value })
                                 .collect(),
-                            strip: p.in_strip,
+                            strip: p.strip_pos.is_some(),
                         })
                         .collect()
                 })
