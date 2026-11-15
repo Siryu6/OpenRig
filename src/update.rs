@@ -22,7 +22,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 use tracing::warn;
 
-use crate::download::save_verified;
+use crate::download::{save, Expected};
 use crate::system_config::{request_state, send_request};
 
 /// Latest release of the official repository
@@ -340,14 +340,11 @@ pub fn download(
     let body = fetch(&download.url, Duration::from_secs(timeout))?
         .into_body()
         .into_reader();
-    save_verified(
-        body,
-        download.size,
-        &download.sha256,
-        &path,
-        "the update",
-        progress,
-    )?;
+    let expected = Expected::Verified {
+        size: download.size,
+        sha256: &download.sha256,
+    };
+    save(body, expected, &path, "the update", progress)?;
     Ok(path)
 }
 

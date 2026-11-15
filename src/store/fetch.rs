@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-use crate::download::{hex, save_verified};
+use crate::download::{hex, save, Expected};
 use std::time::Duration;
 
 /// A download slower than this on average is given up
@@ -64,7 +64,13 @@ pub fn download(
 ) -> Result<()> {
     let timeout = 60 + size / MIN_RATE;
     let body = open(url, Duration::from_secs(timeout))?.into_reader();
-    save_verified(body, size, sha256, path, "the plugin", progress)
+    save(
+        body,
+        Expected::Verified { size, sha256 },
+        path,
+        "the plugin",
+        progress,
+    )
 }
 
 /// SHA-256 of a file, in hex
