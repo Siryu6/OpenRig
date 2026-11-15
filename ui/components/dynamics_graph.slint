@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
 import { DynView, DynLive } from "../types.slint";
-import { Caption, DbLabels, Handle, InOut, Plot, PlotEvents, PlotPath } from "plot.slint";
+import { BlockHandle, BlockPlot, Caption, DbLabels, InOut, Plot, PlotPath } from "plot.slint";
 
 // Level curve of a compressor, limiter or gate, with what it does right now:
 // the sound on the curve, the last seconds in and out, and the gain
@@ -53,33 +53,21 @@ export component DynamicsGraph inherits Rectangle {
 
     // Ratio and threshold handles, over the curve (the threshold on top: at
     // 0 dB both sit in the corner, where the ratio changes nothing)
-    Handle {
+    BlockHandle {
         handle: root.dyn.ratio;
         accent: root.line;
         plot-x: curve.x;
         plot-y: curve.y;
         plot-width: curve.width;
         plot-height: curve.height;
-        drag(x, y) => {
-            PlotEvents.drag(self.handle.name, x, y);
-        }
-        released => {
-            PlotEvents.released();
-        }
     }
-    Handle {
+    BlockHandle {
         handle: root.dyn.threshold;
         accent: root.line;
         plot-x: curve.x;
         plot-y: curve.y;
         plot-width: curve.width;
         plot-height: curve.height;
-        drag(x, y) => {
-            PlotEvents.drag(self.handle.name, x, y);
-        }
-        released => {
-            PlotEvents.released();
-        }
     }
     // The sound, on the curve (over the handles, which it passes through)
     if root.live.active: Rectangle {
@@ -94,15 +82,11 @@ export component DynamicsGraph inherits Rectangle {
     }
 
     // The last seconds: in (grey), out (block colour), reduction from the top
-    history := Plot {
+    history := BlockPlot {
         x: curve.x + curve.width + 12px;
         y: curve.y;
         width: root.width - self.x - 64px;
         height: curve.height;
-        // The wide plot of the view
-        sized(w, h) => {
-            PlotEvents.resized(w, h);
-        }
 
         InOut {
             input: root.live.history-in;
