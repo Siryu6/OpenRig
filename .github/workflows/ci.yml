@@ -56,6 +56,16 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-24.04
+    # The runner has 16 GB. The Slint UI is in the app binary, and one
+    # rustc of it takes about 8.5 GB without debug info. `cargo test`
+    # builds the binary and its unit tests at once: 16 GB, out of memory.
+    # So the first step builds the binary (with the lib and the
+    # integration tests), and the second one its unit tests alone.
+    # At job level, rust-cache hashes these settings into its key, so the
+    # saved cache matches the build and the dependencies are not rebuilt.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@v7
         with:
@@ -63,11 +73,5 @@ jobs:
       - uses: ./.github/actions/linux-deps
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked --no-run --test '*'
       - run: cargo test --locked
-        env:
-          # The runner has 16 GB. One rustc of the app (the Slint UI) takes
-          # up to 9.5 GB with line tables, 5.5 GB without debug info, and
-          # three ran at once: the runner ran out of memory and was lost.
-          # No debug info and two jobs keep it near 10 GB.
-          CARGO_PROFILE_DEV_DEBUG: 0
-          CARGO_BUILD_JOBS: 2
