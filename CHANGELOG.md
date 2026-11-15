@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0](https://github.com/Siryu6/OpenRig/compare/v0.14.3...v0.15.0) - 2026-11-15
+
+### Added
+
+- *(lv2)* bypass plugins through their lv2:enabled port ([#174](https://github.com/Siryu6/OpenRig/pull/174))
+- compensate plugin latency and report it to JACK ([#147](https://github.com/Siryu6/OpenRig/pull/147))
+- back up and restore presets, setlists, rigs, loops and settings ([#138](https://github.com/Siryu6/OpenRig/pull/138))
+- *(audio)* global output EQ and limiter per output ([#135](https://github.com/Siryu6/OpenRig/pull/135))
+
+### Fixed
+
+- *(hardware)* build with the gpio feature again, and check it in CI ([#186](https://github.com/Siryu6/OpenRig/pull/186))
+- *(os)* vendor the app's crates before each build so pedalboard-rebuild sees a new Cargo.lock ([#184](https://github.com/Siryu6/OpenRig/pull/184))
+- *(os)* give the app an OpenRig folder on ext4 USB drives ([#154](https://github.com/Siryu6/OpenRig/pull/154))
+- drop the USB drive messages when the drive goes ([#152](https://github.com/Siryu6/OpenRig/pull/152))
+- eject only the USB drive the panel shows ([#150](https://github.com/Siryu6/OpenRig/pull/150))
+- *(os)* mount USB drives and eject them from the app ([#148](https://github.com/Siryu6/OpenRig/pull/148))
+- *(ui)* draw rack wires as rectangles ([#143](https://github.com/Siryu6/OpenRig/pull/143))
+- *(remote)* stop the Editor lagging on slow links ([#140](https://github.com/Siryu6/OpenRig/pull/140))
+
+### Other
+
+- build the app binary and its unit tests one at a time, so the Tests runner keeps enough memory ([#192](https://github.com/Siryu6/OpenRig/pull/192))
+- *(ui)* wire block view handles and plots to PlotEvents once ([#188](https://github.com/Siryu6/OpenRig/pull/188))
+- build the tests without debug info and with two jobs, so the runner keeps enough memory ([#190](https://github.com/Siryu6/OpenRig/pull/190))
+- *(tone3000)* save model downloads through the shared download helper ([#182](https://github.com/Siryu6/OpenRig/pull/182))
+- *(audio)* fold the guard and latency patch layers into the chain ([#172](https://github.com/Siryu6/OpenRig/pull/172))
+- *(ui)* share the EQ curve builder and give EQ plots their own callbacks ([#170](https://github.com/Siryu6/OpenRig/pull/170))
+- *(t3k)* one TONE3000 format table and one load rule ([#164](https://github.com/Siryu6/OpenRig/pull/164))
+- *(os)* Linux 6.18.63 on x86_64, latest rpi-6.18.y on the Pi ([#180](https://github.com/Siryu6/OpenRig/pull/180))
+- list the image's headless and remote features, drop the lilv bindings ([#162](https://github.com/Siryu6/OpenRig/pull/162))
+- share the checked download and the encoder constants ([#178](https://github.com/Siryu6/OpenRig/pull/178))
+- *(ui)* merge the duplicated UI glue and name the views ([#176](https://github.com/Siryu6/OpenRig/pull/176))
+- *(drives)* one drive model for the rigs panel, backup and eject ([#168](https://github.com/Siryu6/OpenRig/pull/168))
+- *(remote)* one frame pipeline for the Editor stream ([#166](https://github.com/Siryu6/OpenRig/pull/166))
+- *(deps)* update crates, jack 0.14, argon2 0.6 and getrandom 0.4 ([#160](https://github.com/Siryu6/OpenRig/pull/160))
+- *(remote)* send only the pixels that changed ([#158](https://github.com/Siryu6/OpenRig/pull/158))
+- *(remote)* size the frame budget to the link ([#156](https://github.com/Siryu6/OpenRig/pull/156))
+- *(remote)* encode Editor frames off the UI thread ([#145](https://github.com/Siryu6/OpenRig/pull/145))
+
 ## [0.14.3](https://github.com/Siryu6/OpenRig/compare/v0.14.2...v0.14.3) - 2026-11-14
 
 ### Fixed
