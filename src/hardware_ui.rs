@@ -219,7 +219,7 @@ fn apply(app: &App, state: &Arc<AppState>, board: &mut Board) {
                 board.gpio = Some(gpio);
                 let errors: Vec<String> = errors.iter().map(|e| format!("{e:#}")).collect();
                 if !errors.is_empty() {
-                    warn!(errors = %errors.join("; "), "Some hardware inputs not opened");
+                    tracing::warn!(errors = %errors.join("; "), "Some hardware inputs not opened");
                     app.set_hardware_message(format!("Not working: {}", errors.join("; ")).into());
                 }
             }

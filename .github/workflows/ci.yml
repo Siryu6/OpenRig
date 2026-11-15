@@ -50,6 +50,8 @@ jobs:
       - run: cargo clippy --all-targets --locked -- -D warnings
       # The build without NAM nor TONE3000 (no cmake / C++)
       - run: cargo clippy --all-targets --locked --no-default-features --features winit,lv2,midi -- -D warnings
+      # GPIO footswitches and encoders, built only for the Pi image
+      - run: cargo clippy --all-targets --locked --features gpio -- -D warnings
 
   test:
     name: Tests
@@ -63,6 +65,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked
         env:
-          # Full debug info for the Slint-generated UI code gets the job
-          # killed for lack of memory; line tables keep useful backtraces
-          CARGO_PROFILE_DEV_DEBUG: line-tables-only
+          # The runner has 16 GB. One rustc of the app (the Slint UI) takes
+          # up to 9.5 GB with line tables, 5.5 GB without debug info, and
+          # three ran at once: the runner ran out of memory and was lost.
+          # No debug info and two jobs keep it near 10 GB.
+          CARGO_PROFILE_DEV_DEBUG: 0
+          CARGO_BUILD_JOBS: 2
