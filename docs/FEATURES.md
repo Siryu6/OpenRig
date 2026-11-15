@@ -21,8 +21,8 @@ What OpenRig does, in more technical detail than the
   for the block in the rack when it is the gear's face. See
   [STORE.md](STORE.md).
 - **Plugin views**: above an LV2 block's controls, the editor draws an EQ's
-  response, a compressor's level curve or a delay's echoes, with points to
-  drag, over the sound measured in and out of that block (spectrum, levels,
+  response, a compressor's level curve or a delay's echoes (each with its
+  fading tail, over the beats of the tempo), with points to drag, over the sound measured in and out of that block (spectrum, levels,
   waves). They are inferred from the plugin's LV2 class and the names and
   units of its ports, never configured per plugin; a plugin read without
   confidence keeps its knobs alone.
@@ -41,6 +41,13 @@ What OpenRig does, in more technical detail than the
   a glyph of its category, the OpenRig mark in the editor header, its view
   always shown, and modes of three choices or fewer as keys when the
   control has room for them.
+  A signature plugin's controls and view sit on its plate in the editor:
+  a picture drawn once per plate and size by `Plate::render` (its colour lit
+  from above, grain, brushed streaks, scratches and rubbed edges from the
+  wear, seeded by the URI so a plate never changes) and kept in memory, four
+  screws, knobs in its knob style (a steel cap on a very dark plate), values
+  in amber readout windows, its silk name, tagline and green "on" LED. The
+  web remote draws plates flat, in their colour only.
 - **Amp, Amp + Cab and Pedal blocks** (feature `nam`, default): built-in neural blocks
   running Neural Amp Modeler `.nam` captures (and RTNeural `.json` /
   `.aidax` models) through [NeuralAudio](https://github.com/mikeoliphant/NeuralAudio).

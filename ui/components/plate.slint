@@ -1,0 +1,37 @@
+// Parts of an OpenRig FX plate (signature plugins)
+import { Theme } from "../theme.slint";
+import { Features } from "../features.slint";
+
+// Screw head in a plate corner
+export component Screw inherits Rectangle {
+    in property <float> turn: 30;
+    in property <length> size: 12px;
+    width: root.size;
+    height: root.size;
+    border-radius: root.size / 2;
+    background: Features.flat ? Theme.screw : @linear-gradient(150deg, #d4d6d8 0%, Theme.screw 50%, #5d5f62 100%);
+    border-width: 1px;
+    border-color: #00000099;
+    Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 12;
+        viewbox-height: 12;
+        stroke: Theme.screw-slot;
+        stroke-width: 1.5px;
+        commands: "M " + (6 + 4 * cos(root.turn * 1deg)) + " " + (6 + 4 * sin(root.turn * 1deg))
+            + " L " + (6 - 4 * cos(root.turn * 1deg)) + " " + (6 - 4 * sin(root.turn * 1deg));
+    }
+}
+
+// The plate's "on" LED: the app's green
+export component PlateLed inherits Rectangle {
+    in property <bool> on: true;
+    in property <length> size: 10px;
+    width: root.size;
+    height: root.size;
+    border-radius: root.size / 2;
+    background: root.on ? Theme.led-green : Theme.led-off;
+    border-width: 1px;
+    border-color: #00000099;
+}

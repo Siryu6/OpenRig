@@ -416,6 +416,14 @@ export component Slider inherits Rectangle {
     }
 }
 
+// Plate knob drawings, viewbox 100 x 100
+global KnobPaths {
+    // 11 scale ticks from 7:30 to 4:30
+    out property <string> ticks: "M 19.59 80.41 L 15.35 84.65 M 9.10 63.29 L 3.40 65.14 M 7.53 43.27 L 1.60 42.33 M 15.21 24.73 L 10.36 21.20 M 30.48 11.69 L 27.75 6.34 M 50.00 7.00 L 50.00 1.00 M 69.52 11.69 L 72.25 6.34 M 84.79 24.73 L 89.64 21.20 M 92.47 43.27 L 98.40 42.33 M 90.90 63.29 L 96.60 65.14 M 80.41 80.41 L 84.65 84.65";
+    // Knurled skirt: 48 short radial lines
+    out property <string> knurl: "M 83.00 50.00 L 91.00 50.00 M 82.72 54.31 L 90.65 55.35 M 81.88 58.54 L 89.60 60.61 M 80.49 62.63 L 87.88 65.69 M 78.58 66.50 L 85.51 70.50 M 76.18 70.09 L 82.53 74.96 M 73.33 73.33 L 78.99 78.99 M 70.09 76.18 L 74.96 82.53 M 66.50 78.58 L 70.50 85.51 M 62.63 80.49 L 65.69 87.88 M 58.54 81.88 L 60.61 89.60 M 54.31 82.72 L 55.35 90.65 M 50.00 83.00 L 50.00 91.00 M 45.69 82.72 L 44.65 90.65 M 41.46 81.88 L 39.39 89.60 M 37.37 80.49 L 34.31 87.88 M 33.50 78.58 L 29.50 85.51 M 29.91 76.18 L 25.04 82.53 M 26.67 73.33 L 21.01 78.99 M 23.82 70.09 L 17.47 74.96 M 21.42 66.50 L 14.49 70.50 M 19.51 62.63 L 12.12 65.69 M 18.12 58.54 L 10.40 60.61 M 17.28 54.31 L 9.35 55.35 M 17.00 50.00 L 9.00 50.00 M 17.28 45.69 L 9.35 44.65 M 18.12 41.46 L 10.40 39.39 M 19.51 37.37 L 12.12 34.31 M 21.42 33.50 L 14.49 29.50 M 23.82 29.91 L 17.47 25.04 M 26.67 26.67 L 21.01 21.01 M 29.91 23.82 L 25.04 17.47 M 33.50 21.42 L 29.50 14.49 M 37.37 19.51 L 34.31 12.12 M 41.46 18.12 L 39.39 10.40 M 45.69 17.28 L 44.65 9.35 M 50.00 17.00 L 50.00 9.00 M 54.31 17.28 L 55.35 9.35 M 58.54 18.12 L 60.61 10.40 M 62.63 19.51 L 65.69 12.12 M 66.50 21.42 L 70.50 14.49 M 70.09 23.82 L 74.96 17.47 M 73.33 26.67 L 78.99 21.01 M 76.18 29.91 L 82.53 25.04 M 78.58 33.50 L 85.51 29.50 M 80.49 37.37 L 87.88 34.31 M 81.88 41.46 L 89.60 39.39 M 82.72 45.69 L 90.65 44.65";
+}
+
 // ---------------------------------------------------------------------------
 // Rotary knob: 270 degree arc, drag vertically to change. Controlled like
 // Slider: live value while dragging, then the parent-owned `value`.
@@ -435,6 +443,12 @@ export component Knob inherits Rectangle {
     in property <bool> enabled: true;
     in property <length> size: 76px;
     in property <color> accent: Theme.accent;      // value arc (the block's colour)
+    // Knob of an OpenRig FX plate (openrig:knobStyle): "skirted",
+    // "chickenhead" or "domed" on a silk scale; anything else is the
+    // OpenRig knob with its value arc
+    in property <string> knob-style: "";
+    // A steel cap (skirted knobs on a very dark plate), else a black one
+    in property <bool> steel: false;
     in property <float> default-value: root.minimum;
     out property <bool> dragging: ta.pressed;
     callback changed(float);
@@ -457,6 +471,9 @@ export component Knob inherits Rectangle {
         max(0, min(1, (root.shown-value - root.minimum) / (root.maximum - root.minimum)));
     // Angles in degrees, clockwise from +x (screen coordinates)
     private property <float> angle: 135 + 270 * root.norm;
+    private property <bool> plain: root.knob-style != "skirted" && root.knob-style != "chickenhead"
+        && root.knob-style != "domed";
+    private property <bool> hot: root.lit || ta.pressed;
     private property <float> start-norm: 0;
     private property <length> start-y: 0;
     private property <float> pending: 0;
@@ -466,7 +483,7 @@ export component Knob inherits Rectangle {
     opacity: root.enabled ? 1.0 : 0.4;
 
     // Value arc around the knob (viewbox 100x100, radius 44)
-    Path {
+    if root.plain: Path {
         width: 100%;
         height: 100%;
         viewbox-width: 100;
@@ -477,56 +494,120 @@ export component Knob inherits Rectangle {
         commands: "M 18.89 81.11 A 44 44 0 1 1 81.11 81.11";
     }
 
-    if root.norm > 0.004: Path {
+    if root.plain && root.norm > 0.004: Path {
         width: 100%;
         height: 100%;
         viewbox-width: 100;
         viewbox-height: 100;
-        stroke: root.lit || ta.pressed ? root.accent.brighter(0.25) : root.accent;
+        stroke: root.hot ? root.accent.brighter(0.25) : root.accent;
         stroke-width: 6px;
         fill: transparent;
         commands: "M 18.89 81.11 A 44 44 0 " + (270 * root.norm > 180 ? "1" : "0") + " 1 "
             + (50 + 44 * cos(root.angle * 1deg)) + " " + (50 + 44 * sin(root.angle * 1deg));
     }
 
-    // Skirt
-    Rectangle {
-        x: parent.width * 0.17;
-        y: parent.height * 0.17;
-        width: parent.width * 0.66;
-        height: parent.height * 0.66;
+    // Plate knobs: a silk scale, a dot for the value
+    if !root.plain: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        stroke: Theme.plate-silk-muted;
+        stroke-width: 1.5px;
+        fill: transparent;
+        commands: KnobPaths.ticks;
+    }
+    if !root.plain: Rectangle {
+        x: root.width * (0.5 + 0.47 * cos(root.angle * 1deg)) - self.width / 2;
+        y: root.height * (0.5 + 0.47 * sin(root.angle * 1deg)) - self.height / 2;
+        width: max(4px, root.size * 0.05);
+        height: self.width;
         border-radius: self.width / 2;
-        background: #0c0d10;
+        background: root.hot ? root.accent.brighter(0.3) : root.accent;
+    }
+
+    // Skirt (a shadow ring under a chickenhead or a dome)
+    Rectangle {
+        x: parent.width * (root.knob-style == "skirted" ? 0.09 : root.knob-style == "domed" ? 0.13 : 0.17);
+        y: self.x;
+        width: parent.width - 2 * self.x;
+        height: self.width;
+        border-radius: self.width / 2;
+        background: root.plain ? #0c0d10
+            : root.knob-style == "skirted" && !root.steel ? Theme.knob-skirt-light : Theme.knob-black;
         border-width: 1px;
-        border-color: root.lit ? root.accent : #30343c;
+        border-color: root.lit ? root.accent : root.plain ? #30343c : #000000;
+    }
+    if root.knob-style == "skirted": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        stroke: root.steel ? #ffffff26 : #00000059;
+        stroke-width: 1px;
+        fill: transparent;
+        commands: KnobPaths.knurl;
+    }
+
+    // Chickenhead: a pointer shape around a round body
+    if root.knob-style == "chickenhead": Path {
+        width: 100%;
+        height: 100%;
+        viewbox-width: 100;
+        viewbox-height: 100;
+        fill: Theme.knob-black;
+        stroke: #000000;
+        stroke-width: 1px;
+        commands: "M " + (50 + 44 * cos(root.angle * 1deg)) + " " + (50 + 44 * sin(root.angle * 1deg))
+            + " L " + (50 + 27 * cos((root.angle + 52) * 1deg)) + " " + (50 + 27 * sin((root.angle + 52) * 1deg))
+            + " L " + (50 + 30 * cos((root.angle + 150) * 1deg)) + " " + (50 + 30 * sin((root.angle + 150) * 1deg))
+            + " L " + (50 + 30 * cos((root.angle + 210) * 1deg)) + " " + (50 + 30 * sin((root.angle + 210) * 1deg))
+            + " L " + (50 + 27 * cos((root.angle - 52) * 1deg)) + " " + (50 + 27 * sin((root.angle - 52) * 1deg)) + " Z";
     }
 
     // Cap: lit from above
     Rectangle {
-        x: parent.width * 0.24;
-        y: parent.height * 0.24;
-        width: parent.width * 0.52;
-        height: parent.height * 0.52;
+        x: parent.width * (root.knob-style == "skirted" ? 0.21 : root.knob-style == "chickenhead" ? 0.26
+            : root.knob-style == "domed" ? 0.15 : 0.24);
+        y: self.x;
+        width: parent.width - 2 * self.x;
+        height: self.width;
         border-radius: self.width / 2;
-        background: Features.flat ? (ta.pressed ? #292c32 : #30343b)
+        background: root.knob-style == "domed" ? (Features.flat ? Theme.knob-alu-flat : Theme.knob-alu)
+            : root.knob-style == "skirted" && root.steel ? (Features.flat ? Theme.knob-steel-flat : Theme.knob-steel)
+            : !root.plain ? (Features.flat ? Theme.knob-black-top
+                : @linear-gradient(180deg, Theme.knob-black-top 0%, Theme.knob-black 70%))
+            : Features.flat ? (ta.pressed ? #292c32 : #30343b)
             : ta.pressed ? @linear-gradient(180deg, #34383f 0%, #1e2126 100%)
             : @linear-gradient(180deg, #41464f 0%, #1f2227 100%);
         border-width: 1px;
         border-color: #00000099;
     }
 
-    // Pointer, from the cap centre to the skirt
-    Path {
+    // Pointer: a dot on a dome, a line from the cap centre otherwise
+    if root.knob-style == "domed": Rectangle {
+        x: root.width * (0.5 + 0.25 * cos(root.angle * 1deg)) - self.width / 2;
+        y: root.height * (0.5 + 0.25 * sin(root.angle * 1deg)) - self.height / 2;
+        width: max(5px, root.size * 0.08);
+        height: self.width;
+        border-radius: self.width / 2;
+        background: Theme.knob-black;
+    }
+    if root.knob-style != "domed": Path {
         width: 100%;
         height: 100%;
         viewbox-width: 100;
         viewbox-height: 100;
-        stroke: #f4f6f8;
-        stroke-width: 3px;
+        stroke: root.plain ? #f4f6f8 : Theme.knob-line;
+        stroke-width: root.plain ? 3px : max(2px, root.size * 0.03);
         fill: transparent;
-        commands: "M " + (50 + 8 * cos(root.angle * 1deg)) + " " + (50 + 8 * sin(root.angle * 1deg))
-            + " L " + (50 + 31 * cos(root.angle * 1deg)) + " " + (50 + 31 * sin(root.angle * 1deg));
+        // Inner and outer radius of the line
+        property <float> r0: root.knob-style == "chickenhead" || root.knob-style == "skirted" ? 10 : 8;
+        property <float> r1: root.knob-style == "chickenhead" ? 40 : root.knob-style == "skirted" ? 28 : 31;
+        commands: "M " + (50 + self.r0 * cos(root.angle * 1deg)) + " " + (50 + self.r0 * sin(root.angle * 1deg))
+            + " L " + (50 + self.r1 * cos(root.angle * 1deg)) + " " + (50 + self.r1 * sin(root.angle * 1deg));
     }
+
 
     ta := TouchArea {
         enabled: root.enabled;

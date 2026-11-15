@@ -405,6 +405,12 @@ export struct EchoTap {
     height: float,
 }
 
+// A beat of the tempo across a delay's echoes (`bar`: the first of a bar)
+export struct EchoBeat {
+    x: float,
+    bar: bool,
+}
+
 // What a delay, reverb, drive, modulation or cabinet block does to the sound
 // (see plugins::scope)
 
@@ -422,6 +428,7 @@ export struct ScopeView {
     echo-span: string,      // time across the box, "1.2 s"
     echo-time: PlotHandle,  // the first echo
     echo-feedback: PlotHandle, // the second
+    echo-beats: [EchoBeat],    // the tempo's beats behind them
 }
 
 // What it does right now

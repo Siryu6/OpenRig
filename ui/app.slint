@@ -224,6 +224,17 @@ export component App inherits Window {
     in-out property <string> selected-plugin-name: "";
     in-out property <string> selected-plugin-category: "";
     in-out property <string> selected-plugin-look: "";      // OpenRig FX look ("" generic)
+    // A signature plugin's plate (see PluginEditor)
+    in property <image> selected-plate;
+    in property <color> selected-plate-color;
+    in property <string> selected-knob-style;
+    in property <bool> selected-steel-knobs;
+    in property <string> selected-face-name;
+    in property <string> selected-tagline;
+    // The editor's face size, in logical pixels, for the plate's picture
+    out property <length> plate-width;
+    out property <length> plate-height;
+    callback plate-sized();
     in-out property <bool> selected-plugin-bypassed: false;
     in-out property <[ParameterInfo]> selected-parameters: [];
     in property <EqView> selected-eq;
@@ -1284,6 +1295,17 @@ export component App inherits Window {
                 plugin-name: root.selected-plugin-name;
                 category: root.selected-plugin-category;
                 look: root.selected-plugin-look;
+                plate: root.selected-plate;
+                plate-color: root.selected-plate-color;
+                knob-style: root.selected-knob-style;
+                steel-knobs: root.selected-steel-knobs;
+                face-name: root.selected-face-name;
+                tagline: root.selected-tagline;
+                plate-sized(w, h) => {
+                    root.plate-width = w;
+                    root.plate-height = h;
+                    root.plate-sized();
+                }
                 bypassed: root.selected-plugin-bypassed;
                 parameters: root.selected-parameters;
                 eq: root.selected-eq;
