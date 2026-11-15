@@ -53,6 +53,10 @@ What OpenRig does, in more technical detail than the
   as on any block; bypassed, it goes dark). Its default colour, on the rack
   and the knob strip, is its plate colour, lifted when too dark to show on
   the stage.
+  The Add effect page and the store mark the suite's plugins with an
+  "OR FX" badge (by URI prefix, so before they are installed too) and show
+  an installed one's block as the rack draws it: the same `BlockShape` and
+  `BlockFace`, with the plate drawn at twice the rack size on a store page.
 - **Amp, Amp + Cab and Pedal blocks** (feature `nam`, default): built-in neural blocks
   running Neural Amp Modeler `.nam` captures (and RTNeural `.json` /
   `.aidax` models) through [NeuralAudio](https://github.com/mikeoliphant/NeuralAudio).

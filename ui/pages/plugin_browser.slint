@@ -156,26 +156,28 @@ export component PluginBrowser {
                                 padding-right: Theme.space-md;
                                 spacing: Theme.space-md;
 
-                                // Built-in blocks show the gear they are drawn as in the rack
-                                if plugin.kind != "": Rectangle {
+                                // Built-in blocks and OpenRig FX plugins show their
+                                // block as in the rack
+                                if plugin.kind != "" || plugin.faceplate.look != "": Rectangle {
                                     width: 56px;
                                     gear := BlockShape {
                                         kind: plugin.kind;
                                         name: "";
                                         tint: plugin.color;
+                                        faceplate: plugin.faceplate;
                                         transform-origin: { x: self.width / 2, y: self.height / 2 };
                                         transform-scale: min(parent.width / self.shape-width, parent.height / self.shape-height);
                                     }
                                 }
 
                                 // Store plugins show their picture
-                                if plugin.kind == "" && plugin.has-picture: Image {
+                                if plugin.kind == "" && plugin.faceplate.look == "" && plugin.has-picture: Image {
                                     width: 56px;
                                     source: plugin.picture;
                                     image-fit: contain;
                                 }
 
-                                if plugin.kind == "" && !plugin.has-picture: Rectangle {
+                                if plugin.kind == "" && plugin.faceplate.look == "" && !plugin.has-picture: Rectangle {
                                     width: 56px;
                                     border-radius: Theme.radius-md;
                                     background: Features.flat ? plugin.color : @linear-gradient(180deg, plugin.color.brighter(0.18) 0%, plugin.color.darker(0.12) 100%);
@@ -195,12 +197,21 @@ export component PluginBrowser {
                                     horizontal-stretch: 1;
                                     alignment: center;
                                     spacing: 2px;
-                                    Text {
-                                        text: plugin.name;
-                                        color: Theme.text-primary;
-                                        font-size: Theme.font-body;
-                                        font-weight: Theme.weight-semibold;
-                                        overflow: elide;
+                                    HorizontalLayout {
+                                        spacing: Theme.space-sm;
+                                        Text {
+                                            horizontal-stretch: 1;
+                                            text: plugin.name;
+                                            color: Theme.text-primary;
+                                            font-size: Theme.font-body;
+                                            font-weight: Theme.weight-semibold;
+                                            overflow: elide;
+                                            vertical-alignment: center;
+                                        }
+                                        if plugin.or-fx: Badge {
+                                            text: "OR FX";
+                                            tone: "accent";
+                                        }
                                     }
                                     Text {
                                         text: plugin.hint != "" ? plugin.hint

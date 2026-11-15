@@ -19,6 +19,18 @@ export enum View {
     hardware,     // opened from the settings
 }
 
+// How an OpenRig FX plugin's block looks, wherever it is drawn (rack, Add
+// effect page, store)
+export struct BlockFace {
+    look: string,        // "" (generic), "basic" or "signature"
+    name: string,        // the name the block carries ("Echo", "GREEN")
+    glyph: string,       // basic block: a drawing of what it does (path, 50 x 14)
+    plate: image,        // signature block: its plate (empty when flat)
+    plate-color: color,
+    knob-style: string,  // "plain", "skirted", "chickenhead", "domed"
+    steel: bool,         // steel knob caps (very dark plate)
+}
+
 // Positioned layout node from the backend layout engine.
 // Coordinates are in "layout units": main line at y = 0, split branches one
 // or more rows of 64 above (top) / below (bottom) their split, depending on
@@ -42,13 +54,7 @@ export struct PositionedNode {
     t3k: bool,           // loads a TONE3000 download: shows the T3K mark
     picture: image,      // its store picture, drawn instead of the gear
     has-picture: bool,
-    look: string,        // OpenRig FX look: "" (generic), "basic" or "signature"
-    face-name: string,   // the name an OpenRig FX block carries ("Echo", "GREEN")
-    glyph: string,       // basic block: a drawing of what it does (path, 50 x 14)
-    plate: image,        // signature block: its plate (empty when flat)
-    plate-color: color,
-    knob-style: string,
-    steel: bool,
+    faceplate: BlockFace,
 }
 
 // Where a dragged block can be dropped (layout units)
@@ -103,6 +109,8 @@ export struct PluginItem {
     color: color,       // colour of its family, as in the rack
     picture: image,     // its store picture, once downloaded
     has-picture: bool,
+    or-fx: bool,        // one of the OpenRig FX suite
+    faceplate: BlockFace,
 }
 
 export struct PresetInfo {
@@ -340,6 +348,8 @@ export struct CatalogItem {
     picture: image,         // the author's own picture, when it has one
     has-picture: bool,      // else the gear is drawn
     picture-credit: string, // "Michael Willis, GPL-3.0"
+    or-fx: bool,            // one of the OpenRig FX suite
+    faceplate: BlockFace,   // its face, once installed
 }
 
 // A family chip of the store, with how many entries match the search

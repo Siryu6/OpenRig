@@ -5,10 +5,11 @@
 
 use std::cell::{Cell, RefCell};
 
-use pedalboard::plugins::faceplate::{Faceplate, Plate};
+use pedalboard::plugins::faceplate::{self, Faceplate, Plate};
+use pedalboard::plugins::scanner::PluginCategory;
 use slint::{ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer};
 
-use crate::{rgb, App, Features};
+use crate::{rgb, App, BlockFace, Features};
 
 /// Pictures kept: the editor's plate at a few sizes and the rack's blocks
 const KEPT: usize = 24;
@@ -48,6 +49,40 @@ pub fn image(plate: &Plate, width: u32, height: u32) -> Image {
         cache.push((key, image.clone()));
         image
     })
+}
+
+/// Size of a signature block's plate in `BlockShape`, in logical pixels
+const BLOCK: (f32, f32) = (72.0, 60.0);
+
+/// Physical size of a block's plate picture drawn `zoom` times its rack
+/// size; `None` when plates are drawn flat
+pub fn block_size(app: &App, zoom: f32) -> Option<(u32, u32)> {
+    (!flat(app)).then(|| (physical(app, BLOCK.0 * zoom), physical(app, BLOCK.1 * zoom)))
+}
+
+/// How the block of a plugin with `face` looks: generic (no face), basic,
+/// or signature with its plate picture at `size` (from [`block_size`])
+pub fn block_face(
+    face: Option<&Faceplate>,
+    category: Option<&PluginCategory>,
+    size: Option<(u32, u32)>,
+) -> BlockFace {
+    let Some(face) = face else {
+        return BlockFace::default();
+    };
+    let plate = face.plate;
+    BlockFace {
+        look: faceplate::look(Some(face)).into(),
+        name: face.short_name.as_str().into(),
+        glyph: category.map(faceplate::glyph).unwrap_or_default().into(),
+        plate: plate
+            .zip(size)
+            .map(|(p, (w, h))| image(&p, w, h))
+            .unwrap_or_default(),
+        plate_color: rgb(plate.map_or(0, |p| p.color)),
+        knob_style: plate.map_or("", |p| p.knob_style.as_str()).into(),
+        steel: plate.is_some_and(|p| p.steel_caps()),
+    }
 }
 
 /// Physical pixels of a logical length on the app's window
