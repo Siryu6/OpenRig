@@ -341,6 +341,10 @@ export component PluginRack {
                             look: node.look;
                             face-name: node.face-name;
                             glyph: node.glyph;
+                            plate: node.plate;
+                            plate-color: node.plate-color;
+                            knob-style: node.knob-style;
+                            steel: node.steel;
                             selected: node-el.selected;
                             pressed: node-ta.pressed && idx != root.drag-index;
                         }
@@ -1160,6 +1164,10 @@ export component PluginRack {
         look: root.dragged.look;
         face-name: root.dragged.face-name;
         glyph: root.dragged.glyph;
+        plate: root.dragged.plate;
+        plate-color: root.dragged.plate-color;
+        knob-style: root.dragged.knob-style;
+        steel: root.dragged.steel;
         selected: true;
     }
     if root.drag-index >= 0 && root.dragged.is-split: Rectangle {

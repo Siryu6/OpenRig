@@ -28,21 +28,27 @@ export component BlockShape {
     in property <string> look;          // OpenRig FX look: "" generic, "basic", "signature"
     in property <string> face-name;     // its name on the block
     in property <string> glyph;         // basic: what it does, path in a 50 x 14 box
+    // Signature: a small pedal on its plate (picture, or colour when flat)
+    in property <image> plate;
+    in property <color> plate-color;
+    in property <string> knob-style;    // "plain", "skirted", "chickenhead", "domed"
+    in property <bool> steel;           // steel knob caps (very dark plate)
 
     // Picture: fitted in 84 x 60, wide strips cropped to 36 high
     private property <float> aspect: root.picture.width / max(1, root.picture.height);
 
     // Size of the gear (the rack keeps the same cells for every kind)
-    out property <length> shape-width: root.has-picture ? min(84px, 60px * root.aspect)
+    out property <length> shape-width: root.signature ? 72px : root.has-picture ? min(84px, 60px * root.aspect)
         : root.kind == "amp" ? 90px : root.kind == "combo" ? 82px
         : root.kind == "cab" ? 68px : root.kind == "pedal" ? 62px : root.jack ? 66px : 84px;
-    out property <length> shape-height: root.has-picture ? max(36px, min(60px, 84px / root.aspect))
+    out property <length> shape-height: root.signature ? 60px : root.has-picture ? max(36px, min(60px, 84px / root.aspect))
         : root.kind == "amp" ? 46px : root.kind == "combo" ? 58px
         : root.kind == "cab" ? 58px : root.kind == "pedal" ? 60px : root.kind == "space" ? 46px
         : root.jack ? 40px : 52px;
 
     private property <bool> gear: root.kind != "";
-    private property <bool> basic: root.look != "";
+    private property <bool> basic: root.look == "basic";
+    private property <bool> signature: root.look == "signature";
     // Frame and trim colour
     private property <color> trim: root.bypassed ? #34363b : root.tint;
     private property <color> face: root.pressed ? #2a2b2f : #1b1c1f;
@@ -80,6 +86,7 @@ export component BlockShape {
     }
 
     Rectangle {
+        visible: !root.signature;
         border-radius: root.radius;
         background: Features.flat ? root.face : @linear-gradient(180deg, root.face.brighter(0.15) 0%, root.face.darker(0.25) 100%);
         border-width: 2px;
@@ -264,6 +271,80 @@ export component BlockShape {
         }
     }
 
+    // OpenRig FX, signature: a small pedal: its plate, two knobs in its
+    // style, its silk name and a footswitch (the LED is the block's own)
+    if root.signature: Rectangle {
+        border-radius: root.radius;
+        background: root.plate-color;
+        clip: true;
+        Image {
+            width: parent.width;
+            height: parent.height;
+            source: root.plate;
+            image-fit: fill;
+        }
+        Rectangle {
+            x: 2px;
+            y: 1px;
+            width: parent.width - 4px;
+            height: 1px;
+            background: Theme.plate-bevel;
+        }
+        for k in 2: Rectangle {
+            x: k == 0 ? 7px : parent.width - 7px - self.width;
+            y: 5px;
+            width: 13px;
+            height: 13px;
+            border-radius: self.width / 2;
+            background: root.knob-style == "domed" ? (Features.flat ? Theme.knob-alu-flat : Theme.knob-alu)
+                : root.steel ? (Features.flat ? Theme.knob-steel-flat : Theme.knob-steel)
+                : Theme.knob-black;
+            border-width: root.knob-style == "skirted" ? 2px : 1px;
+            border-color: root.knob-style == "skirted" && !root.steel ? Theme.knob-skirt-light : #00000099;
+            // Pointer: a dot on a dome, a line otherwise
+            Rectangle {
+                x: parent.width / 2 - 1px + (k == 0 ? -2px : 2px);
+                y: 2px;
+                width: 2px;
+                height: root.knob-style == "domed" ? 2px : 4px;
+                background: root.knob-style == "domed" ? Theme.knob-black : Theme.knob-line;
+            }
+        }
+        Text {
+            y: 22px;
+            width: parent.width;
+            height: 16px;
+            text: root.face-name;
+            color: Theme.plate-silk;
+            font-size: Theme.font-small;
+            font-weight: 900;
+            letter-spacing: 1.2px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        // Footswitch
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: parent.height - 18px;
+            width: 13px;
+            height: 13px;
+            border-radius: self.width / 2;
+            background: Features.flat ? Theme.knob-alu-flat : Theme.knob-alu;
+            border-width: 1px;
+            border-color: #00000099;
+        }
+        // Bypassed: the plate goes dark; pressed: lit
+        if root.bypassed || root.pressed: Rectangle {
+            background: root.bypassed ? #00000090 : #ffffff1c;
+        }
+        Rectangle {
+            border-radius: root.radius;
+            border-width: 1px;
+            border-color: Theme.plate-edge;
+        }
+    }
+
     // Origin of the loaded tone (TONE3000 design requirements)
     // Top left, clear of the name; on a pedal its knob is there, so bottom left
     if root.t3k: T3kMark {
@@ -280,14 +361,14 @@ export component BlockShape {
         width: led.width + 6px;
         height: led.height + 6px;
         border-radius: self.width / 2;
-        background: (root.kind == "pedal" ? Theme.led-red : Theme.led-green).with-alpha(0.35);
+        background: (root.kind == "pedal" && !root.signature ? Theme.led-red : Theme.led-green).with-alpha(0.35);
     }
     led := Rectangle {
-        x: root.has-picture ? parent.width - 9px : root.kind == "pedal" ? (parent.width - self.width) / 2 : parent.width - 11px;
-        y: root.has-picture ? 4px : root.kind == "pedal" ? 8px : root.has-panel ? 4px : 6px;
-        width: 5px;
-        height: 5px;
-        border-radius: 2.5px;
-        background: root.bypassed ? Theme.led-off : root.kind == "pedal" ? Theme.led-red : Theme.led-green;
+        x: root.signature ? (parent.width - self.width) / 2 : root.has-picture ? parent.width - 9px : root.kind == "pedal" ? (parent.width - self.width) / 2 : parent.width - 11px;
+        y: root.signature ? 9px : root.has-picture ? 4px : root.kind == "pedal" ? 8px : root.has-panel ? 4px : 6px;
+        width: root.signature ? 6px : 5px;
+        height: self.width;
+        border-radius: self.width / 2;
+        background: root.bypassed ? Theme.led-off : root.kind == "pedal" && !root.signature ? Theme.led-red : Theme.led-green;
     }
 }

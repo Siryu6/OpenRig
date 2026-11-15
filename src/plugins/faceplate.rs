@@ -79,6 +79,28 @@ impl Plate {
     pub fn steel_caps(&self) -> bool {
         luminance(self.color) < 0.03
     }
+
+    /// The block's colour where the plate is not drawn (value arcs, the
+    /// knob strip, rack lines): the plate's colour, lifted toward a light
+    /// grey until it shows on the dark stage
+    pub fn tint(&self) -> u32 {
+        const GREY: u32 = 0xC8C8CC;
+        const LEAST: f32 = 0.08;
+        let mix = |a: u32, t: f32| -> u32 {
+            let channel = |shift: u32| {
+                let (x, y) = (
+                    ((a >> shift) & 0xff) as f32,
+                    ((GREY >> shift) & 0xff) as f32,
+                );
+                ((x + (y - x) * t).round() as u32) << shift
+            };
+            channel(16) | channel(8) | channel(0)
+        };
+        (0..=10)
+            .map(|step| mix(self.color, step as f32 / 10.0))
+            .find(|&c| luminance(c) >= LEAST)
+            .unwrap_or(GREY)
+    }
 }
 
 /// A trusted plugin's look
@@ -563,5 +585,21 @@ mod tests {
         // Degenerate sizes do not panic
         assert_eq!(plate.render(0, 0).len(), 4);
         assert_eq!(plate.render(1, 300).len(), 300 * 4);
+    }
+
+    #[test]
+    fn tints_show_on_the_stage() {
+        let plate = |color| Plate {
+            color,
+            knob_style: KnobStyle::Plain,
+            finish: Finish::Painted,
+            wear: 0.0,
+            seed: 1,
+        };
+        // A mid colour stays as it is, a near-black one turns grey
+        assert_eq!(plate(0x2E7A4A).tint(), 0x2E7A4A);
+        let black = plate(0x1E1E21).tint();
+        assert_ne!(black, 0x1E1E21);
+        assert!(luminance(black) >= 0.08);
     }
 }
