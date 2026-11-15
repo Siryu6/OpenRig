@@ -1,6 +1,6 @@
 import { Theme } from "../theme.slint";
 import { Spectrum, ScopeView, ScopeLive } from "../types.slint";
-import { Caption, DbLabels, FreqGrid, Handle, InOut, Plot, PlotEvents, PlotPath, Tag } from "plot.slint";
+import { BlockHandle, BlockPlot, Caption, DbLabels, FreqGrid, InOut, Plot, PlotPath, Tag } from "plot.slint";
 
 // What a delay, reverb, drive, modulation or cabinet block does to the sound:
 // a delay's echoes across, which drag (time, feedback), and measured on what
@@ -67,15 +67,11 @@ export component ScopeGraph inherits Rectangle {
         }
     }
 
-    wide := Plot {
+    wide := BlockPlot {
         x: root.has-left ? square.x + square.width + 12px : 40px;
         y: 12px;
         width: root.width - self.x - 12px;
         height: root.side;
-        // The wide plot of the view
-        sized(w, h) => {
-            PlotEvents.resized(w, h);
-        }
 
         if root.scope.right == "spectrum": Rectangle {
             FreqGrid {
@@ -120,32 +116,20 @@ export component ScopeGraph inherits Rectangle {
     }
 
     // A delay's first echo (time, across) and second (feedback, up and down)
-    Handle {
+    BlockHandle {
         handle: root.scope.echo-feedback;
         accent: root.line;
         plot-x: wide.x;
         plot-y: wide.y;
         plot-width: wide.width;
         plot-height: wide.height;
-        drag(x, y) => {
-            PlotEvents.drag(self.handle.name, x, y);
-        }
-        released => {
-            PlotEvents.released();
-        }
     }
-    Handle {
+    BlockHandle {
         handle: root.scope.echo-time;
         accent: root.line;
         plot-x: wide.x;
         plot-y: wide.y;
         plot-width: wide.width;
         plot-height: wide.height;
-        drag(x, y) => {
-            PlotEvents.drag(self.handle.name, x, y);
-        }
-        released => {
-            PlotEvents.released();
-        }
     }
 }

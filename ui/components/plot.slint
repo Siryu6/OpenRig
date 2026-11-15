@@ -245,3 +245,20 @@ export component Handle inherits Rectangle {
         }
     }
 }
+
+// The wide plot and the handles of a block view (level curve, scope): what
+// they say goes to PlotEvents
+export component BlockPlot inherits Plot {
+    sized(w, h) => {
+        PlotEvents.resized(w, h);
+    }
+}
+
+export component BlockHandle inherits Handle {
+    drag(x, y) => {
+        PlotEvents.drag(self.handle.name, x, y);
+    }
+    released => {
+        PlotEvents.released();
+    }
+}
