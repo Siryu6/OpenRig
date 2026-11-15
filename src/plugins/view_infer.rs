@@ -4,9 +4,14 @@
 //! controls say what each one does ("Frequency 1" in Hz, "Gain 1" in dB) and
 //! which ones belong together. A plugin read wrongly gets no view, and keeps
 //! its knobs.
+//!
+//! An OpenRig FX plugin may state its view (`openrig:view`) and what its
+//! controls mean (`openrig:role`, see [`super::faceplate`]): what it states
+//! wins over what is inferred, the rest is inferred as for any plugin.
 
 use super::dynamics::{Dynamics, Kind};
 use super::eq_curve::{Band, Display, QUnit, Shape, ShapeChoice, Value};
+use super::faceplate::View;
 use super::scanner::{PluginCategory, PluginInfo, PortInfo, PortType};
 use super::scope::{Echoes, Level, Scope, ScopeKind};
 
@@ -232,7 +237,11 @@ fn fixed_freq(words: &[String]) -> Option<f32> {
 pub fn eq(info: &PluginInfo) -> Option<Display> {
     // A plugin without a class falls back on its category
     let unclassed_filter = info.class.is_empty() && info.category == PluginCategory::Filter;
-    if !(EQ_CLASSES.contains(&info.class.as_str()) || unclassed_filter) {
+    let fits = match stated_view(info) {
+        Some(view) => view == View::Eq,
+        None => EQ_CLASSES.contains(&info.class.as_str()) || unclassed_filter,
+    };
+    if !fits {
         return None;
     }
     let mut parts: Vec<Parts> = Vec::new();
@@ -343,11 +352,15 @@ pub fn dynamics(info: &PluginInfo) -> Option<Dynamics> {
     let ratio_named = info
         .control_inputs()
         .any(|p| has_any(&words(&p.name), &["ratio"]));
-    let kind = match info.class.as_str() {
-        "CompressorPlugin" => Kind::Compressor,
-        "LimiterPlugin" => Kind::Limiter,
-        "GatePlugin" | "ExpanderPlugin" => Kind::Gate,
-        "DynamicsPlugin" if ratio_named => Kind::Compressor,
+    let kind = match (stated_view(info), info.class.as_str()) {
+        (Some(View::Compressor), _) => Kind::Compressor,
+        (Some(View::Limiter), _) => Kind::Limiter,
+        (Some(View::Gate), _) => Kind::Gate,
+        (Some(_), _) => return None,
+        (None, "CompressorPlugin") => Kind::Compressor,
+        (None, "LimiterPlugin") => Kind::Limiter,
+        (None, "GatePlugin" | "ExpanderPlugin") => Kind::Gate,
+        (None, "DynamicsPlugin") if ratio_named => Kind::Compressor,
         _ => return None,
     };
     let mut d = Dynamics {
@@ -368,6 +381,22 @@ pub fn dynamics(info: &PluginInfo) -> Option<Dynamics> {
         let has = |names: &[&str]| has_any(&w, names);
         let db = unit(port) == "db";
         let symbol = Some(port.symbol.clone());
+        if let Some(role) = port.role.as_deref() {
+            match role {
+                "threshold" => d.threshold = port.symbol.clone(),
+                "ratio" => {
+                    d.ratio = symbol;
+                    d.ratio_scale = ratio_scale(port);
+                }
+                "knee" => d.knee = symbol,
+                "makeup" => d.makeup = symbol,
+                "inputGain" => d.input_gain = symbol,
+                "range" => d.range = symbol,
+                "gainReduction" => d.reduction = symbol,
+                _ => {}
+            }
+            continue;
+        }
         match port.port_type {
             PortType::ControlOutput => {
                 // Read as dB: not a reading in another unit, or a 0..1 factor
@@ -413,6 +442,22 @@ pub fn dynamics(info: &PluginInfo) -> Option<Dynamics> {
 /// class, else its category (and for simulators, its name: amp or cabinet)
 pub fn scope(info: &PluginInfo) -> Option<Scope> {
     let named = |names: &[&str]| has_any(&words(&info.name), names);
+    let kind = match stated_view(info) {
+        Some(View::EchoTimeline) => ScopeKind::Delay,
+        Some(_) => return None,
+        None => scope_kind(info, named)?,
+    };
+    let echoes = (kind == ScopeKind::Delay).then(|| echoes(info)).flatten();
+    Some(Scope { kind, echoes })
+}
+
+/// The view a trusted plugin states, if the app draws it
+fn stated_view(info: &PluginInfo) -> Option<View> {
+    info.faceplate.as_ref().and_then(|f| f.view)
+}
+
+/// The kind of scope of a plugin that states none
+fn scope_kind(info: &PluginInfo, named: impl Fn(&[&str]) -> bool) -> Option<ScopeKind> {
     let kind = match info.class.as_str() {
         "DelayPlugin" => ScopeKind::Delay,
         "ReverbPlugin" => ScopeKind::Reverb,
@@ -435,14 +480,14 @@ pub fn scope(info: &PluginInfo) -> Option<Scope> {
             _ => return None,
         },
     };
-    let echoes = (kind == ScopeKind::Delay).then(|| echoes(info)).flatten();
-    Some(Scope { kind, echoes })
+    Some(kind)
 }
 
 /// A delay's time, feedback and mix, if its time has a unit
 fn echoes(info: &PluginInfo) -> Option<Echoes> {
     let mut time = None;
     let (mut feedback, mut mix, mut crossfade, mut sync) = (None, None, false, None);
+    let mut ping_pong = None;
     for port in info.control_inputs() {
         let w = words(&port.name);
         let has = |names: &[&str]| has_any(&w, names);
@@ -453,15 +498,38 @@ fn echoes(info: &PluginInfo) -> Option<Echoes> {
             max: port.max,
             db: unit == "db",
         };
+        let seconds = match unit.as_str() {
+            "ms" => Some(0.001),
+            "s" => Some(1.0),
+            _ => None,
+        };
+        if let Some(role) = port.role.as_deref() {
+            match role {
+                "delayTime" => {
+                    if let Some(seconds) = seconds {
+                        time = Some((port.symbol.clone(), seconds));
+                    }
+                }
+                "feedback" => feedback = Some(level()),
+                "mix" | "wetLevel" => {
+                    mix = Some(level());
+                    crossfade = role == "mix";
+                }
+                "delayTempoDivision" => sync = Some(port.symbol.clone()),
+                "pingPong" => ping_pong = Some(port.symbol.clone()),
+                _ => {}
+            }
+            continue;
+        }
         if port.toggled {
             if has(&["sync", "bpm", "tempo"]) {
                 sync = Some(port.symbol.clone());
+            } else if has(&["pingpong"]) || (has(&["ping"]) && has(&["pong"])) {
+                ping_pong = Some(port.symbol.clone());
             }
         } else if has(&["time", "delay", "length"]) && !has(&["pre", "predelay"]) {
-            let seconds = match unit.as_str() {
-                "ms" => 0.001,
-                "s" => 1.0,
-                _ => continue,
+            let Some(seconds) = seconds else {
+                continue;
             };
             time.get_or_insert((port.symbol.clone(), seconds));
         } else if has(&[
@@ -488,6 +556,7 @@ fn echoes(info: &PluginInfo) -> Option<Echoes> {
         mix,
         crossfade,
         sync,
+        ping_pong,
     })
 }
 
@@ -772,6 +841,93 @@ mod tests {
             ]
         );
         assert_eq!(scope(find("x42-fil4")), None);
+    }
+
+    /// An OpenRig FX plugin stating `view`, its ports with their roles
+    fn stated(view: Option<View>, ports: Vec<(PortInfo, Option<&str>)>) -> PluginInfo {
+        let ports = ports
+            .into_iter()
+            .map(|(port, role)| PortInfo {
+                role: role.map(str::to_string),
+                ..port
+            })
+            .collect();
+        PluginInfo {
+            uri: "https://openrig.eu/plugins/test".into(),
+            faceplate: Some(crate::plugins::faceplate::Faceplate {
+                plate: None,
+                name: "Test".into(),
+                short_name: "Test".into(),
+                tagline: String::new(),
+                view,
+            }),
+            ..plugin("", ports)
+        }
+    }
+
+    #[test]
+    fn a_stated_view_and_roles_win_over_inference() {
+        // Names that say nothing, a class that says something else: the
+        // view and roles stated are what count
+        let comp = stated(
+            Some(View::Compressor),
+            vec![
+                (control("A", "a", Some("db")), Some("threshold")),
+                (control("B", "b", None), Some("ratio")),
+                (control("Output", "c", Some("db")), Some("mix")),
+                (control("Level", "d", Some("db")), Some("makeup")),
+            ],
+        );
+        let d = dynamics(&comp).expect("stated compressor");
+        assert_eq!((d.kind, d.threshold.as_str()), (Kind::Compressor, "a"));
+        assert_eq!(
+            (d.ratio.as_deref(), d.makeup.as_deref()),
+            (Some("b"), Some("d"))
+        );
+        assert_eq!(eq(&comp), None);
+        assert_eq!(scope(&comp), None);
+
+        let toggle = |name: &str, symbol: &str| PortInfo {
+            toggled: true,
+            ..control(name, symbol, None)
+        };
+        let echo = stated(
+            Some(View::EchoTimeline),
+            vec![
+                (control("Time", "time", Some("ms")), Some("delayTime")),
+                (control("Level", "level", Some("%")), Some("wetLevel")),
+                (control("Repeats", "fb", Some("%")), Some("feedback")),
+                (toggle("Wide", "wide"), Some("pingPong")),
+            ],
+        );
+        let echoes = scope(&echo).and_then(|s| s.echoes).expect("echoes");
+        assert_eq!(echoes.mix.map(|m| m.symbol).as_deref(), Some("level"));
+        assert!(!echoes.crossfade);
+        assert_eq!(echoes.ping_pong.as_deref(), Some("wide"));
+
+        // A view the app does not draw leaves it to inference
+        let lfo = stated(
+            None,
+            vec![(control("Rate", "rate", Some("hz")), Some("lfoRate"))],
+        );
+        assert_eq!(dynamics(&lfo), None);
+    }
+
+    #[test]
+    fn a_ping_pong_switch_is_read_from_its_name() {
+        let toggle = |name: &str, symbol: &str| PortInfo {
+            toggled: true,
+            ..control(name, symbol, None)
+        };
+        let delay = plugin(
+            "DelayPlugin",
+            vec![
+                control("Time", "time", Some("ms")),
+                toggle("Ping-Pong", "pp"),
+            ],
+        );
+        let echoes = scope(&delay).and_then(|s| s.echoes).expect("echoes");
+        assert_eq!(echoes.ping_pong.as_deref(), Some("pp"));
     }
 
     #[test]

@@ -63,8 +63,11 @@ pub struct ParameterView {
     pub option_values: Vec<f32>,
     /// Value shown as "Off"
     pub off_value: Option<f32>,
-    /// Shown in the rack's knob strip
-    pub in_strip: bool,
+    /// Place in the rack's knob strip; `None`: left out of it
+    pub strip_pos: Option<usize>,
+    /// Rank in the knob strip an OpenRig FX plugin asks for
+    /// (`openrig:primary`)
+    pub primary: Option<u32>,
     /// Place on an OpenRig FX faceplate (`openrig:order`); `None`: only in
     /// the full control list
     pub face_order: Option<u32>,
@@ -98,8 +101,27 @@ impl ParameterView {
                 .collect(),
             option_values: port.scale_points.iter().map(|(_, v)| *v).collect(),
             off_value: port.off_value,
-            in_strip: true,
+            strip_pos: None,
+            primary: port.primary,
             face_order: port.order,
+        }
+    }
+}
+
+/// Places in the rack's knob strip of `parameters` (in the order shown):
+/// as arranged in the editor, else the plugin's primary controls first
+/// (`openrig:primary`), then as shown; none for those left out
+fn place_in_strip(parameters: &mut [ParameterView], layout: &crate::state::param_layout::Layout) {
+    let mut strip: Vec<(usize, (usize, u32))> = parameters
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| layout.in_strip(&p.symbol))
+        .map(|(i, p)| (i, (layout.rank(&p.symbol), p.primary.unwrap_or(u32::MAX))))
+        .collect();
+    strip.sort_by_key(|&(_, key)| key);
+    for (pos, (i, _)) in strip.into_iter().enumerate() {
+        if let Some(p) = parameters.get_mut(i) {
+            p.strip_pos = Some(pos);
         }
     }
 }
@@ -263,9 +285,7 @@ pub fn selected_node_view(state: &AppState, instance_id: usize) -> Option<Select
             // else in its port order
             let layout = state.param_layout(uri);
             parameters.sort_by_key(|p| (layout.rank(&p.symbol), p.face_order.unwrap_or(u32::MAX)));
-            for p in &mut parameters {
-                p.in_strip = layout.in_strip(&p.symbol);
-            }
+            place_in_strip(&mut parameters, &layout);
             Some(SelectedNodeView {
                 instance_id,
                 uri: uri.clone(),
@@ -580,6 +600,7 @@ mod tests {
                 name: "GREEN".into(),
                 short_name: "GREEN".into(),
                 tagline: String::new(),
+                view: None,
             }),
             ..PluginInfo::default()
         };
@@ -592,6 +613,35 @@ mod tests {
             rack_color(Some("blue"), &info.uri, Some(&info)),
             ("blue", block_color("blue").unwrap())
         );
+    }
+
+    #[test]
+    fn the_strip_puts_primary_controls_first_unless_arranged() {
+        use crate::state::param_layout::Layout;
+        let param = |symbol: &str, primary: Option<u32>| ParameterView {
+            symbol: symbol.into(),
+            primary,
+            ..ParameterView::new(0, &PortInfo::default(), 0.0)
+        };
+        let places = |layout: &Layout| {
+            let mut parameters = vec![
+                param("mode", None),
+                param("time", Some(1)),
+                param("tone", None),
+                param("level", Some(2)),
+            ];
+            place_in_strip(&mut parameters, layout);
+            parameters.iter().map(|p| p.strip_pos).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            places(&Layout::default()),
+            [Some(2), Some(0), Some(3), Some(1)]
+        );
+        let arranged = Layout {
+            order: vec!["tone".into()],
+            hidden: vec!["mode".into()],
+        };
+        assert_eq!(places(&arranged), [None, Some(1), Some(0), Some(2)]);
     }
 
     #[test]

@@ -278,6 +278,14 @@ mod discovery {
         node.as_float().or_else(|| node.as_int().map(|i| i as f32))
     }
 
+    /// A place from 1 (`openrig:order`, `openrig:primary`)
+    fn rank(node: Option<Node>) -> Option<u32> {
+        node.as_ref()
+            .and_then(number)
+            .filter(|o| *o >= 1.0 && o.fract() == 0.0)
+            .map(|o| o as u32)
+    }
+
     /// Short symbol for the common lv2 units
     fn unit_symbol(world: &World, unit: &Node) -> Option<String> {
         let uri = unit.as_uri()?;
@@ -434,6 +442,8 @@ mod discovery {
             wear: first("wear").as_ref().and_then(number),
             plate_name: text("plateName"),
             tagline: text("tagline"),
+            view: resource("view"),
+            dynamics: resource("dynamics"),
         }
     }
 
@@ -459,6 +469,8 @@ mod discovery {
         let position = uri(crate::plugins::atom::TIME_POSITION);
         let patch_message = uri(crate::plugins::atom::PATCH_MESSAGE);
         let face_order = uri(&format!("{}order", faceplate::NS));
+        let face_role = uri(&format!("{}role", faceplate::NS));
+        let face_primary = uri(&format!("{}primary", faceplate::NS));
 
         let mut found = Vec::new();
         'plugins: for plugin in world.plugins().iter() {
@@ -572,11 +584,15 @@ mod discovery {
                     enabled: port_type == PortType::ControlInput
                         && port.get(&designation).is_some_and(|d| d == enabled),
                     order: (trusted && port_type == PortType::ControlInput)
-                        .then(|| port.get(&face_order))
+                        .then(|| rank(port.get(&face_order)))
+                        .flatten(),
+                    role: trusted
+                        .then(|| port.get(&face_role))
                         .flatten()
-                        .and_then(|n| number(&n))
-                        .filter(|o| *o >= 1.0 && o.fract() == 0.0)
-                        .map(|o| o as u32),
+                        .and_then(|n| n.as_uri()?.strip_prefix(faceplate::NS).map(str::to_string)),
+                    primary: (trusted && port_type == PortType::ControlInput)
+                        .then(|| rank(port.get(&face_primary)))
+                        .flatten(),
                 });
             }
             ports.sort_by_key(|p| p.index);

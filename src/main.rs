@@ -529,18 +529,11 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
         }
         return;
     };
-    // Places in the knob strip, for those in it
-    let mut strip_count = 0;
     let parameters: Vec<ParameterInfo> = view
         .parameters
         .into_iter()
         .map(|p| ParameterInfo {
-            strip_pos: if p.in_strip {
-                strip_count += 1;
-                strip_count - 1
-            } else {
-                -1
-            },
+            strip_pos: p.strip_pos.map_or(-1, |pos| pos as i32),
             index: p.index as i32,
             name: p.name.into(),
             min: p.min,
@@ -574,8 +567,8 @@ fn refresh_editor(app: &App, state: &AppState, chain: &EffectChainState) {
     );
     app.set_selected_plugin_bypassed(view.bypassed);
     app.set_selected_bypass_midi(midi_label(chain, view.instance_id, MidiTarget::Bypass));
+    app.set_selected_strip_count(parameters.iter().filter(|p| p.strip_pos >= 0).count() as i32);
     app.set_selected_parameters(model(parameters));
-    app.set_selected_strip_count(strip_count);
     plugin_view::refresh(app, state);
     app.set_selected_uses_file(view.uses_file);
     let pack = match chain.find(view.instance_id) {

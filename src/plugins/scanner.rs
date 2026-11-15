@@ -75,6 +75,15 @@ pub struct PortInfo {
     /// only for trusted plugins (see [`super::faceplate`])
     #[serde(default)]
     pub order: Option<u32>,
+    /// What the control means to the plugin's view (`openrig:role`, by its
+    /// local name: "threshold", "delayTime"…): read only for trusted
+    /// plugins, it wins over what the view infers from the name
+    #[serde(default)]
+    pub role: Option<String>,
+    /// Rank in the rack's knob strip (`openrig:primary`, from 1): read only
+    /// for trusted plugins
+    #[serde(default)]
+    pub primary: Option<u32>,
 }
 
 impl PortInfo {

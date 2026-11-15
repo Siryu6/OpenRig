@@ -85,10 +85,22 @@ export component ScopeGraph inherits Rectangle {
                 background: beat.bar ? root.colors.grid-strong : root.colors.grid;
             }
             // Each echo's tail, fading until the next one
+            // Ping-pong: the left lane above, the right one below
+            if root.scope.echo-lanes: Rectangle {
+                y: wide.height / 2;
+                height: 1px;
+                background: root.colors.grid-strong;
+            }
+            for lane[k] in (root.scope.echo-lanes ? ["L", "R"] : []): Tag {
+                x: 4px;
+                y: k * wide.height / 2 + 6px;
+                text: lane;
+                colors: root.colors;
+            }
             for tap[i] in root.scope.echo-taps: Rectangle {
                 visible: i > 0;
                 x: tap.x * wide.width;
-                y: (1 - tap.height) * wide.height;
+                y: (1 - tap.base - tap.height) * wide.height;
                 width: (i + 1 < root.scope.echo-taps.length ? root.scope.echo-taps[i + 1].x * wide.width : wide.width)
                     - self.x;
                 height: tap.height * wide.height;
@@ -98,7 +110,7 @@ export component ScopeGraph inherits Rectangle {
             // The dry sound first, grey
             for tap[i] in root.scope.echo-taps: Rectangle {
                 x: tap.x * wide.width - 2px;
-                y: (1 - tap.height) * wide.height;
+                y: (1 - tap.base - tap.height) * wide.height;
                 width: 4px;
                 height: tap.height * wide.height;
                 background: i == 0 ? root.colors.muted : root.line;

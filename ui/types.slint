@@ -414,9 +414,11 @@ export struct DynLive {
     history-reduction: string,
 }
 
-// A line of a delay's echoes: where across, how high, 0 to 1
+// A line of a delay's echoes: where across, where it stands and how high,
+// 0 to 1 from the bottom
 export struct EchoTap {
     x: float,
+    base: float,
     height: float,
 }
 
@@ -446,6 +448,7 @@ export struct ScopeView {
     echo-time: PlotHandle,  // the first echo
     echo-feedback: PlotHandle, // the second
     echo-beats: [EchoBeat],    // the tempo's beats behind them
+    echo-lanes: bool,          // ping-pong: left echoes up, right ones down
 }
 
 // What it does right now

@@ -65,6 +65,9 @@ struct Layout {
     time: f32,
     span: f32,
     first: f32,
+    /// Ping-pong: the echoes take the left (top) and right (bottom) lanes
+    /// in turn
+    lanes: bool,
 }
 
 impl Layout {
@@ -78,7 +81,36 @@ impl Layout {
             time,
             span,
             first,
+            lanes: echoes.ping_pong(value),
         })
+    }
+
+    /// Where tap `i` stands and how much of the height it has, 0 to 1 from
+    /// the bottom: all of it, or with lanes, the top half for the odd
+    /// echoes (left) and the bottom half for the even ones (right); the dry
+    /// sound is on both
+    fn lane(&self, i: usize) -> (f32, f32) {
+        match (self.lanes, i) {
+            (false, _) | (true, 0) => (0.0, 1.0),
+            (true, i) if i % 2 == 1 => (0.5, 0.5),
+            (true, _) => (0.0, 0.5),
+        }
+    }
+
+    /// Height of tap `i` at `amplitude`, 0 to 1 from the bottom of the plot
+    fn height(&self, i: usize, amplitude: f32) -> f32 {
+        let (base, scale) = self.lane(i);
+        base + scale * amplitude_up(amplitude)
+    }
+
+    /// Amplitude of tap `i` at height `y` (the reverse of `height`)
+    fn amplitude(&self, i: usize, y: f32) -> f32 {
+        let (base, scale) = self.lane(i);
+        let up = (y - base) / scale;
+        match up > 0.0 {
+            true => 10f32.powf(down(up) / 20.0),
+            false => 0.0,
+        }
     }
 }
 
@@ -154,11 +186,14 @@ fn view(app: &App, state: &AppState) -> Option<(ScopeView, Vec<EchoTap>, Vec<Ech
     let taps = layout
         .taps
         .iter()
-        .map(|&(t, level)| EchoTap {
+        .enumerate()
+        .map(|(i, &(t, level))| EchoTap {
             x: x(t, layout.span),
-            height: amplitude_up(level),
+            base: layout.lane(i).0,
+            height: layout.height(i, level) - layout.lane(i).0,
         })
         .collect();
+    view.echo_lanes = layout.lanes;
     view.echo_span = seconds(layout.span).into();
     view.echo_time = PlotHandle {
         shown: true,
@@ -166,7 +201,7 @@ fn view(app: &App, state: &AppState) -> Option<(ScopeView, Vec<EchoTap>, Vec<Ech
         label: "T".into(),
         on: true,
         x: x(time, layout.span),
-        y: amplitude_up(first),
+        y: layout.height(1, first),
     };
     view.echo_feedback = PlotHandle {
         shown: echoes.feedback.is_some() && first > 1e-3,
@@ -174,7 +209,7 @@ fn view(app: &App, state: &AppState) -> Option<(ScopeView, Vec<EchoTap>, Vec<Ech
         label: "F".into(),
         on: true,
         x: x(2.0 * time, layout.span),
-        y: amplitude_up(first * echoes.feedback(&value)),
+        y: layout.height(2, first * echoes.feedback(&value)),
     };
     let count = layout.taps.len().saturating_sub(1);
     view.summary = format!(
@@ -298,10 +333,7 @@ pub(crate) fn drag(app: &App, state: &AppState, handle: &str, x: f32, y: f32) {
         let time = seconds_at(x, span).max(0.001);
         controls.set(app, Some(&echoes.time), echoes.time_value(time));
     } else if let Some(feedback) = &echoes.feedback {
-        let amount = match y > 0.0 {
-            true => 10f32.powf(down(y) / 20.0) / layout.first,
-            false => 0.0,
-        };
+        let amount = layout.amplitude(2, y) / layout.first;
         controls.set(
             app,
             Some(&feedback.symbol),
