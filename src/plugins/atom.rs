@@ -1,13 +1,15 @@
 //! Events written into the atom input ports of LV2 plugins before each run:
-//! the transport (`time:Position`, so tempo-synced plugins follow the
-//! pedalboard tempo) and MIDI messages, plus the `patch:Set` messages that
+//! the transport (`time:Position` at every run, so tempo-synced plugins
+//! follow the pedalboard tempo and bar) and MIDI messages, plus the `patch:Set` messages that
 //! give a plugin its files. Plain byte layout from the LV2 atom spec,
 //! written in place without allocating (audio thread).
 
+use crate::audio::transport::{Position, BEATS_PER_BAR, BEAT_UNIT};
 use crate::midi::RawMidi;
 
 pub const ATOM_OBJECT: &str = "http://lv2plug.in/ns/ext/atom#Object";
 pub const ATOM_FLOAT: &str = "http://lv2plug.in/ns/ext/atom#Float";
+pub const ATOM_DOUBLE: &str = "http://lv2plug.in/ns/ext/atom#Double";
 pub const ATOM_LONG: &str = "http://lv2plug.in/ns/ext/atom#Long";
 pub const ATOM_INT: &str = "http://lv2plug.in/ns/ext/atom#Int";
 pub const MIDI_EVENT: &str = "http://lv2plug.in/ns/ext/midi#MidiEvent";
@@ -18,6 +20,8 @@ const ATOM_URID: &str = "http://lv2plug.in/ns/ext/atom#URID";
 const PATCH_SET: &str = "http://lv2plug.in/ns/ext/patch#Set";
 const PATCH_PROPERTY: &str = "http://lv2plug.in/ns/ext/patch#property";
 const PATCH_VALUE: &str = "http://lv2plug.in/ns/ext/patch#value";
+const TIME_FRAME: &str = "http://lv2plug.in/ns/ext/time#frame";
+const TIME_BEAT: &str = "http://lv2plug.in/ns/ext/time#beat";
 const TIME_SPEED: &str = "http://lv2plug.in/ns/ext/time#speed";
 const TIME_BPM: &str = "http://lv2plug.in/ns/ext/time#beatsPerMinute";
 const TIME_BAR: &str = "http://lv2plug.in/ns/ext/time#bar";
@@ -31,10 +35,13 @@ pub struct AtomUrids {
     pub sequence: u32,
     pub object: u32,
     pub float: u32,
+    pub double: u32,
     pub long: u32,
     pub int: u32,
     pub midi_event: u32,
     pub position: u32,
+    pub frame: u32,
+    pub beat: u32,
     pub speed: u32,
     pub bpm: u32,
     pub bar: u32,
@@ -54,10 +61,13 @@ impl AtomUrids {
             sequence,
             object: map(ATOM_OBJECT),
             float: map(ATOM_FLOAT),
+            double: map(ATOM_DOUBLE),
             long: map(ATOM_LONG),
             int: map(ATOM_INT),
             midi_event: map(MIDI_EVENT),
             position: map(TIME_POSITION),
+            frame: map(TIME_FRAME),
+            beat: map(TIME_BEAT),
             speed: map(TIME_SPEED),
             bpm: map(TIME_BPM),
             bar: map(TIME_BAR),
@@ -133,29 +143,43 @@ impl Writer<'_> {
 }
 
 /// Size of an event body holding a transport position (object body and its
-/// six properties, each padded to 24 bytes)
-const POSITION_BODY: usize = 8 + 6 * 24;
+/// eight properties, each padded to 24 bytes)
+const POSITION_BODY: usize = 8 + 8 * 24;
 
-/// Write an input sequence holding the transport position at `bpm` (when
-/// given) and `midi`, all at frame 0. The buffer must start 8-byte aligned.
-pub fn write_input(buf: &mut [u8], urids: &AtomUrids, bpm: Option<f32>, midi: &[RawMidi]) {
+/// Write an input sequence holding the transport `position` (when given)
+/// and `midi`, all at frame 0. The buffer must start 8-byte aligned.
+pub fn write_input(
+    buf: &mut [u8],
+    urids: &AtomUrids,
+    position: Option<&Position>,
+    midi: &[RawMidi],
+) {
     let mut w = Writer { buf, at: 0 };
     // Sequence header; its size is set once the events are known
     w.u32(0);
     w.u32(urids.sequence);
     w.u32(0); // unit: frames
     w.u32(0);
-    if let Some(bpm) = bpm.filter(|_| w.fits(16 + POSITION_BODY)) {
+    if let Some(p) = position.filter(|_| w.fits(16 + POSITION_BODY)) {
         w.event(POSITION_BODY as u32, urids.object);
         w.u32(0); // id
         w.u32(urids.position);
-        // The pedalboard is always "playing": synced LFOs and delays run
-        w.property(urids.speed, urids.float, &1.0f32.to_ne_bytes());
-        w.property(urids.bpm, urids.float, &bpm.to_ne_bytes());
-        w.property(urids.bar, urids.long, &0i64.to_ne_bytes());
-        w.property(urids.bar_beat, urids.float, &0.0f32.to_ne_bytes());
-        w.property(urids.beat_unit, urids.int, &4i32.to_ne_bytes());
-        w.property(urids.beats_per_bar, urids.float, &4.0f32.to_ne_bytes());
+        w.property(urids.frame, urids.long, &(p.frame as i64).to_ne_bytes());
+        w.property(urids.speed, urids.float, &p.speed().to_ne_bytes());
+        w.property(urids.bpm, urids.float, &p.bpm.to_ne_bytes());
+        w.property(urids.bar, urids.long, &p.bar().to_ne_bytes());
+        w.property(urids.bar_beat, urids.float, &p.bar_beat().to_ne_bytes());
+        w.property(urids.beat, urids.double, &p.beat.to_ne_bytes());
+        w.property(
+            urids.beat_unit,
+            urids.int,
+            &(BEAT_UNIT as i32).to_ne_bytes(),
+        );
+        w.property(
+            urids.beats_per_bar,
+            urids.float,
+            &(BEATS_PER_BAR as f32).to_ne_bytes(),
+        );
     }
     for message in midi {
         let bytes = message.as_slice();
@@ -215,10 +239,13 @@ mod tests {
         let names = [
             ATOM_OBJECT,
             ATOM_FLOAT,
+            ATOM_DOUBLE,
             ATOM_LONG,
             ATOM_INT,
             MIDI_EVENT,
             TIME_POSITION,
+            TIME_FRAME,
+            TIME_BEAT,
             TIME_SPEED,
             TIME_BPM,
             TIME_BAR,
@@ -257,19 +284,47 @@ mod tests {
             bytes: [0x90, 60, 100],
             len: 3,
         };
-        write_input(&mut buf, &u, Some(120.0), &[note]);
+        // Bar 2, beat 1.5 (5.5 beats from the start)
+        let position = Position {
+            frame: 132_000,
+            beat: 5.5,
+            bpm: 120.0,
+            sample_rate: 48_000.0,
+        };
+        write_input(&mut buf, &u, Some(&position), &[note]);
         // Position event: frame, body atom, object body
         assert_eq!(u32_at(&buf, 24), POSITION_BODY as u32);
         assert_eq!(u32_at(&buf, 28), u.object);
         assert_eq!(u32_at(&buf, 36), u.position);
-        // Second property is the tempo
-        let bpm = 40 + 24;
-        assert_eq!(u32_at(&buf, bpm), u.bpm);
-        assert_eq!(u32_at(&buf, bpm + 12), u.float);
+        // Properties in order: key at +0, value type at +12, value at +16
+        let property = |n: usize| 40 + n * 24;
+        let value = |n: usize| &buf[property(n) + 16..property(n) + 24];
+        let f32_of = |n: usize| f32::from_ne_bytes(value(n)[..4].try_into().unwrap());
+        let i64_of = |n: usize| i64::from_ne_bytes(value(n).try_into().unwrap());
+        let keys: Vec<(u32, u32)> = (0..8)
+            .map(|n| (u32_at(&buf, property(n)), u32_at(&buf, property(n) + 12)))
+            .collect();
         assert_eq!(
-            f32::from_ne_bytes(buf[bpm + 16..bpm + 20].try_into().unwrap()),
-            120.0
+            keys,
+            [
+                (u.frame, u.long),
+                (u.speed, u.float),
+                (u.bpm, u.float),
+                (u.bar, u.long),
+                (u.bar_beat, u.float),
+                (u.beat, u.double),
+                (u.beat_unit, u.int),
+                (u.beats_per_bar, u.float),
+            ]
         );
+        assert_eq!(i64_of(0), 132_000);
+        assert_eq!(f32_of(1), 1.0);
+        assert_eq!(f32_of(2), 120.0);
+        assert_eq!(i64_of(3), 1);
+        assert_eq!(f32_of(4), 1.5);
+        assert_eq!(f64::from_ne_bytes(value(5).try_into().unwrap()), 5.5);
+        assert_eq!(i32::from_ne_bytes(value(6)[..4].try_into().unwrap()), 4);
+        assert_eq!(f32_of(7), 4.0);
         // MIDI event right after, 8-byte aligned
         let midi = 16 + 16 + POSITION_BODY;
         assert_eq!(midi % 8, 0);
@@ -287,7 +342,13 @@ mod tests {
             bytes: [0x80, 60, 0],
             len: 3,
         };
-        write_input(&mut buf, &urids(), Some(90.0), &[note, note]);
+        let position = Position {
+            frame: 0,
+            beat: 0.0,
+            bpm: 90.0,
+            sample_rate: 48_000.0,
+        };
+        write_input(&mut buf, &urids(), Some(&position), &[note, note]);
         // No room for the position; one note fits
         assert_eq!(u32_at(&buf, 0), 8 + 24);
     }

@@ -20,7 +20,7 @@ HeadRush, a Quad Cortex, a Boss…) works as is.
 | CC1 / CC2 / CC3 for expression pedals | Helix / HX, Quad Cortex (learnable, not fixed) |
 | CC49–56 footswitches, CC64 tap, CC68 tuner, CC69 scenes, CC71 modes, CC72 presets | Line 6 Helix / HX (also HeadRush) |
 | CC60–63, CC66 looper | Line 6 Helix / HX |
-| MIDI clock (24 ppqn) drives the tempo | MIDI 1.0 specification |
+| MIDI clock (24 ppqn) drives the tempo, MIDI Start the first beat of the bar | MIDI 1.0 specification |
 | CC learn on any parameter, saved with the preset | Helix controller assign, Quad Cortex, Kemper |
 | Omni or channel 1–16 | MIDI 1.0 specification |
 
@@ -88,8 +88,10 @@ the chain gets the same messages; a bypassed block drops them.
 With **Follow MIDI clock** on (the default), an incoming clock sets the
 tempo, averaged over one beat, to 0.5 BPM. The Live page shows **MIDI CLOCK**
 above the tempo while the clock is running. When it stops (1 s without a
-tick), the tempo is back in the player's hands. Start / Stop / Continue are
-ignored.
+tick), the tempo is back in the player's hands. A **Start** puts the bar
+position of the plugins back on its first beat (see the tempo section of
+[SCENES.md](SCENES.md)), a few milliseconds late. Stop and Continue are
+ignored: the pedalboard always plays.
 
 ## Channel
 
@@ -175,4 +177,4 @@ as usual.
   too.
 - MIDI routing per block (all MIDI plugins get the same messages).
 - CC62, CC65 and CC67 of the Helix map (looper play once / reverse, snapshot
-  modes), Start / Stop transport.
+  modes), Stop / Continue transport.

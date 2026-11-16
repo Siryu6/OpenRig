@@ -247,6 +247,7 @@ fn on_message(app: &App, state: &AppState, message: MidiMessage) {
             None => show_status(app, format!("No setlist {}", n).into()),
         },
         MidiAction::Footswitch(slot) => live_ui::action(app, state, slot),
+        MidiAction::Start => state.transport_start(),
         MidiAction::Looper(action) => {
             use pedalboard::midi::LooperAction;
             state.looper_control(|looper| match action {
