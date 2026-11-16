@@ -352,6 +352,8 @@ pub fn glyph(category: &super::scanner::PluginCategory) -> &'static str {
         C::Modulation => {
             "M 0 7 C 6 0 10 0 12.5 7 C 15 14 19 14 25 7 C 31 0 35 0 37.5 7 C 40 14 44 14 50 7"
         }
+        // A note held, then a step up
+        C::Pitch => "M 0 11 L 16 11 L 22 3 L 50 3",
         _ => "M 0 7 L 50 7",
     }
 }

@@ -244,6 +244,7 @@ fn category_name(category: &PluginCategory) -> Option<&'static str> {
         PluginCategory::Distortion => "distortion",
         PluginCategory::Filter => "filter",
         PluginCategory::Modulation => "modulation",
+        PluginCategory::Pitch => "pitch",
         PluginCategory::Delay => "delay",
         PluginCategory::Reverb => "reverb",
         PluginCategory::Simulator => "simulator",

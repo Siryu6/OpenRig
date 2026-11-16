@@ -163,7 +163,7 @@ What OpenRig does, in more technical detail than the
 - **Touch rack**: blocks are drawn after their gear (flat amp head, combo,
   cabinet with speakers, pedal with footswitch, reverb pill; LV2 plugins keep
   a plain card, OpenRig FX plugins their faceplate), coloured by family (amp red, cab orange, drive yellow,
-  reverb teal, delay green, modulation blue…) or with a colour picked in the
+  reverb teal, delay green, modulation blue, pitch lime…) or with a colour picked in the
   block editor. The UI is styled like dark, minimal hardware: near-square
   corners, amber accent, key-like buttons with status LEDs, recessed displays,
   input / output LED meters with clip LEDs on the rack, knobs tinted with the block's colour, LED

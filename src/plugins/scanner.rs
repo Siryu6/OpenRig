@@ -303,6 +303,7 @@ pub enum PluginCategory {
     Distortion, // Overdrive, Fuzz, Distortion
     Filter,     // EQ, Wah, Filter
     Modulation, // Chorus, Flanger, Phaser, Tremolo
+    Pitch,      // Pitch shifter, Harmonizer, Octaver
     Delay,      // Delay, Echo
     Reverb,     // Reverb, Room, Hall
     Simulator,  // Amp sim, Cabinet sim
@@ -330,6 +331,7 @@ impl PluginCategory {
             uri if uri.contains("FlangerPlugin") => Self::Modulation,
             uri if uri.contains("PhaserPlugin") => Self::Modulation,
             uri if uri.contains("ModulatorPlugin") => Self::Modulation,
+            uri if uri.contains("PitchPlugin") => Self::Pitch,
             uri if uri.contains("DelayPlugin") => Self::Delay,
             uri if uri.contains("ReverbPlugin") => Self::Reverb,
             uri if uri.contains("SimulatorPlugin") => Self::Simulator,
@@ -957,6 +959,19 @@ fn demo_plugins() -> Vec<PluginInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pitch_shifters_have_their_own_family() {
+        let lv2 = "http://lv2plug.in/ns/lv2core#";
+        assert_eq!(
+            PluginCategory::from_lv2_class(&format!("{lv2}PitchPlugin")),
+            PluginCategory::Pitch
+        );
+        assert_eq!(
+            PluginCategory::from_lv2_class(&format!("{lv2}ChorusPlugin")),
+            PluginCategory::Modulation
+        );
+    }
 
     #[test]
     fn tone3000_formats_have_one_table() {

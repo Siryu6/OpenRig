@@ -471,6 +471,7 @@ mod discovery {
         let face_order = uri(&format!("{}order", faceplate::NS));
         let face_role = uri(&format!("{}role", faceplate::NS));
         let face_primary = uri(&format!("{}primary", faceplate::NS));
+        let rdf_type = uri("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
 
         let mut found = Vec::new();
         'plugins: for plugin in world.plugins().iter() {
@@ -604,10 +605,23 @@ mod discovery {
                 continue;
             }
 
+            // lilv gives one of the plugin's classes, maybe a broad one (a
+            // pitch shifter that is also a spectral plugin): the first of
+            // them that names a family wins
             let class_uri = plugin
-                .class()
-                .uri()
-                .and_then(|n| n.as_uri().map(str::to_string))
+                .value(&rdf_type)
+                .iter()
+                .filter_map(|n| n.as_uri().map(str::to_string))
+                .find(|uri| {
+                    uri.starts_with(LV2)
+                        && PluginCategory::from_lv2_class(uri) != PluginCategory::Unknown
+                })
+                .or_else(|| {
+                    plugin
+                        .class()
+                        .uri()
+                        .and_then(|n| n.as_uri().map(str::to_string))
+                })
                 .unwrap_or_default();
             let category = match class_uri.as_str() {
                 "" => PluginCategory::Unknown,

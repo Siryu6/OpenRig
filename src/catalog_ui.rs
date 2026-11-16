@@ -22,12 +22,13 @@ use pedalboard::ui::slint_bridge::{block_color, rack_color};
 use crate::{model, plates, rgb, spawn, ui, App, CatalogFamily, CatalogItem};
 
 /// Families in the order of the Add effect page
-const FAMILIES: [&str; 8] = [
+const FAMILIES: [&str; 9] = [
     "Distortion",
     "Simulator",
     "Dynamics",
     "Filter",
     "Modulation",
+    "Pitch",
     "Delay",
     "Reverb",
     "Utility",
@@ -99,6 +100,7 @@ fn colour(plugin: &Plugin) -> Color {
         (_, "Dynamics") => "pink",
         (_, "Filter") => "purple",
         (_, "Modulation") => "blue",
+        (_, "Pitch") => "lime",
         (_, "Delay") => "green",
         (_, "Reverb") => "teal",
         _ => "silver",

@@ -11,6 +11,7 @@ export global CategoryCode {
             category == "Dynamics" ? "DYN" :
             category == "Filter" ? "EQ" :
             category == "Modulation" ? "MOD" :
+            category == "Pitch" ? "PCH" :
             category == "Delay" ? "DLY" :
             category == "Reverb" ? "REV" :
             category == "Simulator" ? "AMP" :
@@ -32,7 +33,7 @@ export component PluginBrowser {
     callback open-store();
 
     private property <[string]> categories: ["All", "Distortion", "Dynamics", "Filter", "Modulation",
-        "Delay", "Reverb", "Simulator", "Utility", "Generator", "Routing", "Unknown"];
+        "Pitch", "Delay", "Reverb", "Simulator", "Utility", "Generator", "Routing", "Unknown"];
 
     width: 100%;
     height: 100%;
