@@ -517,7 +517,8 @@ function renderBlocks() {
   if (box.dataset.key !== key) {
     box.dataset.key = key;
     box.replaceChildren(...state.blocks.map((b) => {
-      const strip = b.params.filter((p) => p.strip);
+      // The knob strip, in the rack's order
+      const strip = b.params.filter((p) => p.strip != null).sort((x, y) => x.strip - y.strip);
       const shown = expanded.has(b.id) || !strip.length ? b.params : strip;
       const card = el("div", { class: "block", id: `b-${b.id}` }, [
         el("div", { class: "block-head" }, [
