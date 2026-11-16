@@ -116,10 +116,23 @@ average of the last four intervals between taps, restarting after a 2 s pause), 
 
 The tempo is sent to every LV2 control port designated
 `time:beatsPerMinute`, or whose unit is BPM, and new blocks start at the
-current tempo. Plugins that follow the host transport get it as a
-`time:Position` event (always rolling, 4/4) on every tempo change and when
-the chain is built. A MIDI clock can drive the tempo too (see
+current tempo. A MIDI clock can drive the tempo too (see
 [MIDI.md](MIDI.md)).
+
+The pedalboard also keeps a running bar and beat position, in 4/4. It
+starts with the audio and always rolls. Plugins that follow the host
+transport get it as a `time:Position` event at the start of every block
+they run: the frame, the bar, the beat in the bar, the beats since the
+start, the tempo, the speed (always 1) and the time signature. So
+tempo-synced delays follow the tempo, and plugins that lock to the bar
+(chops, gates, slicers) stay on the grid. The position stays the same
+across preset and scene changes.
+
+- A tempo change keeps the position: only the speed of the beats changes.
+- A tap lands on a beat: the position moves to the nearest beat, so the
+  beats follow the foot (it can move by up to half a beat).
+- A MIDI Start, with **Follow MIDI clock** on, puts the position back on
+  the first beat of a bar.
 
 ## Tails (spillover)
 

@@ -180,7 +180,7 @@ keyed by instance id:
 | Field | Type | |
 |---|---|---|
 | `kind` | string | Required. Shape in the rack: `amp` (head with its control panel), `combo` (amp with a grille: amp + cab captures), `cab` (speaker cabinet), `pedal` (stompbox), `space` (room or reverb, rounded box), `send`, `return` (jack plates), `plugin` (plain card, every other plugin). Draw a kind you do not know as `plugin` |
-| `category` | string | Optional. Family of the plugin in OpenRig: `dynamics`, `distortion`, `filter`, `modulation`, `delay`, `reverb`, `simulator`, `utility`, `generator`, `routing`. Absent when the exporting board did not know it (plugin not installed there, or of no known family) |
+| `category` | string | Optional. Family of the plugin in OpenRig: `dynamics`, `distortion`, `filter`, `modulation`, `pitch`, `delay`, `reverb`, `simulator`, `utility`, `generator`, `routing`. Absent when the exporting board did not know it (plugin not installed there, or of no known family) |
 | `lv2_class` | string | Optional. LV2 class of the plugin by its local name (`CompressorPlugin`, `ReverbPlugin`…), absent for built-in blocks and plugins without one |
 | `color` | string | Required. Name of the colour the block is drawn in: the user's choice from `chain.colors` when it is one of the palette, else its family's. One of the palette below |
 | `color_hex` | string | Required. The same colour, `#rrggbb` |
@@ -193,6 +193,7 @@ frames and trims of the blocks, the face of the gear is dark):
 | `red` | `#9a3a33` | `amp`, `combo`, category `simulator` |
 | `orange` | `#a35a2c` | `cab` |
 | `yellow` | `#9a8136` | `pedal`, category `distortion` |
+| `lime` | `#6e8030` | category `pitch` |
 | `green` | `#4e7c4a` | category `delay` |
 | `teal` | `#30706e` | `space`, category `reverb` |
 | `blue` | `#3e5a87` | category `modulation` |
@@ -203,7 +204,7 @@ frames and trims of the blocks, the face of the gear is dark):
 The default applies the first matching row from the top of this order:
 kind `amp`/`combo` → red, `cab` → orange, `pedal` or `distortion` → yellow,
 `space` or `reverb` → teal, `simulator` → red, `delay` → green,
-`modulation` → blue, `filter` → purple, `dynamics` → pink, else silver.
+`modulation` → blue, `pitch` → lime, `filter` → purple, `dynamics` → pink, else silver.
 This table and order are only the fallback for files without `display`:
 renderers use `color_hex` as written, since the palette may change in a
 later app.

@@ -11,7 +11,9 @@ app; open it in any recent browser on the same network. It has two modes:
   phone turned sideways.
 - **Live**: a portrait page made for the stage: preset and scene switching,
   setlist slots, tap tempo, the tuner, the meters, and every block with its
-  bypass and its controls.
+  bypass and its controls: first its knob strip, in the rack's order (the
+  plugin's `primary` controls first, unless the user arranged them), then
+  all of them on demand.
 
 A **Status** page shows the version, the pedal's addresses, the hotspot and
 the devices signed in, and signs devices out.

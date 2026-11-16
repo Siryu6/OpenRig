@@ -37,7 +37,7 @@ pub struct BlockDisplay {
     /// [`BlockKind`]
     pub kind: String,
     /// Family of the plugin in OpenRig: `dynamics`, `distortion`,
-    /// `filter`, `modulation`, `delay`, `reverb`, `simulator`, `utility`,
+    /// `filter`, `modulation`, `pitch`, `delay`, `reverb`, `simulator`, `utility`,
     /// `generator`, `routing`. Absent when the exporting board did not know
     /// it (plugin not installed, or of no known family)
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -47,8 +47,8 @@ pub struct BlockDisplay {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub lv2_class: String,
     /// Name of the colour the block is drawn in: the user's choice, else
-    /// its family's (`red`, `orange`, `yellow`, `green`, `teal`, `blue`,
-    /// `purple`, `pink`, `silver`)
+    /// its family's (`red`, `orange`, `yellow`, `lime`, `green`, `teal`,
+    /// `blue`, `purple`, `pink`, `silver`)
     pub color: String,
     /// The same colour as `#rrggbb`, lower case
     pub color_hex: String,

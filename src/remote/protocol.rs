@@ -212,8 +212,9 @@ pub struct Param {
     /// "float", "int", "toggle", "enum"
     pub kind: String,
     pub options: Vec<ParamOption>,
-    /// In the block's knob strip (the main knobs)
-    pub strip: bool,
+    /// Place in the block's knob strip (the main knobs, from 0, in the
+    /// rack's order); none for the other controls
+    pub strip: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -371,11 +372,18 @@ mod tests {
             blocks: vec![Block {
                 id: 4,
                 name: "Amp".into(),
-                params: vec![Param {
-                    name: "Gain".into(),
-                    kind: "float".into(),
-                    ..Default::default()
-                }],
+                params: vec![
+                    Param {
+                        name: "Gain".into(),
+                        kind: "float".into(),
+                        strip: Some(1),
+                        ..Default::default()
+                    },
+                    Param {
+                        name: "Bright".into(),
+                        ..Default::default()
+                    },
+                ],
                 ..Default::default()
             }],
             ..Default::default()
@@ -384,6 +392,12 @@ mod tests {
             serde_json::from_str(&tagged("state", &snapshot)).unwrap_or_default();
         assert_eq!(json["type"], "state");
         assert_eq!(json["blocks"][0]["params"][0]["name"], "Gain");
+        // The place in the knob strip, null out of it
+        assert_eq!(json["blocks"][0]["params"][0]["strip"], 1);
+        assert_eq!(
+            json["blocks"][0]["params"][1]["strip"],
+            serde_json::Value::Null
+        );
         assert_eq!(json["preset"], serde_json::Value::Null);
     }
 

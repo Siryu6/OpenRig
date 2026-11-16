@@ -1171,7 +1171,13 @@ export component PluginEditor {
                         // Up to two rows share the height (smaller knobs) rather than
                         // scroll; more rows scroll, each at most the visible height
                         property <length> fit: self.rows <= 2 ? (self.height - (self.rows - 1) * root.gap) / max(1, self.rows) : self.height;
-                        property <length> cell-height: max(100px, min(152px, self.fit));
+                        // A plate without a view gives its height to its controls
+                        // when they fit in two rows: taller cells, bigger knobs, the
+                        // rows centred on it
+                        property <bool> grow: root.signature && !root.has-graph && self.rows <= 2;
+                        property <length> cell-height: max(100px, min(self.grow ? 184px : 152px, self.fit));
+                        property <length> knob-max: self.grow ? min(104px, self.cell-width - 2 * Theme.space-md) : 80px;
+                        property <length> offset: self.grow ? max(0px, (self.height - self.rows * (self.cell-height + root.gap) + root.gap) / 2) : 0px;
                         property <bool> compact: self.cell-height < 152px;
                         // Pages of the rows shown, when they do not all fit
                         property <int> rows-shown: max(1, floor((self.height + root.gap) / (self.cell-height + root.gap)));
@@ -1202,7 +1208,7 @@ export component PluginEditor {
 
                         for p[i] in root.parameters: cell := Rectangle {
                             x: mod(i, root.columns) * (grid.cell-width + root.gap);
-                            y: floor(i / root.columns) * (grid.cell-height + root.gap);
+                            y: grid.offset + floor(i / root.columns) * (grid.cell-height + root.gap);
                             width: grid.cell-width;
                             height: grid.cell-height;
                             // An OpenRig FX plugin's modes (three at most) are a
@@ -1246,7 +1252,7 @@ export component PluginEditor {
                                 knob := Knob {
                                     x: (parent.width - self.width) / 2;
                                     y: grid.top;
-                                    size: min(80px, parent.height - grid.top - grid.bottom);
+                                    size: min(grid.knob-max, parent.height - grid.top - grid.bottom);
                                     value: p.value;
                                     default-value: p.default;
                                     minimum: p.min;
@@ -1524,7 +1530,7 @@ export component PluginEditor {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             width: 5 * 88px + 2 * Theme.space-lg;
-            height: 2 * 84px + 56px + Theme.space-lg;
+            height: ceil(root.colors.length / 5) * 84px + 56px + Theme.space-lg;
             TouchArea { }   // keep taps inside the card
             Text {
                 x: Theme.space-lg;

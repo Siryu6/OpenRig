@@ -9,8 +9,9 @@ What OpenRig does, in more technical detail than the
   map / unmap, options, bounded-block-length, isLive and the worker
   (`work:schedule`: slow jobs such as loading a model run on a thread of the
   plugin's own) are provided; plugins that need anything else are skipped,
-  with a warning naming the missing feature in the log. Atom inputs get the tempo
-  (`time:Position`) and MIDI. Without any installed plugin, a demo
+  with a warning naming the missing feature in the log. Atom inputs get the
+  transport (`time:Position`: a running bar and beat position at the tempo,
+  in 4/4, at every block) and MIDI. Without any installed plugin, a demo
   catalogue (passthrough) keeps the UI usable for development.
 - **Plugin store** (feature `store`): installs free LV2 plugins from a
   signed index (minisign, anti-rollback serial, expiry), with the archive
@@ -65,7 +66,9 @@ What OpenRig does, in more technical detail than the
   screws, knobs in its knob style (a steel cap on a very dark plate), values
   in amber readout windows, a view window that stays dark with amber
   lines in both themes (the gear colours of `Theme.plot-gear`), its silk name, tagline and green "on" LED. The
-  web remote draws plates flat, in their colour only.
+  web remote draws plates flat, in their colour only. A plate without a view
+  gives its height to its controls when they fit in two rows: taller cells
+  and knobs up to 104 px, the rows centred on the plate.
   In the rack, a signature block is a mini pedal on its plate: two small
   knobs, the green LED, its silk name and a footswitch (tap, hold and drag
   as on any block; bypassed, it goes dark). Its default colour, on the rack,
@@ -163,7 +166,7 @@ What OpenRig does, in more technical detail than the
 - **Touch rack**: blocks are drawn after their gear (flat amp head, combo,
   cabinet with speakers, pedal with footswitch, reverb pill; LV2 plugins keep
   a plain card, OpenRig FX plugins their faceplate), coloured by family (amp red, cab orange, drive yellow,
-  reverb teal, delay green, modulation blue…) or with a colour picked in the
+  reverb teal, delay green, modulation blue, pitch lime…) or with a colour picked in the
   block editor. The UI is styled like dark, minimal hardware: near-square
   corners, amber accent, key-like buttons with status LEDs, recessed displays,
   input / output LED meters with clip LEDs on the rack, knobs tinted with the block's colour, LED
@@ -218,7 +221,8 @@ What OpenRig does, in more technical detail than the
   play a switch of its plugin (Hold, Freeze…), latching or momentary (on
   while held, from a footswitch, a tile, a key or MIDI CC 49–56). The last footswitch taps
   the tempo and, held, opens the tuner. The tempo drives the BPM ports of
-  LV2 plugins.
+  LV2 plugins and the bar position of the plugins that follow the
+  transport: a tap lands on a beat, a MIDI Start on the first beat.
 - **Tails (spillover)**: delays and reverbs keep ringing when bypassed or
   when the scene changes. LV2 plugins with an `lv2:enabled` port keep
   running bypassed with that port at 0, and play their own tail.

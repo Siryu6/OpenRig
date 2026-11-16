@@ -10,6 +10,7 @@ use tracing::{debug, info, warn};
 use super::stomp::{Held, Pressed, Stomp, StompMode};
 use super::tempo::TapTempo;
 use crate::audio::split_chain::walk;
+use crate::audio::transport::TransportEvent;
 use crate::audio::{ChainControl, ChainNode, Looper, LooperSettings, SplitType, Tuner};
 use crate::midi::{MidiAssign, MidiSettings, MidiTarget, Step};
 use crate::plugins::scanner::{PluginInfo, PortInfo};
@@ -1714,8 +1715,16 @@ impl AppState {
     /// A tap of the tap tempo key or switch: the new tempo, once two taps
     /// are in
     pub fn tap_tempo(&self) -> Option<f32> {
-        let bpm = self.tap.locked().tap(std::time::Instant::now())?;
-        Some(self.set_tempo(bpm.round()))
+        let bpm = self.tap.locked().tap(std::time::Instant::now());
+        let bpm = bpm.map(|bpm| self.set_tempo(bpm.round()));
+        // The tap lands on a beat: the beats of the transport move to it
+        self.send_command(ChainCommand::Transport(TransportEvent::Beat));
+        bpm
+    }
+
+    /// A MIDI Start: the transport goes back to the first beat of a bar
+    pub fn transport_start(&self) {
+        self.send_command(ChainCommand::Transport(TransportEvent::Start));
     }
 
     // === Looper ===
