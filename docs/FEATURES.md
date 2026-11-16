@@ -87,6 +87,10 @@ What OpenRig does, in more technical detail than the
   web remote draws plates flat, in their colour only. A plate without a view
   gives its height to its controls when they fit in two rows: taller cells
   and knobs up to 104 px, the rows centred on the plate.
+  The parameter grid shows whole rows only: as many as fit at 110 px or
+  more share its height, the others go to pages (up and down keys and a
+  page count, silk-screened on a plate). On tall screens a view leaves room
+  for two rows. A plate's page keys stay dark in both themes.
   In the rack, a signature block is a mini pedal on its plate: two small
   knobs, the green LED, its silk name and a footswitch (tap, hold and drag
   as on any block; bypassed, it goes dark). Its default colour, on the rack,

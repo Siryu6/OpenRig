@@ -527,7 +527,12 @@ export component PluginEditor {
     private property <int> graph-choice: 0;
     private property <bool> graph-open: !root.short || root.faced || root.graph-choice == 1
         || (root.graph-choice == 0 && root.graph-fit >= 96px);
-    private property <length> graph-height: root.short ? max(96px, root.graph-fit) : min(240px, root.height * 0.36);
+    // Tall screens: the graph leaves room for two whole rows of controls
+    // (one when there are no more), so a paged grid shows whole rows
+    private property <int> param-rows: ceil(root.parameters.length / root.columns);
+    private property <length> rows-room: min(2, max(1, root.param-rows)) * (110px + root.gap) - root.gap;
+    private property <length> graph-height: root.short ? max(96px, root.graph-fit)
+        : max(120px, min(240px, root.height * 0.36, root.room - root.vgap - root.rows-room));
     private property <int> picker-pos: -1;  // position in `parameters` of the open enum picker
     in-out property <bool> model-picker-open: false;
     private property <bool> preset-picker-open: false;
@@ -1183,20 +1188,22 @@ export component PluginEditor {
                     grid := Flickable {
                         property <length> cell-width: (self.width - (root.columns - 1) * root.gap) / root.columns;
                         property <int> rows: ceil(root.parameters.length / root.columns);
-                        // Up to two rows share the height (smaller knobs) rather than
-                        // scroll; more rows scroll, each at most the visible height
-                        property <length> fit: self.rows <= 2 ? (self.height - (self.rows - 1) * root.gap) / max(1, self.rows) : self.height;
+                        // Rows shown at once: as many as fit at 110 px or more (the
+                        // compact cell). The others go to pages, and a page holds
+                        // whole rows: no row is cut by the bottom edge
+                        property <int> rows-shown: max(1, min(self.rows, floor((self.height + root.gap) / (110px + root.gap))));
+                        property <int> pages: ceil(self.rows / self.rows-shown);
+                        // All rows shown share the height; paged rows fill the page
+                        property <length> fit: (self.height + root.gap) / self.rows-shown - root.gap;
                         // A plate without a view gives its height to its controls
                         // when they fit in two rows: taller cells, bigger knobs, the
                         // rows centred on it
                         property <bool> grow: root.signature && !root.has-graph && self.rows <= 2;
-                        property <length> cell-height: max(100px, min(self.grow ? 184px : 152px, self.fit));
+                        property <length> cell-height: self.pages > 1 ? max(100px, self.fit)
+                            : max(100px, min(self.grow ? 184px : 152px, self.fit));
                         property <length> knob-max: self.grow ? min(104px, self.cell-width - 2 * Theme.space-md) : 80px;
                         property <length> offset: self.grow ? max(0px, (self.height - self.rows * (self.cell-height + root.gap) + root.gap) / 2) : 0px;
                         property <bool> compact: self.cell-height < 152px;
-                        // Pages of the rows shown, when they do not all fit
-                        property <int> rows-shown: max(1, floor((self.height + root.gap) / (self.cell-height + root.gap)));
-                        property <int> pages: ceil(self.rows / self.rows-shown);
                         property <length> page-height: self.rows-shown * (self.cell-height + root.gap);
                         property <int> page: self.content-y <= self.height - self.content-height + 1px ? self.pages - 1
                             : min(self.pages - 1, round(-self.content-y / self.page-height));
@@ -1474,6 +1481,7 @@ export component PluginEditor {
                             Button {
                                 width: 40px;
                                 icon: "chevron-up";
+                                plate: root.signature;
                                 enabled: grid.page > 0;
                                 clicked => {
                                     grid.show-page(grid.page - 1);
@@ -1481,7 +1489,7 @@ export component PluginEditor {
                             }
                             Text {
                                 text: (grid.page + 1) + "/" + grid.pages;
-                                color: Theme.text-secondary;
+                                color: root.signature ? Theme.plate-silk : Theme.text-secondary;
                                 font-size: Theme.font-caption;
                                 font-weight: Theme.weight-bold;
                                 horizontal-alignment: center;
@@ -1489,6 +1497,7 @@ export component PluginEditor {
                             Button {
                                 width: 40px;
                                 icon: "chevron-down";
+                                plate: root.signature;
                                 enabled: grid.page < grid.pages - 1;
                                 clicked => {
                                     grid.show-page(grid.page + 1);
