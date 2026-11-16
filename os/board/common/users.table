@@ -1,1 +1,5 @@
-pedalboard -1 pedalboard -1 * /data/pedalboard /bin/sh audio,video,render,input,gpio,netdev Pedalboard
+# Fixed ids: files on /data keep their owner across system updates.
+# 1000 is outside Buildroot's automatic system range (100-999), so no
+# package user can take it. Images up to 0.17.0 picked them automatically
+# (102 then 103); S00storage gives the files back at boot.
+pedalboard 1000 pedalboard 1000 * /data/pedalboard /bin/sh audio,video,render,input,gpio,netdev Pedalboard
