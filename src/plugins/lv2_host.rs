@@ -266,7 +266,7 @@ mod discovery {
     use super::super::faceplate::{self, Terms};
     use super::super::lv2_features::SUPPORTED_FEATURES;
     use super::super::scanner::{
-        FactoryPreset, FileParam, PluginCategory, PluginInfo, PortInfo, PortType,
+        FactoryPreset, FileParam, PluginCategory, PluginInfo, PortInfo, PortType, Stream,
     };
     use lilv::node::Node;
     use lilv::World;
@@ -302,6 +302,7 @@ mod discovery {
             "degree" => "°",
             "oct" => "oct",
             "frame" => "smp",
+            "beat" => "beats",
             _ => "",
         };
         if !known.is_empty() {
@@ -312,6 +313,38 @@ mod discovery {
         world
             .get(Some(unit), Some(&symbol), None)
             .and_then(|n| n.as_str().map(str::to_string))
+    }
+
+    /// An `openrig:stream` description; `None` without a content, or with
+    /// no value in a frame
+    fn stream(world: &World, node: &Node) -> Option<Stream> {
+        let term = |name: &str| {
+            world.get(
+                Some(node),
+                Some(&world.new_uri(&format!("{}{name}", faceplate::NS))),
+                None,
+            )
+        };
+        let count = |name: &str| {
+            term(name)
+                .as_ref()
+                .and_then(number)
+                .filter(|n| n.is_finite() && *n >= 1.0 && *n <= u32::MAX as f32)
+                .map(|n| n as u32)
+        };
+        Some(Stream {
+            content: term("content")?
+                .as_uri()?
+                .strip_prefix(faceplate::NS)?
+                .to_string(),
+            length: count("length")?,
+            channels: count("channels")?,
+            rate: term("rate")
+                .as_ref()
+                .and_then(number)
+                .filter(|r| r.is_finite() && *r > 0.0)
+                .unwrap_or(30.0),
+        })
     }
 
     /// Files a plugin loads: its `patch:writable` parameters whose range is
@@ -472,6 +505,7 @@ mod discovery {
         let face_order = uri(&format!("{}order", faceplate::NS));
         let face_role = uri(&format!("{}role", faceplate::NS));
         let face_primary = uri(&format!("{}primary", faceplate::NS));
+        let face_stream = uri(&format!("{}stream", faceplate::NS));
         let rdf_type = uri("http://www.w3.org/1999/02/22-rdf-syntax-ns#type");
 
         let mut found = Vec::new();
@@ -595,6 +629,10 @@ mod discovery {
                     primary: (trusted && port_type == PortType::ControlInput)
                         .then(|| rank(port.get(&face_primary)))
                         .flatten(),
+                    stream: (trusted && port_type == PortType::AtomOutput)
+                        .then(|| port.get(&face_stream))
+                        .flatten()
+                        .and_then(|node| stream(world, &node)),
                 });
             }
             ports.sort_by_key(|p| p.index);

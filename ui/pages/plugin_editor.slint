@@ -1,9 +1,10 @@
 import { PlotColors, Theme } from "../theme.slint";
-import { BlockFace, ParameterInfo, ModelChoice, FileSlot, ColorChoice, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive } from "../types.slint";
+import { BlockFace, ParameterInfo, ModelChoice, FileSlot, ColorChoice, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, StepView, StepLive } from "../types.slint";
 import { EqGraph } from "../components/eq_graph.slint";
 import { PlotEvents } from "../components/plot.slint";
 import { DynamicsGraph } from "../components/dynamics_graph.slint";
 import { ScopeGraph } from "../components/scope_graph.slint";
+import { StepGridGraph } from "../components/step_grid.slint";
 import { Button, Badge, Card, EmptyState, FocusHighlight, Icon, Knob, Segmented, Stepper, Toggle } from "../components/controls.slint";
 import { LogoMark } from "../components/logo.slint";
 import { PlateLed, PlateName, Screw } from "../components/plate.slint";
@@ -426,6 +427,9 @@ export component PluginEditor {
     in property <DynLive> dyn-live;
     in property <ScopeView> scope;                  // what a delay, reverb, drive… does to the sound
     in property <ScopeLive> scope-live;
+    in property <StepView> step;                    // the bar of a stutter, slicer or gate
+    in property <StepLive> step-live;
+    in property <float> step-playhead: -1;
     in property <Spectrum> spectrum;                // the sound through it, for the EQ and scope
     in property <int> focused-param: 0;
     // Remove: the first press arms it, the second removes the block
@@ -503,7 +507,7 @@ export component PluginEditor {
     private property <length> card-height: root.short ? 52px : 64px;
     private property <length> card-pad: root.short ? 4px : Theme.space-sm;
     private property <int> cards: (root.uses-file ? 1 : 0) + (root.factory-presets.length > 0 ? 1 : 0) + root.file-slots.length;
-    private property <bool> has-graph: root.scope.shown || root.dyn.shown || root.eq.shown;
+    private property <bool> has-graph: root.step.shown || root.scope.shown || root.dyn.shown || root.eq.shown;
     private property <bool> faced: root.face.look != "";
     private property <bool> signature: root.face.look == "signature";
     // The view: in a signature plate's window, the gear's colours (dark in
@@ -1081,7 +1085,7 @@ export component PluginEditor {
                         spacing: Theme.space-sm;
                         Text {
                             horizontal-stretch: 1;
-                            text: root.eq.shown ? "EQ CURVE" : root.dyn.shown ? "LEVEL CURVE" : "SCOPE";
+                            text: root.eq.shown ? "EQ CURVE" : root.dyn.shown ? "LEVEL CURVE" : root.step.shown ? "STEPS" : "SCOPE";
                             color: Theme.text-muted;
                             font-size: Theme.font-small;
                             font-weight: Theme.weight-semibold;
@@ -1107,6 +1111,17 @@ export component PluginEditor {
                             root.graph-choice = root.graph-open ? 2 : 1;
                         }
                     }
+                }
+
+                if root.step.shown && root.graph-open: StepGridGraph {
+                    height: root.graph-height;
+                    vertical-stretch: 0;
+                    step: root.step;
+                    live: root.step-live;
+                    playhead: root.step-playhead;
+                    colors: root.plot-colors;
+                    accent: root.plot-accent;
+                    bypassed: root.bypassed;
                 }
 
                 if root.scope.shown && root.graph-open: ScopeGraph {

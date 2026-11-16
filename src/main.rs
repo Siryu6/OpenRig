@@ -28,6 +28,7 @@ mod rigs_online_ui;
 mod rigs_ui;
 mod routing_ui;
 mod scope_ui;
+mod step_ui;
 mod strip_ui;
 mod system_ui;
 #[cfg(feature = "tone3000")]

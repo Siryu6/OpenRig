@@ -459,6 +459,32 @@ export struct ScopeLive {
     history-out: string,
 }
 
+// The bar of a stutter, slicer or rhythmic gate, as its plugin streams it
+// (openrig:StepGridView)
+export struct StepView {
+    shown: bool,
+    beats: int,             // lines across the bar
+    summary: string,        // "1 bar · 120 BPM"
+}
+
+// A box of the step grid, as fractions of the plot from its top left: a
+// run of cells (`source` 0 live, 1 captured, 2 repeat), a stroke of the
+// speed (no width or no height: a line), a mark where it plays backward
+export struct StepBox {
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    source: int,
+}
+
+// What the bar plays now
+export struct StepLive {
+    cells: [StepBox],
+    speed: [StepBox],
+    reverse: [StepBox],
+}
+
 // A setting of pedalboard.txt in Settings → Audio & system
 export struct SystemSetting {
     key: string,            // "audio_device", "sample_rate"…

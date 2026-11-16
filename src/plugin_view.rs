@@ -1,5 +1,5 @@
 //! Shared by the views drawn above a block's parameters (eq_ui, dynamics_ui,
-//! scope_ui): the block's controls as the editor shows them, each view read
+//! scope_ui, step_ui): the block's controls as the editor shows them, each view read
 //! once per plugin, the plot the views are drawn in and their paths. Rust
 //! draws, and reads the handles back: the UI only gives positions
 //! (PlotEvents), as fractions of the plot from its bottom left.
@@ -14,7 +14,7 @@ use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use pedalboard::plugins::scanner::{PluginInfo, PortInfo};
 use pedalboard::state::AppState;
 
-use crate::{block_uri, dynamics_ui, eq_ui, id, model, scope_ui, App, PlotEvents};
+use crate::{block_uri, dynamics_ui, eq_ui, id, model, scope_ui, step_ui, App, PlotEvents};
 
 /// Path coordinates: a plot is VIEW high and VIEW × its aspect wide (a Path
 /// keeps the proportions of its box)
@@ -24,11 +24,19 @@ thread_local! {
     /// Width over height of the wide plot of the view shown (one at a time),
     /// as last laid out
     static ASPECT: Cell<f32> = const { Cell::new(3.0) };
+    /// Its width and height, logical pixels
+    static SIZE: Cell<(f32, f32)> = const { Cell::new((0.0, 0.0)) };
 }
 
 /// Width over height of the wide plot
 pub(crate) fn aspect() -> f32 {
     ASPECT.get()
+}
+
+/// Width and height of the wide plot, logical pixels (0 before it is laid
+/// out)
+pub(crate) fn size() -> (f32, f32) {
+    SIZE.get()
 }
 
 /// Views read from plugins' ports, by plugin URI
@@ -148,10 +156,11 @@ pub(crate) fn setup(app: &App, state: &Arc<AppState>) {
     events.on_released(released);
 }
 
-/// Show the view of the selected block: its EQ curve, its level curve, or
-/// else what it does to the sound. In that order: the scope is shown only
-/// when the plugin has neither curve.
+/// Show the view of the selected block: the bar its plugin streams, its EQ
+/// curve, its level curve, or else what it does to the sound. In that
+/// order: the scope is shown only when the plugin has none of the others.
 pub(crate) fn refresh(app: &App, state: &AppState) {
+    step_ui::refresh(app, state);
     eq_ui::refresh(app, state);
     dynamics_ui::refresh(app, state);
     scope_ui::refresh(app, state);
@@ -159,6 +168,7 @@ pub(crate) fn refresh(app: &App, state: &AppState) {
 
 /// The wide plot was laid out at `width` × `height`
 pub(crate) fn resized(app: &App, state: &AppState, width: f32, height: f32) {
+    SIZE.set((width, height));
     if width > 0.0 && height > 0.0 && width / height != ASPECT.get() {
         ASPECT.set(width / height);
         refresh(app, state);

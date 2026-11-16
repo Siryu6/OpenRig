@@ -1,12 +1,13 @@
-//! Sound going into and out of one block, and its control outputs (a
-//! compressor's gain reduction…), for the views drawn over its controls.
+//! Sound going into and out of one block, its control outputs (a
+//! compressor's gain reduction…) and the last frame it streamed (a step
+//! grid…), for the views drawn over its controls.
 //!
 //! The audio thread copies the block's input and output into [`BlockTap`],
 //! only for the block being watched (one atomic read for the others); the UI
 //! reads the last samples and turns them into levels per frequency with
 //! [`Analyzer`].
 
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{fence, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use realfft::num_complex::Complex;
@@ -19,6 +20,18 @@ const TAP_SIZE: usize = 8192;
 const CONTROLS: usize = 128;
 /// Samples analysed at a time (85 ms at 48 kHz, 11.7 Hz per bin)
 pub const WINDOW: usize = 4096;
+/// Values kept of a streamed frame
+pub const STREAM_VALUES: usize = 1024;
+
+/// The last frame a block streamed (see [`BlockTap::read_stream`])
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StreamFrame {
+    /// Frames recorded so far: a new one when it changes
+    pub count: usize,
+    pub channels: u32,
+    pub position: f32,
+    pub values: Vec<f32>,
+}
 
 /// Last samples into and out of the watched block. The audio thread writes,
 /// the UI reads; a read racing a write sees a few samples of the next cycle,
@@ -34,6 +47,16 @@ pub struct BlockTap {
     written: AtomicUsize,
     /// Last value of each control port of the watched block, f32 bits
     controls: Box<[AtomicU32]>,
+    /// Last frame the watched block streamed: written by the audio thread
+    /// only, under a sequence count that is odd while it writes (a read
+    /// racing a write is tried again)
+    stream_seq: AtomicUsize,
+    /// Instance id + 1 of the block that sent it
+    stream_block: AtomicUsize,
+    stream_channels: AtomicU32,
+    stream_position: AtomicU32,
+    stream_len: AtomicUsize,
+    stream: Box<[AtomicU32]>,
 }
 
 impl BlockTap {
@@ -53,6 +76,12 @@ impl BlockTap {
             output: ring(),
             written: AtomicUsize::new(0),
             controls: (0..CONTROLS).map(|_| AtomicU32::new(0)).collect(),
+            stream_seq: AtomicUsize::new(0),
+            stream_block: AtomicUsize::new(0),
+            stream_channels: AtomicU32::new(0),
+            stream_position: AtomicU32::new(0),
+            stream_len: AtomicUsize::new(0),
+            stream: (0..STREAM_VALUES).map(|_| AtomicU32::new(0)).collect(),
         }
     }
 
@@ -110,6 +139,69 @@ impl BlockTap {
     pub fn control(&self, index: usize) -> Option<f32> {
         let slot = self.controls.get(index)?;
         Some(f32::from_bits(slot.load(Ordering::Relaxed)))
+    }
+
+    /// Record the frame block `instance_id` streamed: `channels` rows of
+    /// `values` (as many as are kept) at `position` (real-time safe; the
+    /// audio thread is the only writer)
+    pub fn record_stream(
+        &self,
+        instance_id: usize,
+        channels: u32,
+        position: f32,
+        values: impl Iterator<Item = f32>,
+    ) {
+        let seq = self.stream_seq.load(Ordering::Relaxed);
+        self.stream_seq
+            .store(seq.wrapping_add(1), Ordering::Relaxed);
+        fence(Ordering::Release);
+        let mut len = 0;
+        for (slot, v) in self.stream.iter().zip(values) {
+            slot.store(v.to_bits(), Ordering::Relaxed);
+            len += 1;
+        }
+        self.stream_len.store(len, Ordering::Relaxed);
+        self.stream_channels.store(channels, Ordering::Relaxed);
+        self.stream_position
+            .store(position.to_bits(), Ordering::Relaxed);
+        self.stream_block.store(instance_id + 1, Ordering::Relaxed);
+        self.stream_seq
+            .store(seq.wrapping_add(2), Ordering::Release);
+    }
+
+    /// The last frame the watched block streamed into `frame`, unless it
+    /// is the one `frame` holds (same count); false when there is none
+    /// new
+    pub fn read_stream(&self, frame: &mut StreamFrame) -> bool {
+        let watched = self.watched.load(Ordering::Relaxed);
+        for _ in 0..4 {
+            let seq = self.stream_seq.load(Ordering::Acquire);
+            if seq % 2 == 1 {
+                std::hint::spin_loop();
+                continue;
+            }
+            if seq / 2 == frame.count
+                || watched == 0
+                || self.stream_block.load(Ordering::Relaxed) != watched
+            {
+                return false;
+            }
+            let len = self.stream_len.load(Ordering::Relaxed).min(STREAM_VALUES);
+            frame.values.clear();
+            frame.values.extend(
+                self.stream[..len]
+                    .iter()
+                    .map(|v| f32::from_bits(v.load(Ordering::Relaxed))),
+            );
+            frame.channels = self.stream_channels.load(Ordering::Relaxed);
+            frame.position = f32::from_bits(self.stream_position.load(Ordering::Relaxed));
+            fence(Ordering::Acquire);
+            if self.stream_seq.load(Ordering::Relaxed) == seq {
+                frame.count = seq / 2;
+                return true;
+            }
+        }
+        false
     }
 
     /// The last `input` and `output` samples (as many as the slices hold, at
@@ -218,6 +310,29 @@ mod tests {
         let levels = Analyzer::default().levels(&sine, rate, &freqs);
         assert!(levels[2].abs() < 1.5, "{levels:?}");
         assert!(levels[0] < -60.0 && levels[4] < -60.0, "{levels:?}");
+    }
+
+    #[test]
+    fn the_tap_keeps_the_last_frame_of_the_watched_block() {
+        let tap = BlockTap::new();
+        let mut frame = StreamFrame::default();
+        tap.watch(Some(7));
+        assert!(!tap.read_stream(&mut frame));
+        tap.record_stream(7, 3, 0.25, [1.0, 0.0, 1.0].into_iter());
+        tap.record_stream(7, 3, 0.5, [0.5, 2.0, -1.0].into_iter());
+        assert!(tap.read_stream(&mut frame));
+        assert_eq!((frame.channels, frame.position), (3, 0.5));
+        assert_eq!(frame.values, [0.5, 2.0, -1.0]);
+        // Read once: nothing new until the next frame
+        assert!(!tap.read_stream(&mut frame));
+        // Too many values: those kept
+        tap.record_stream(7, 3, 0.0, std::iter::repeat_n(1.0, 5000));
+        assert!(tap.read_stream(&mut frame));
+        assert_eq!(frame.values.len(), STREAM_VALUES);
+        // Another block's frame is not the watched one's
+        tap.watch(Some(8));
+        tap.record_stream(7, 3, 0.75, [1.0].into_iter());
+        assert!(!tap.read_stream(&mut StreamFrame::default()));
     }
 
     #[test]

@@ -39,7 +39,8 @@ What OpenRig does, in more technical detail than the
   characters at most), `plateStyle` (`Silkscreen`, the default, or
   `Glitch`), `tagline` (48 at most), `view` (`EqView`,
   `DynamicsView` with `dynamics` `Compressor`, `Limiter` or `Gate`,
-  `EchoTimelineView`; a view the app does not draw leaves it to inference)
+  `EchoTimelineView`, `StepGridView`; a view the app does not draw leaves
+  it to inference)
   and, per control, `order` (the face order: controls the user has not
   arranged follow it, then the port order), `role` (what the control means
   to the view: `threshold`, `ratio`, `knee`, `makeup`, `inputGain`, `range`,
@@ -49,7 +50,17 @@ What OpenRig does, in more technical detail than the
   A stated view or role wins over what the view infers from names; the
   rest is inferred as for any plugin. With ping-pong on, a delay's echoes
   alternate between a left lane (top) and a right lane (bottom); a toggle
-  named "Ping Pong" is read the same way on any delay. Any other plugin, or one with no family, keeps the generic
+  named "Ping Pong" is read the same way on any delay. A `StepGridView`
+  (a stutter, slicer or rhythmic gate) is drawn only from the plugin's
+  `openrig:stream` atom output of content `StepGrid` (3 rows: level,
+  source, speed), never from its controls: one bar with a line on each
+  beat, the live input in grey, the slice captured outlined in amber and
+  its repeats filled, the speed as a line where it is not 1, an arrow
+  where it plays backward, and the playhead. The audio thread copies the
+  last frame of the selected block only while its editor is open (a
+  seqlock in `BlockTap`, no allocation); the UI reads it every 40 ms,
+  draws the cells again only when they change, merges cells narrower than
+  4 px, and moves the playhead by whole pixels. Any other plugin, or one with no family, keeps the generic
   look; these terms are ignored outside that prefix, and a signature plugin
   without a valid colour is drawn as a basic one. A basic plugin has the
   OpenRig look: an amber left edge and an "OR FX" mark on its rack block with
