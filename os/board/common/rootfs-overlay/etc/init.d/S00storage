@@ -114,14 +114,21 @@ else
 	rm -f /root/.ssh/authorized_keys
 fi
 
+# Give everything in directory $1 to user:group $2. Older images gave the
+# users other ids (users.table), so files kept from them are given back: one
+# walk that changes only what is not theirs. Owners only, modes are kept
+# (secrets stay 0600); -h and no -L: links are changed, never followed;
+# -xdev: the walk stays on /data.
+own() {
+	[ -d "$1" ] || return 0
+	find "$1" -xdev \( ! -user "${2%:*}" -o ! -group "${2#*:}" \) \
+		-exec chown -h "$2" {} + ||
+		log "some files in $1 cannot be given to $2"
+}
+
 mkdir -p /data/pedalboard /data/rauc
-# Everything in the app's directory belongs to its user. Older images gave
-# the user other ids, so files kept from them are given back: one walk that
-# changes only what the user does not own. Owners only, modes are kept
-# (secrets stay 0600); -h and no -L: links are changed, never followed.
-find /data/pedalboard -xdev \( ! -user pedalboard -o ! -group pedalboard \) \
-	-exec chown -h pedalboard:pedalboard {} + ||
-	log "some files in /data/pedalboard are not the app's"
+own /data/pedalboard pedalboard:pedalboard
+own /data/var/lib/chrony chrony:chrony
 
 # Remote control password and Wi-Fi network written in pedalboard.txt: kept
 # on the data partition (a hash; NetworkManager profiles) and replaced in
