@@ -67,7 +67,7 @@ switch does. The mode is chosen on that page and kept across restarts:
 
 | Mode | Switch n | LED |
 |------|----------|-----|
-| **Stomp** (default) | Turns a block on or off | Block colour, lit when on |
+| **Stomp** (default) | Turns a block on or off, or plays a switch of its plugin | Block colour, lit when on |
 | **Scenes** | Recalls scene n of the preset | Amber on the current scene |
 | **Setlist** | Loads preset n of the setlist | Amber on the loaded slot |
 
@@ -76,8 +76,27 @@ and so on), unless a block was assigned to it: **Assign**, then tap a tile
 and pick the block, or "Automatic" to go back to the chain order.
 Assignments are saved in the preset.
 
+The picker also lists the switches of each plugin (its on/off parameters),
+as "Splinter · Hold" or "Plate · Freeze". A switch assigned to one plays
+that parameter instead of the block's on/off. On top of the picker,
+**Latching** or **Momentary** sets how the switch plays it:
+
+- **Latching** (default): each press flips it.
+- **Momentary**: it flips while the switch is held and flips back on
+  release. Hold a glitch or a freeze for as long as the foot stays down.
+
+The tile shows what the switch plays and how ("Hold · Momentary"). A
+momentary switch works from the footswitches, the tiles (on while touched),
+keys `1`–`8` and MIDI CC 49–56. The encoder has no release: a first press
+holds it, the next one lets it go.
+
+A held switch never leaves a parameter stuck: changing the Live mode or the
+hardware lets it go. A scene recall, a preset load or a touch on the
+parameter while it is held wins: the release then leaves the new value as
+it is.
+
 Switches act when pressed, not on release, so a scene change lands on the
-beat.
+beat. Only a momentary switch also acts on release.
 
 **Tap switch**: with two switches or more (Settings → Hardware), the last
 physical switch (FS 4 with the four default GPIOs) taps the tempo instead

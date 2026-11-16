@@ -4,7 +4,8 @@
 //! the tuner, and any switch closes it again.
 //!
 //! Switches act when pressed, never on release: that is when the foot lands
-//! on the beat.
+//! on the beat. A momentary stomp switch also acts on release: what its
+//! press turned on, the release turns off.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -12,8 +13,10 @@ use std::time::Duration;
 
 use slint::ComponentHandle;
 
-use pedalboard::midi::Step;
-use pedalboard::state::{AppState, FootswitchMode, SCENE_COUNT};
+use pedalboard::audio::ChainNode;
+use pedalboard::midi::{MidiTarget, Step};
+use pedalboard::state::stomp::Held;
+use pedalboard::state::{AppState, EffectChainState, FootswitchMode, SCENE_COUNT};
 use pedalboard::ui::slint_bridge as views;
 
 use crate::{model, report, rgb, App, LiveTile, MenuItem, View};
@@ -30,6 +33,9 @@ struct Switches {
     presses: u64,
     /// View to go back to when the tuner was opened from a switch
     tuner_return: Option<View>,
+    /// Momentary stomp switches held down (by a footswitch, a tile, MIDI or
+    /// the encoder), with what their release undoes
+    held: [Option<Held>; SCENE_COUNT],
 }
 
 thread_local! {
@@ -62,6 +68,12 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
         }
     });
     let (weak, st) = (app.as_weak(), state.clone());
+    app.on_live_tile_released(move |slot| {
+        if let (Some(app), Ok(slot)) = (weak.upgrade(), usize::try_from(slot)) {
+            release(&app, &st, slot);
+        }
+    });
+    let (weak, st) = (app.as_weak(), state.clone());
     app.on_set_tempo(move |bpm| {
         if let Some(app) = weak.upgrade() {
             show_tempo(&app, &st, st.set_tempo(bpm));
@@ -76,10 +88,25 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
         refresh(&app, &st);
     });
     let (weak, st) = (app.as_weak(), state.clone());
-    app.on_assign_stomp(move |slot, id| {
+    app.on_assign_stomp(move |slot, choice| {
         let Some(app) = weak.upgrade() else { return };
         if let Ok(slot) = usize::try_from(slot) {
-            report(&app, st.assign_stomp(slot, id.parse().ok()));
+            release(&app, &st, slot);
+            // "id" (the block on and off) or "id:symbol" (a switch of it)
+            let (id, param) = match choice.split_once(':') {
+                Some((id, symbol)) => (id, Some(symbol)),
+                None => (choice.as_str(), None),
+            };
+            report(&app, st.assign_stomp(slot, id.parse().ok(), param));
+        }
+        refresh(&app, &st);
+    });
+    let (weak, st) = (app.as_weak(), state.clone());
+    app.on_stomp_momentary(move |slot, momentary| {
+        let Some(app) = weak.upgrade() else { return };
+        if let Ok(slot) = usize::try_from(slot) {
+            release(&app, &st, slot);
+            report(&app, st.set_stomp_momentary(slot, momentary));
         }
         refresh(&app, &st);
     });
@@ -92,10 +119,10 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
             }
         }
     });
-    let weak = app.as_weak();
+    let (weak, st) = (app.as_weak(), state.clone());
     app.on_footswitch_up(move |slot| {
         if let (Some(app), Ok(slot)) = (weak.upgrade(), usize::try_from(slot)) {
-            footswitch_up(&app, slot);
+            footswitch_up(&app, &st, slot);
         }
     });
 }
@@ -153,17 +180,20 @@ pub fn footswitch_down(app: &App, state: &Arc<AppState>, slot: usize) {
 }
 
 /// A footswitch came back up
-pub fn footswitch_up(app: &App, slot: usize) {
+pub fn footswitch_up(app: &App, state: &AppState, slot: usize) {
     if let Some(bit) = 1u32.checked_shl(slot as u32) {
         SWITCHES.with(|s| s.borrow_mut().down &= !bit);
         show_down(app);
+        release(app, state, slot);
     }
 }
 
-/// Forget the footswitches held (the hardware changed)
-pub fn release_footswitches(app: &App) {
+/// Release the footswitches held (the hardware changed: a switch moved or
+/// removed never reports its release)
+pub fn release_footswitches(app: &App, state: &AppState) {
     SWITCHES.with(|s| s.borrow_mut().down = 0);
     show_down(app);
+    release_all(app, state);
 }
 
 /// The switches held, for the LEDs of Settings → Hardware
@@ -193,14 +223,66 @@ pub(crate) fn action(app: &App, state: &AppState, slot: usize) {
     }
     match state.live_settings().mode {
         FootswitchMode::Scenes => select_scene(app, state, slot),
-        FootswitchMode::Stomp => {
-            if let Some((id, bypassed)) = report(app, state.toggle_stomp(slot)) {
-                crate::show_bypass(app, id as i32, bypassed);
-                refresh(app, state);
-            }
-        }
+        FootswitchMode::Stomp => press_stomp(app, state, slot),
         FootswitchMode::Setlist => crate::setlist_slot(app, state, slot),
     }
+}
+
+/// CC 49–56: a momentary stomp switch is down while the value is high, up
+/// when it goes low; any value presses the other switches
+pub(crate) fn midi_switch(app: &App, state: &AppState, slot: usize, high: bool) {
+    let momentary = state.live_settings().mode == FootswitchMode::Stomp
+        && state.stomp(slot).is_some_and(|(_, mode)| mode.momentary);
+    if !high && (momentary || is_held(slot)) {
+        release(app, state, slot);
+    } else if high || !momentary {
+        action(app, state, slot);
+    }
+}
+
+fn is_held(slot: usize) -> bool {
+    SWITCHES.with(|s| s.borrow().held.get(slot).is_some_and(Option::is_some))
+}
+
+/// Press stomp switch `slot`. Pressed again while held (the encoder, which
+/// has no release), it is released.
+fn press_stomp(app: &App, state: &AppState, slot: usize) {
+    if is_held(slot) {
+        release(app, state, slot);
+        return;
+    }
+    let Some(pressed) = report(app, state.press_stomp(slot)) else {
+        return;
+    };
+    SWITCHES.with(|s| {
+        if let Some(held) = s.borrow_mut().held.get_mut(slot) {
+            *held = pressed.held;
+        }
+    });
+    show_stomp(app, state, pressed.instance_id, pressed.target);
+}
+
+/// Switch or tile `slot` released: a momentary stomp switch held down puts
+/// back what its press changed
+pub(crate) fn release(app: &App, state: &AppState, slot: usize) {
+    let held = SWITCHES.with(|s| s.borrow_mut().held.get_mut(slot).and_then(Option::take));
+    if let Some(held) = held {
+        if let Some(Some(held)) = report(app, state.release_stomp(held)) {
+            show_stomp(app, state, held.instance_id, held.target);
+        }
+    }
+}
+
+/// Release every momentary stomp switch held down
+fn release_all(app: &App, state: &AppState) {
+    for slot in 0..SCENE_COUNT {
+        release(app, state, slot);
+    }
+}
+
+fn show_stomp(app: &App, state: &AppState, instance_id: usize, target: MidiTarget) {
+    crate::show_controlled(app, state, [(instance_id, target)]);
+    refresh(app, state);
 }
 
 /// Recall scene `slot` of the preset
@@ -249,6 +331,8 @@ const MODES: [FootswitchMode; 3] = [
 ];
 
 pub(crate) fn set_mode(app: &App, state: &AppState, mode: FootswitchMode) {
+    // What a held switch turned on does not outlive its mode
+    release_all(app, state);
     state.set_footswitch_mode(mode);
     refresh(app, state);
 }
@@ -266,6 +350,41 @@ pub(crate) fn step_mode(app: &App, state: &AppState, step: Step) {
     set_mode(app, state, MODES[next]);
 }
 
+/// What a stomp switch can play: each block on and off, and each switch
+/// (toggle parameter) of its plugin, as "Block · Hold"
+fn stomp_choices(state: &AppState, chain: &EffectChainState) -> Vec<MenuItem> {
+    let item = |id: String, label: String, icon: &str| MenuItem {
+        id: id.into(),
+        label: label.into(),
+        icon: icon.into(),
+        enabled: true,
+        badge: false,
+    };
+    let scanner = state.lv2_host.scanner();
+    let mut choices = Vec::new();
+    for node in chain.plugins() {
+        let ChainNode::Plugin {
+            instance_id, uri, ..
+        } = node
+        else {
+            continue;
+        };
+        let name = crate::block_name(state, chain, *instance_id, uri);
+        choices.push(item(instance_id.to_string(), name.clone(), "power"));
+        let Some(info) = scanner.find_by_uri(uri) else {
+            continue;
+        };
+        for port in info.control_inputs().filter(|p| p.toggled) {
+            choices.push(item(
+                format!("{instance_id}:{}", port.symbol),
+                format!("{name} · {}", port.name),
+                "footswitch",
+            ));
+        }
+    }
+    choices
+}
+
 /// Show the switches, scenes and tempo
 pub fn refresh(app: &App, state: &AppState) {
     let chain = state.chain();
@@ -280,6 +399,17 @@ pub fn refresh(app: &App, state: &AppState) {
         }
     };
 
+    // The picker entry of a stomp switch (see stomp_choices)
+    let choice = |slot: usize| -> slint::SharedString {
+        match chain.stomps.get(slot) {
+            Some(stomp) => match (stomp.block, &stomp.mode.param) {
+                (Some(id), Some(symbol)) => format!("{id}:{symbol}").into(),
+                (Some(id), None) => id.to_string().into(),
+                (None, _) => "".into(),
+            },
+            None => "".into(),
+        }
+    };
     let tiles: Vec<LiveTile> = match live.mode {
         FootswitchMode::Scenes => (0..SCENE_COUNT)
             .map(|slot| {
@@ -291,25 +421,47 @@ pub fn refresh(app: &App, state: &AppState) {
                     empty: !used,
                     color: rgb(ACCENT),
                     switch: switch(slot),
+                    momentary: false,
+                    choice: "".into(),
                 }
             })
             .collect(),
         FootswitchMode::Stomp => (0..SCENE_COUNT)
             .map(|slot| {
-                let assigned = matches!(chain.stomps.get(slot), Some(Some(_)));
-                let block = chain.stomp_target(slot).and_then(|id| {
+                let assigned = chain.stomps.get(slot).is_some_and(|s| s.block.is_some());
+                let block = chain.stomp(slot).and_then(|(id, mode)| {
                     let uri = crate::block_uri(&chain, id)?;
-                    Some((id, uri))
+                    Some((id, uri, mode))
                 });
                 match block {
-                    Some((id, uri)) => LiveTile {
-                        title: crate::block_name(state, &chain, id, &uri).into(),
-                        subtitle: if assigned { "Assigned" } else { "" }.into(),
-                        active: chain.is_enabled(id) == Some(true),
-                        empty: false,
-                        color: rgb(crate::block_tint(state, &chain, id, &uri)),
-                        switch: switch(slot),
-                    },
+                    Some((id, uri, mode)) => {
+                        let enabled = chain.is_enabled(id) == Some(true);
+                        // The plugin switch it plays: its name, and on or off
+                        let param = mode.param.as_deref().and_then(|symbol| {
+                            let (index, port) = state.stomp_switch(id, symbol).ok()?;
+                            let value = chain.params.get(&id)?.get(index).copied()?;
+                            Some((port.name, value > (port.min + port.max) / 2.0))
+                        });
+                        let mut subtitle: Vec<&str> = Vec::new();
+                        match &param {
+                            Some((name, _)) => subtitle.push(name),
+                            None if assigned && !mode.momentary => subtitle.push("Assigned"),
+                            None => {}
+                        }
+                        if mode.momentary {
+                            subtitle.push("Momentary");
+                        }
+                        LiveTile {
+                            title: crate::block_name(state, &chain, id, &uri).into(),
+                            subtitle: subtitle.join(" · ").into(),
+                            active: enabled && param.as_ref().is_none_or(|(_, on)| *on),
+                            empty: false,
+                            color: rgb(crate::block_tint(state, &chain, id, &uri)),
+                            switch: switch(slot),
+                            momentary: mode.momentary,
+                            choice: choice(slot),
+                        }
+                    }
                     None => LiveTile {
                         title: "No block".into(),
                         subtitle: "".into(),
@@ -317,6 +469,8 @@ pub fn refresh(app: &App, state: &AppState) {
                         empty: true,
                         color: rgb(ACCENT),
                         switch: switch(slot),
+                        momentary: chain.stomps.get(slot).is_some_and(|s| s.mode.momentary),
+                        choice: choice(slot),
                     },
                 }
             })
@@ -336,26 +490,13 @@ pub fn refresh(app: &App, state: &AppState) {
                 empty: s.is_empty,
                 color: rgb(ACCENT),
                 switch: switch(s.slot),
+                momentary: false,
+                choice: "".into(),
             })
             .collect(),
     };
 
-    let choices: Vec<MenuItem> = chain
-        .plugins()
-        .into_iter()
-        .filter_map(|n| match n {
-            pedalboard::audio::ChainNode::Plugin {
-                instance_id, uri, ..
-            } => Some(MenuItem {
-                id: instance_id.to_string().into(),
-                label: crate::block_name(state, &chain, *instance_id, uri).into(),
-                icon: "footswitch".into(),
-                enabled: true,
-                badge: false,
-            }),
-            _ => None,
-        })
-        .collect();
+    let choices = stomp_choices(state, &chain);
 
     app.set_live_mode(live.mode.name().into());
     app.set_live_tiles(model(tiles));

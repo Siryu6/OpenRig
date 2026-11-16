@@ -30,7 +30,10 @@ component SwitchTile inherits Rectangle {
     in property <int> number;      // 1-based
     in property <bool> assigning;  // waiting for a tap to choose its block
     in property <bool> focused;    // the encoder is on it
-    callback clicked();
+    // On touch down, as a footswitch acts when the foot lands; released for
+    // a momentary switch
+    callback pressed();
+    callback released();
 
     border-radius: Theme.radius-lg;
     background: ta.pressed ? Theme.key-pressed : Theme.panel;
@@ -114,8 +117,14 @@ component SwitchTile inherits Rectangle {
     }
 
     ta := TouchArea {
-        clicked => {
-            root.clicked();
+        pointer-event(event) => {
+            if (event.button == PointerEventButton.left || event.button == PointerEventButton.other) {
+                if (event.kind == PointerEventKind.down) {
+                    root.pressed();
+                } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                    root.released();
+                }
+            }
         }
     }
 
@@ -143,10 +152,12 @@ export component LiveView inherits Rectangle {
     in property <bool> adjusting;         // the encoder sets the tempo
     callback mode-changed(string);
     callback tile-pressed(int);
+    callback tile-released(int);
     callback tap();
     callback tempo-changed(float);
     callback rename-scene(int, string);
-    callback assign-stomp(int, string);   // switch, block id ("" = automatic)
+    callback assign-stomp(int, string);   // switch, "block id" or "block id:switch symbol" ("" = automatic)
+    callback stomp-momentary(int, bool);  // switch, on while held
     callback open-setlists();
 
     private property <bool> assigning;
@@ -423,12 +434,15 @@ export component LiveView inherits Rectangle {
                 number: i + 1;
                 assigning: root.assigning;
                 focused: i == root.focused;
-                clicked => {
+                pressed => {
                     if (root.assigning) {
                         root.assign-slot = i;
                     } else {
                         root.tile-pressed(i);
                     }
+                }
+                released => {
+                    root.tile-released(i);
                 }
             }
         }
@@ -474,6 +488,16 @@ export component LiveView inherits Rectangle {
                     }
                 }
 
+                // Latching: each press flips it. Momentary: on while held.
+                Segmented {
+                    height: Theme.touch-target;
+                    options: ["Latching", "Momentary"];
+                    current-index: root.tiles[root.assign-slot].momentary ? 1 : 0;
+                    activated(i) => {
+                        root.stomp-momentary(root.assign-slot, i == 1);
+                    }
+                }
+
                 Flickable {
                     vertical-stretch: 1;
                     min-height: 0px;
@@ -501,13 +525,20 @@ export component LiveView inherits Rectangle {
                                 alignment: center;
                                 Text {
                                     text: "Automatic";
-                                    color: Theme.text-primary;
+                                    color: root.tiles[root.assign-slot].choice == "" ? Theme.accent : Theme.text-primary;
                                     font-size: Theme.font-body;
                                 }
                                 Text {
                                     text: "The next block in the chain";
                                     color: Theme.text-muted;
                                     font-size: Theme.font-caption;
+                                }
+                            }
+                            if root.tiles[root.assign-slot].choice == "": VerticalLayout {
+                                alignment: center;
+                                Icon {
+                                    name: "check";
+                                    color: Theme.accent;
                                 }
                             }
                         }
@@ -538,10 +569,17 @@ export component LiveView inherits Rectangle {
                             Text {
                                 horizontal-stretch: 1;
                                 text: choice.label;
-                                color: Theme.text-primary;
+                                color: choice.id == root.tiles[root.assign-slot].choice ? Theme.accent : Theme.text-primary;
                                 font-size: Theme.font-body;
                                 vertical-alignment: center;
                                 overflow: elide;
+                            }
+                            if choice.id == root.tiles[root.assign-slot].choice: VerticalLayout {
+                                alignment: center;
+                                Icon {
+                                    name: "check";
+                                    color: Theme.accent;
+                                }
                             }
                         }
                         pick-ta := TouchArea {

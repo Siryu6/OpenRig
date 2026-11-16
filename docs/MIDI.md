@@ -32,7 +32,7 @@ HeadRush, a Quad Cortex, a Boss…) works as is.
 | CC0 n | Preset group: PC n then loads preset n × 128 + PC |
 | CC32 0 | Leave the setlist (PC selects presets again) |
 | CC32 n | Load setlist n, counting from 1 (setlists sorted by name) |
-| CC49–56 | Footswitch 1–8, as pressed in the current Live mode |
+| CC49–56 | Footswitch 1–8, as pressed in the current Live mode. A momentary stomp switch is down at 64–127 and up at 0–63 |
 | CC60 | Looper: 0–63 overdub, 64–127 record |
 | CC61 | Looper: 0–63 stop, 64–127 play |
 | CC63 | Looper: undo (64–127) |

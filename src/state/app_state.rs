@@ -7,12 +7,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
+use super::stomp::{Held, Pressed, Stomp, StompMode};
 use super::tempo::TapTempo;
 use crate::audio::split_chain::walk;
 use crate::audio::transport::TransportEvent;
 use crate::audio::{ChainControl, ChainNode, Looper, LooperSettings, SplitType, Tuner};
 use crate::midi::{MidiAssign, MidiSettings, MidiTarget, Step};
-use crate::plugins::scanner::PluginInfo;
+use crate::plugins::scanner::{PluginInfo, PortInfo};
 use crate::plugins::{ChainCommand, ChainSpec, Lv2Host, SignalMap};
 use crate::presets::{
     PluginConfig, Preset, PresetChain, PresetManager, SavedMidiAssign, SceneManager, SceneSnapshot,
@@ -285,8 +286,9 @@ pub struct EffectChainState {
     pub scene: usize,
     /// Tempo, beats per minute
     pub bpm: f32,
-    /// Block toggled by each footswitch in stomp mode (None: the n-th block)
-    pub stomps: Vec<Option<usize>>,
+    /// What each footswitch does in stomp mode (by default: turns the
+    /// n-th block on and off)
+    pub stomps: Vec<Stomp>,
     /// MIDI CCs learned by the blocks
     pub midi: Vec<MidiAssign>,
     /// Values by port symbol of the blocks whose plugin is not installed,
@@ -600,6 +602,7 @@ impl EffectChainState {
                 SavedMidiAssign { assign, symbol }
             })
             .collect();
+        let (stomps, stomp_modes) = super::stomp::save(&self.stomps);
         PresetChain {
             nodes: self.nodes.clone(),
             params: self.params.clone(),
@@ -610,7 +613,8 @@ impl EffectChainState {
             scenes,
             scene: self.scene,
             bpm: self.bpm,
-            stomps: self.stomps.clone(),
+            stomps,
+            stomp_modes,
             midi,
         }
     }
@@ -627,7 +631,7 @@ impl EffectChainState {
             scenes: chain.scenes.clone(),
             scene: chain.scene.min(super::scenes::SCENE_COUNT - 1),
             bpm: super::tempo::clamp_bpm(chain.bpm),
-            stomps: chain.stomps.clone(),
+            stomps: super::stomp::load(&chain.stomps, &chain.stomp_modes),
             ..Self::default()
         };
         let ids: Vec<usize> = walk(&state.nodes).map(ChainNode::instance_id).collect();
@@ -824,6 +828,9 @@ pub struct AppState {
     /// The chain before the last block removed, and the change count right
     /// after: the removal can be undone while nothing else changed
     removed: Mutex<Option<(EffectChainState, u64)>>,
+    /// Chains loaded so far (presets, the session): a switch held across a
+    /// load has nothing left to put back
+    loads: AtomicU64,
     session_file: crate::presets::BackgroundWriter,
     /// Tones already read, by block and directory, with the time their
     /// folder last changed (the rack shows them at every refresh)
@@ -952,6 +959,7 @@ impl AppState {
             changes: AtomicU64::new(0),
             autosave: Mutex::default(),
             removed: Mutex::default(),
+            loads: AtomicU64::new(0),
             packs: Mutex::default(),
             live: Mutex::default(),
             midi: Mutex::default(),
@@ -1208,10 +1216,7 @@ impl AppState {
             &self.lv2_host,
             session.stereo_mode,
         );
-        self.edit(|c| {
-            *c = state;
-            Ok(())
-        })?;
+        self.load_chain(state)?;
         self.autosave.locked().saved = self.changes.load(Ordering::Relaxed);
         Ok(true)
     }
@@ -1810,35 +1815,158 @@ impl AppState {
         self.effect_chain.locked().stomp_target(slot)
     }
 
-    /// Assign a block to stomp switch `slot` (None: back to automatic)
-    pub fn assign_stomp(&self, slot: usize, instance_id: Option<usize>) -> Result<()> {
-        let mut chain = self.effect_chain.locked();
-        if let Some(id) = instance_id {
-            if chain.find(id).is_none() {
-                return Err(anyhow!("Node {} not found", id));
-            }
-        }
+    /// Change stomp switch `slot` with `f`, then drop the switches left as
+    /// they are by default
+    fn edit_stomp(&self, slot: usize, f: impl FnOnce(&mut Stomp)) -> Result<()> {
         if slot >= MAX_STOMP_SWITCHES {
             return Err(anyhow!("No stomp switch {}", slot.saturating_add(1)));
         }
+        let mut chain = self.effect_chain.locked();
         if chain.stomps.len() <= slot {
-            chain.stomps.resize(slot + 1, None);
+            chain.stomps.resize(slot + 1, Stomp::default());
         }
-        chain.stomps[slot] = instance_id;
-        while chain.stomps.last() == Some(&None) {
+        if let Some(stomp) = chain.stomps.get_mut(slot) {
+            f(stomp);
+        }
+        while chain.stomps.last().is_some_and(Stomp::is_default) {
             chain.stomps.pop();
         }
         self.mark_dirty();
         Ok(())
     }
 
-    /// Toggle the block of stomp switch `slot`: its id and whether it is now
-    /// bypassed
-    pub fn toggle_stomp(&self, slot: usize) -> Result<(usize, bool)> {
-        let id = self
-            .stomp_target(slot)
+    /// Assign a block to stomp switch `slot` (None: back to automatic), and
+    /// the switch of its plugin it plays (port symbol of a toggle; None: the
+    /// block on and off). The switch stays momentary or latching.
+    pub fn assign_stomp(
+        &self,
+        slot: usize,
+        instance_id: Option<usize>,
+        param: Option<&str>,
+    ) -> Result<()> {
+        if let Some(id) = instance_id {
+            if self.effect_chain.locked().find(id).is_none() {
+                return Err(anyhow!("Node {} not found", id));
+            }
+            if let Some(symbol) = param {
+                self.stomp_switch(id, symbol)?;
+            }
+        }
+        self.edit_stomp(slot, |stomp| {
+            stomp.block = instance_id;
+            stomp.mode.param = param.filter(|_| instance_id.is_some()).map(str::to_string);
+        })
+    }
+
+    /// Make stomp switch `slot` momentary (on while held) or latching
+    pub fn set_stomp_momentary(&self, slot: usize, momentary: bool) -> Result<()> {
+        self.edit_stomp(slot, |stomp| stomp.mode.momentary = momentary)
+    }
+
+    /// Block of stomp switch `slot` and how the switch plays it
+    pub fn stomp(&self, slot: usize) -> Option<(usize, StompMode)> {
+        self.effect_chain.locked().stomp(slot)
+    }
+
+    /// Position and port of the switch (toggle parameter) `symbol` of a
+    /// block
+    pub fn stomp_switch(&self, instance_id: usize, symbol: &str) -> Result<(usize, PortInfo)> {
+        let uri = match self.effect_chain.locked().find(instance_id) {
+            Some(ChainNode::Plugin { uri, .. }) => uri.clone(),
+            _ => return Err(anyhow!("Plugin {} not found", instance_id)),
+        };
+        self.lv2_host
+            .scanner()
+            .find_by_uri(&uri)
+            .and_then(|info| {
+                info.control_inputs()
+                    .enumerate()
+                    .find(|(_, p)| p.toggled && p.symbol == symbol)
+                    .map(|(index, p)| (index, p.clone()))
+            })
+            .ok_or_else(|| anyhow!("No switch {} on block {}", symbol, instance_id))
+    }
+
+    /// A press of stomp switch `slot`: flips its block or its plugin's
+    /// switch. A momentary switch says what its release undoes.
+    pub fn press_stomp(&self, slot: usize) -> Result<Pressed> {
+        let (instance_id, mode) = self
+            .stomp(slot)
             .ok_or_else(|| anyhow!("No block on switch {}", slot.saturating_add(1)))?;
-        Ok((id, self.toggle_bypass(id)?))
+        let (target, before, after) = match mode.param.as_deref() {
+            None => {
+                let bypassed = self.toggle_bypass(instance_id)?;
+                let after = if bypassed { 0.0 } else { 1.0 };
+                (MidiTarget::Bypass, 1.0 - after, after)
+            }
+            Some(symbol) => {
+                let (index, port) = self.stomp_switch(instance_id, symbol)?;
+                let (min, max) = (port.min, port.max);
+                let before = self
+                    .effect_chain
+                    .locked()
+                    .params
+                    .get(&instance_id)
+                    .and_then(|p| p.get(index))
+                    .copied()
+                    .unwrap_or(min);
+                let after = if before > (min + max) / 2.0 { min } else { max };
+                let after = self.set_parameter(instance_id, index, after)?;
+                (MidiTarget::Parameter(index), before, after)
+            }
+        };
+        let on = match target {
+            MidiTarget::Bypass => after > 0.5,
+            MidiTarget::Parameter(_) => after > before,
+        };
+        Ok(Pressed {
+            instance_id,
+            target,
+            on,
+            held: mode.momentary.then_some(Held {
+                instance_id,
+                target,
+                before,
+                after,
+                load: self.loads.load(Ordering::Relaxed),
+            }),
+        })
+    }
+
+    /// The release of a momentary switch: puts back what its press changed,
+    /// unless something else (a scene, a preset, a touch) changed it since.
+    /// Returns what it put back.
+    pub fn release_stomp(&self, held: Held) -> Result<Option<Held>> {
+        if held.load != self.loads.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let current = {
+            let chain = self.effect_chain.locked();
+            match held.target {
+                MidiTarget::Bypass => {
+                    chain
+                        .is_enabled(held.instance_id)
+                        .map(|on| if on { 1.0 } else { 0.0 })
+                }
+                MidiTarget::Parameter(index) => chain
+                    .params
+                    .get(&held.instance_id)
+                    .and_then(|p| p.get(index))
+                    .copied(),
+            }
+        };
+        if current != Some(held.after) {
+            return Ok(None);
+        }
+        match held.target {
+            MidiTarget::Bypass => {
+                self.set_block_enabled(held.instance_id, held.before > 0.5)?;
+            }
+            MidiTarget::Parameter(index) => {
+                self.set_parameter(held.instance_id, index, held.before)?;
+            }
+        }
+        Ok(Some(held))
     }
 
     // === MIDI ===
@@ -2075,6 +2203,15 @@ impl AppState {
         preset.chain = Some(chain.to_preset_chain(&self.lv2_host));
     }
 
+    /// Replace the chain with a loaded one
+    fn load_chain(&self, state: EffectChainState) -> Result<()> {
+        self.loads.fetch_add(1, Ordering::Relaxed);
+        self.edit(|c| {
+            *c = state;
+            Ok(())
+        })
+    }
+
     fn apply_preset(&self, preset: &Preset) {
         let state = match &preset.chain {
             Some(chain) => {
@@ -2086,10 +2223,7 @@ impl AppState {
                 preset.stereo_mode,
             ),
         };
-        let _ = self.edit(|c| {
-            *c = state;
-            Ok(())
-        });
+        let _ = self.load_chain(state);
         info!(name = %preset.name, "Preset applied");
     }
 
@@ -2857,7 +2991,7 @@ mod tests {
     /// A plugin with one audio input and output and the given controls
     /// (symbol, default)
     fn fx_plugin(controls: &[(&str, f32)]) -> PluginInfo {
-        use crate::plugins::scanner::{PluginCategory, PortInfo, PortType};
+        use crate::plugins::scanner::{PluginCategory, PortType};
         let audio = |index, symbol: &str, port_type| PortInfo {
             index,
             name: symbol.to_string(),
@@ -2873,6 +3007,8 @@ mod tests {
             ports.push(PortInfo {
                 default,
                 max: 1.0,
+                // A plugin switch, as Hold on a glitch
+                toggled: symbol == "hold",
                 ..audio(ports.len(), symbol, PortType::ControlInput)
             });
         }
@@ -2898,6 +3034,130 @@ mod tests {
         Lv2Host::with_scanner(crate::plugins::scanner::PluginScanner::from_plugins([
             fx_plugin(controls),
         ]))
+    }
+
+    fn fx_state(controls: &[(&str, f32)]) -> (AppState, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("pedalboard-test-{}", uuid::Uuid::new_v4()));
+        let state = AppState::with_host(Arc::new(fx_host(controls)), dir.clone()).unwrap();
+        (state, dir)
+    }
+
+    #[test]
+    fn stomp_switches_play_a_block_or_a_plugin_switch() {
+        let (state, dir) = fx_state(&[("gain", 0.0), ("hold", 0.0)]);
+        let first = state.add_plugin(FX).unwrap();
+        let second = state.add_plugin(FX).unwrap();
+
+        // Only a toggle can be played
+        assert!(state.assign_stomp(0, Some(second), Some("gain")).is_err());
+        assert!(state.assign_stomp(0, Some(second), Some("nope")).is_err());
+        state.assign_stomp(0, Some(second), Some("hold")).unwrap();
+        state.set_stomp_momentary(0, true).unwrap();
+        let hold = StompMode {
+            param: Some("hold".into()),
+            momentary: true,
+        };
+        assert_eq!(state.stomp(0), Some((second, hold.clone())));
+        // The next switch takes the free block, on and off
+        assert_eq!(state.stomp(1), Some((first, StompMode::default())));
+
+        // Back to automatic: the switch turns its block on and off
+        state.assign_stomp(0, None, Some("hold")).unwrap();
+        assert_eq!(state.chain().stomps[0].mode.param, None);
+        assert!(state.chain().stomps[0].mode.momentary);
+        state.set_stomp_momentary(0, false).unwrap();
+        assert!(state.chain().stomps.is_empty(), "nothing left to save");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn latching_stomps_flip_on_each_press() {
+        let (state, dir) = fx_state(&[("gain", 0.0), ("hold", 0.0)]);
+        let id = state.add_plugin(FX).unwrap();
+        let pressed = state.press_stomp(0).unwrap();
+        assert_eq!((pressed.instance_id, pressed.on), (id, false));
+        assert_eq!(pressed.held, None);
+        assert_eq!(state.chain().is_enabled(id), Some(false));
+        assert!(state.press_stomp(0).unwrap().on);
+        assert_eq!(state.chain().is_enabled(id), Some(true));
+
+        state.assign_stomp(0, Some(id), Some("hold")).unwrap();
+        let pressed = state.press_stomp(0).unwrap();
+        assert_eq!(pressed.target, MidiTarget::Parameter(1));
+        assert!(pressed.on);
+        assert_eq!(state.chain().params[&id], [0.0, 1.0]);
+        assert!(!state.press_stomp(0).unwrap().on);
+        assert_eq!(state.chain().params[&id], [0.0, 0.0]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn momentary_stomps_flip_back_on_release() {
+        let (state, dir) = fx_state(&[("gain", 0.0), ("hold", 0.0)]);
+        let id = state.add_plugin(FX).unwrap();
+        state.assign_stomp(0, Some(id), Some("hold")).unwrap();
+        state.set_stomp_momentary(0, true).unwrap();
+
+        let held = state.press_stomp(0).unwrap().held.unwrap();
+        assert_eq!(state.chain().params[&id], [0.0, 1.0]);
+        assert_eq!(state.release_stomp(held).unwrap(), Some(held));
+        assert_eq!(state.chain().params[&id], [0.0, 0.0]);
+
+        // A change while held wins: the release leaves it
+        let held = state.press_stomp(0).unwrap().held.unwrap();
+        state.set_parameter(id, 1, 0.0).unwrap();
+        state.set_parameter(id, 1, 1.0).unwrap();
+        state.set_parameter(id, 1, 0.0).unwrap();
+        assert_eq!(state.release_stomp(held).unwrap(), None);
+        assert_eq!(state.chain().params[&id], [0.0, 0.0]);
+
+        // Another preset loaded while held keeps its own value
+        let held = state.press_stomp(0).unwrap().held.unwrap();
+        let preset = state.save_preset("Held".into()).unwrap();
+        state.load_preset(&preset).unwrap();
+        assert_eq!(state.release_stomp(held).unwrap(), None);
+        assert_eq!(state.chain().params[&id], [0.0, 1.0]);
+        state.set_parameter(id, 1, 0.0).unwrap();
+
+        // The block on and off, held off
+        state.assign_stomp(0, Some(id), None).unwrap();
+        let held = state.press_stomp(0).unwrap().held.unwrap();
+        assert_eq!(state.chain().is_enabled(id), Some(false));
+        assert!(state.release_stomp(held).unwrap().is_some());
+        assert_eq!(state.chain().is_enabled(id), Some(true));
+        // Gone: nothing to put back
+        let held = state.press_stomp(0).unwrap().held.unwrap();
+        state.remove_node(id).unwrap();
+        assert_eq!(state.release_stomp(held).unwrap(), None);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn stomp_modes_load_and_save_with_presets() {
+        // A preset saved before stomp modes: block ids only
+        let json = r#"{"nodes": [], "params": {}, "stomps": [null, 4]}"#;
+        let chain: PresetChain = serde_json::from_str(json).unwrap();
+        let state = EffectChainState::from_preset_chain(&chain, &fx_host(&[]), false);
+        assert_eq!(state.stomps[1].block, Some(4));
+        assert!(state.stomps.iter().all(|s| s.mode.is_default()));
+        let host = fx_host(&[]);
+        let saved = serde_json::to_value(state.to_preset_chain(&host)).unwrap();
+        assert_eq!(saved["stomps"], serde_json::json!([null, 4]));
+        assert!(saved.get("stomp_modes").is_none(), "left out when unused");
+
+        let mut state = state;
+        state.stomps[1].mode = StompMode {
+            param: Some("hold".into()),
+            momentary: true,
+        };
+        let saved = state.to_preset_chain(&host);
+        let json = serde_json::to_string(&saved).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // Old apps still read the blocks
+        assert_eq!(value["stomps"], serde_json::json!([null, 4]));
+        let back: PresetChain = serde_json::from_str(&json).unwrap();
+        let back = EffectChainState::from_preset_chain(&back, &host, false);
+        assert_eq!(back.stomps, state.stomps);
     }
 
     #[test]

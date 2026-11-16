@@ -239,7 +239,9 @@ What OpenRig does, in more technical detail than the
   the community site, with the pedalboard linked to an account by a code.
   See [RIGS.md](RIGS.md).
 - **Live page**: 8 switch tiles in Stomp (block on/off, assignable),
-  Scenes or Setlist mode, tempo display with TAP. The last footswitch taps
+  Scenes or Setlist mode, tempo display with TAP. A stomp switch can also
+  play a switch of its plugin (Hold, Freeze…), latching or momentary (on
+  while held, from a footswitch, a tile, a key or MIDI CC 49–56). The last footswitch taps
   the tempo and, held, opens the tuner. The tempo drives the BPM ports of
   LV2 plugins and the bar position of the plugins that follow the
   transport: a tap lands on a beat, a MIDI Start on the first beat.

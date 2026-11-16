@@ -246,7 +246,7 @@ fn on_message(app: &App, state: &AppState, message: MidiMessage) {
             }
             None => show_status(app, format!("No setlist {}", n).into()),
         },
-        MidiAction::Footswitch(slot) => live_ui::action(app, state, slot),
+        MidiAction::Footswitch(slot, high) => live_ui::midi_switch(app, state, slot, high),
         MidiAction::Start => state.transport_start(),
         MidiAction::Looper(action) => {
             use pedalboard::midi::LooperAction;
@@ -300,34 +300,7 @@ fn controlled(app: &App, state: &AppState, controller: u8, value: u8) {
     if changed.is_empty() {
         return;
     }
-    let chain = state.chain();
-    let selected = app.get_selected_instance_id();
-    let mut bypass = false;
-    for (id, target) in changed {
-        match target {
-            MidiTarget::Bypass => {
-                crate::show_bypass(app, id as i32, chain.is_enabled(id) == Some(false));
-                bypass = true;
-            }
-            MidiTarget::Parameter(index) if id as i32 == selected => {
-                let Some(value) = chain.params.get(&id).and_then(|p| p.get(index)) else {
-                    continue;
-                };
-                // In place, so the knob moves without rebuilding the page
-                let rows = app.get_selected_parameters();
-                for row in 0..rows.row_count() {
-                    if let Some(mut p) = rows.row_data(row) {
-                        if p.index == index as i32 {
-                            p.value = *value;
-                            rows.set_row_data(row, p);
-                        }
-                    }
-                }
-            }
-            MidiTarget::Parameter(_) => {}
-        }
-    }
-    if bypass {
+    if crate::show_controlled(app, state, changed) {
         live_ui::refresh(app, state);
     }
 }
