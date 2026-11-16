@@ -91,6 +91,7 @@ pub fn block_face(
         plate_color: rgb(plate.map_or(0, |p| p.color)),
         knob_style: plate.map_or("", |p| p.knob_style.as_str()).into(),
         steel: plate.is_some_and(|p| p.steel_caps()),
+        plate_style: plate.map_or("", |p| p.style.as_str()).into(),
     }
 }
 

@@ -36,7 +36,8 @@ What OpenRig does, in more technical detail than the
   namespace: `openrig:family` (`Basic` or `Signature`), `faceColor`
   (`"#RRGGBB"`), `knobStyle` (`Plain`, `Skirted`, `Chickenhead`, `Domed`),
   `finish` (`Painted`, `Brushed`), `wear` (0 to 1), `plateName` (12
-  characters at most), `tagline` (48 at most), `view` (`EqView`,
+  characters at most), `plateStyle` (`Silkscreen`, the default, or
+  `Glitch`), `tagline` (48 at most), `view` (`EqView`,
   `DynamicsView` with `dynamics` `Compressor`, `Limiter` or `Gate`,
   `EchoTimelineView`; a view the app does not draw leaves it to inference)
   and, per control, `order` (the face order: controls the user has not
@@ -65,7 +66,13 @@ What OpenRig does, in more technical detail than the
   wear, seeded by the URI so a plate never changes) and kept in memory, four
   screws, knobs in its knob style (a steel cap on a very dark plate), values
   in amber readout windows, a view window that stays dark with amber
-  lines in both themes (the gear colours of `Theme.plot-gear`), its silk name, tagline and green "on" LED. The
+  lines in both themes (the gear colours of `Theme.plot-gear`), its silk name, tagline and green "on" LED. A
+  `Glitch` plate prints its name cut by two thin bands, as a corrupted
+  picture: from 20 to 30 % of the cap height above the baseline moved
+  right by 8 % of it in amber, from 62 to 70 % moved left by 4 %. The
+  offsets follow the font's own cap height and fall on whole pixels, so
+  the editor's plate and the rack's small pedal (whose name drops to
+  10 px when it does not fit) show the same cut; it never moves. The
   web remote draws plates flat, in their colour only. A plate without a view
   gives its height to its controls when they fit in two rows: taller cells
   and knobs up to 104 px, the rows centred on the plate.

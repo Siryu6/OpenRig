@@ -590,13 +590,14 @@ mod tests {
 
     #[test]
     fn a_plate_tints_its_block_unless_the_user_chose_a_colour() {
-        use crate::plugins::faceplate::{Finish, KnobStyle, Plate};
+        use crate::plugins::faceplate::{Finish, KnobStyle, Plate, PlateStyle};
         let plate = Plate {
             color: 0x2e5a3a,
             knob_style: KnobStyle::Skirted,
             finish: Finish::Painted,
             wear: 0.0,
             seed: 1,
+            style: PlateStyle::Silkscreen,
         };
         let info = PluginInfo {
             uri: "https://openrig.eu/plugins/green-drive".into(),
