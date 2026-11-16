@@ -12,7 +12,6 @@ import { Features } from "../features.slint";
 import { T3kMark, T3kPicture } from "../components/tone3000_brand.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 
-// Formats a parameter value for display ("12.5 dB", "40%", "3")
 // Search in a long list of models (Rust: every word in the title or subtitle)
 export global ChoiceSearch {
     pure callback filter(choices: [ModelChoice], query: string) -> [ModelChoice];
@@ -24,14 +23,10 @@ export global ChoiceSearch {
     pure callback start(choices: [ModelChoice]) -> string;
 }
 
+// Formats a parameter value for display ("12.5 dB", "40%", "1 beat")
+// (Rust: pedalboard::ui::param_format)
 export global ParamFormat {
-    pure public function format(v: float, kind: string, unit: string) -> string {
-        if unit == "Hz" && v >= 1000 {
-            return (round(v / 100) / 10) + " kHz";
-        }
-        return (kind == "int" || abs(v) >= 100 ? round(v) : abs(v) >= 10 ? round(v * 10) / 10 : round(v * 100) / 100)
-            + (unit == "" ? "" : unit == "%" ? "%" : " " + unit);
-    }
+    pure callback format(float, string, string) -> string;
 }
 
 // Modal list of ModelChoice rows (title + subtitle), optionally starting
