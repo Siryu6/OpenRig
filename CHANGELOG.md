@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0](https://github.com/Siryu6/OpenRig/compare/v0.15.0...v0.16.0) - 2026-11-16
+
+### Added
+
+- draw a step grid view from a plugin's StepGrid stream ([#222](https://github.com/Siryu6/OpenRig/pull/222))
+- print a plate name in its glitch style ([#221](https://github.com/Siryu6/OpenRig/pull/221))
+- add a Pitch family for pitch shifters ([#215](https://github.com/Siryu6/OpenRig/pull/215))
+- *(audio)* give plugins a running bar and beat position ([#214](https://github.com/Siryu6/OpenRig/pull/214))
+- read the view, roles and strip controls OpenRig FX plugins state ([#209](https://github.com/Siryu6/OpenRig/pull/209))
+- show OpenRig FX faces and badges in the Add effect page and the store ([#200](https://github.com/Siryu6/OpenRig/pull/200)) ([#201](https://github.com/Siryu6/OpenRig/pull/201))
+- show signature OpenRig FX plugins as mini pedals in the rack ([#198](https://github.com/Siryu6/OpenRig/pull/198)) ([#199](https://github.com/Siryu6/OpenRig/pull/199))
+- draw signature OpenRig FX plugins on their plate ([#197](https://github.com/Siryu6/OpenRig/pull/197))
+- read OpenRig FX faceplates and give basic plugins their look ([#194](https://github.com/Siryu6/OpenRig/pull/194))
+
+### Fixed
+
+- show whole knob rows on plates and a legible page count ([#224](https://github.com/Siryu6/OpenRig/pull/224))
+- give a plate without a view its height for its controls ([#218](https://github.com/Siryu6/OpenRig/pull/218))
+- show the knob strip in the rack's order on the web remote ([#217](https://github.com/Siryu6/OpenRig/pull/217))
+- show a drive's measured tone in a dark window on its plate ([#205](https://github.com/Siryu6/OpenRig/pull/205))
+- show short modes of OpenRig FX plugins as a switch at every size ([#207](https://github.com/Siryu6/OpenRig/pull/207))
+
+### Other
+
+- fold the OpenRig FX look into the block face and colour rules ([#203](https://github.com/Siryu6/OpenRig/pull/203))
+
 ## [0.15.0](https://github.com/Siryu6/OpenRig/compare/v0.14.3...v0.15.0) - 2026-11-15
 
 ### Added
