@@ -399,11 +399,12 @@ pub fn scene_slot_views(state: &AppState) -> Vec<SceneSlotView> {
 
 /// Block colours offered in the editor: (name saved in presets, label, RGB).
 /// Mid tones, so white text stays readable on them.
-pub const BLOCK_COLORS: [(&str, &str, u32); 10] = [
+pub const BLOCK_COLORS: [(&str, &str, u32); 11] = [
     ("", "Auto", 0x23262d),
     ("red", "Red", 0x9a3a33),
     ("orange", "Orange", 0xa35a2c),
     ("yellow", "Yellow", 0x9a8136),
+    ("lime", "Lime", 0x6e8030),
     ("green", "Green", 0x4e7c4a),
     ("teal", "Teal", 0x30706e),
     ("blue", "Blue", 0x3e5a87),
@@ -424,6 +425,7 @@ pub fn default_block_color_name(shape: &str, category: Option<&PluginCategory>) 
         (_, Some(PluginCategory::Simulator)) => "red",
         (_, Some(PluginCategory::Delay)) => "green",
         (_, Some(PluginCategory::Modulation)) => "blue",
+        (_, Some(PluginCategory::Pitch)) => "lime",
         (_, Some(PluginCategory::Filter)) => "purple",
         (_, Some(PluginCategory::Dynamics)) => "pink",
         _ => "silver",
@@ -574,6 +576,10 @@ mod tests {
         assert_eq!(
             default_block_color_name("", Some(&PluginCategory::Delay)),
             "green"
+        );
+        assert_eq!(
+            default_block_color_name("", Some(&PluginCategory::Pitch)),
+            "lime"
         );
         assert_eq!(
             default_block_color_name("", Some(&PluginCategory::Unknown)),

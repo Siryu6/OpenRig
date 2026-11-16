@@ -1524,7 +1524,7 @@ export component PluginEditor {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             width: 5 * 88px + 2 * Theme.space-lg;
-            height: 2 * 84px + 56px + Theme.space-lg;
+            height: ceil(root.colors.length / 5) * 84px + 56px + Theme.space-lg;
             TouchArea { }   // keep taps inside the card
             Text {
                 x: Theme.space-lg;
