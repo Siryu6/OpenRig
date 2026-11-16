@@ -1,5 +1,9 @@
-# Fixed ids: files on /data keep their owner across system updates.
-# 1000 is outside Buildroot's automatic system range (100-999), so no
-# package user can take it. Images up to 0.17.0 picked them automatically
-# (102 then 103); S00storage gives the files back at boot.
+# Fixed ids for every user that owns files on /data: the files keep their
+# owner across system updates. Buildroot gives automatic ids from 100 to
+# 999, in an order that can change between images, so fixed ids live above
+# that range, from 1000. Images up to 0.17.0 picked them automatically;
+# S00storage gives the files back at boot.
+#   pedalboard  the app, /data/pedalboard
+#   chrony      the time daemon, /data/var/lib/chrony (as in package/chrony)
 pedalboard 1000 pedalboard 1000 * /data/pedalboard /bin/sh audio,video,render,input,gpio,netdev Pedalboard
+chrony 1001 chrony 1001 * /run/chrony - - Time daemon
