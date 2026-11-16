@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0](https://github.com/Siryu6/OpenRig/compare/v0.16.0...v0.17.0) - 2026-11-16
+
+### Added
+
+- play a plugin switch from a momentary footswitch ([#228](https://github.com/Siryu6/OpenRig/pull/228))
+
+### Fixed
+
+- say "1 beat" and "2 beats" on unit labels ([#226](https://github.com/Siryu6/OpenRig/pull/226))
+
 ## [0.16.0](https://github.com/Siryu6/OpenRig/compare/v0.15.0...v0.16.0) - 2026-11-16
 
 ### Added
