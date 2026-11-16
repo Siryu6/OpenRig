@@ -35,6 +35,8 @@ pub enum View {
     Limiter,
     Gate,
     EchoTimeline,
+    /// One bar in steps, from the plugin's `openrig:StepGrid` stream
+    StepGrid,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -262,6 +264,7 @@ impl Terms {
             (Some("DynamicsView"), Some("Limiter")) => Some(View::Limiter),
             (Some("DynamicsView"), Some("Gate" | "Expander")) => Some(View::Gate),
             (Some("EchoTimelineView"), _) => Some(View::EchoTimeline),
+            (Some("StepGridView"), _) => Some(View::StepGrid),
             _ => None,
         };
         Some(Faceplate {
@@ -566,6 +569,7 @@ mod tests {
         assert_eq!(view("EqView", None), Some(View::Eq));
         assert_eq!(view("DynamicsView", Some("Gate")), Some(View::Gate));
         assert_eq!(view("EchoTimelineView", None), Some(View::EchoTimeline));
+        assert_eq!(view("StepGridView", None), Some(View::StepGrid));
         // Not drawn by the app, or a level curve of no known kind
         assert_eq!(view("LfoView", None), None);
         assert_eq!(view("DynamicsView", None), None);
