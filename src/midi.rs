@@ -23,6 +23,7 @@
 //! | CC 71 | Footswitch mode: 0 Stomp, 2 Setlist, 3 Scenes, 4 next, 5 previous |
 //! | CC 72 | Preset: 0–63 previous, 64–127 next |
 //! | MIDI clock | Tempo (when enabled) |
+//! | MIDI Start | The bar starts again on its first beat (when the clock is followed) |
 //!
 //! Any other CC (CC 1–3 being the expression pedals by convention) can be
 //! learned by a block parameter or bypass, and is saved with the preset.
@@ -182,6 +183,8 @@ pub enum MidiAction {
     Footswitch(usize),
     Looper(LooperAction),
     Tap,
+    /// MIDI Start: the transport goes back to the first beat of a bar
+    Start,
     Tuner,
     Scene(usize),
     SceneStep(Step),
@@ -243,6 +246,7 @@ pub fn action(message: MidiMessage, settings: &MidiSettings) -> Option<MidiActio
         MidiMessage::Program { channel, program } if on_channel(channel) => {
             Some(MidiAction::Program(program))
         }
+        MidiMessage::Start if settings.clock => Some(MidiAction::Start),
         MidiMessage::Control {
             channel,
             controller,
@@ -452,6 +456,16 @@ mod tests {
         assert_eq!(parse(&[0xb0, 7]), None);
         assert_eq!(parse(&[0xc0, 0x80]), None);
         assert_eq!(parse(&[]), None);
+    }
+
+    #[test]
+    fn midi_start_restarts_the_bar_when_the_clock_is_followed() {
+        let mut s = MidiSettings::default();
+        assert_eq!(action(MidiMessage::Start, &s), Some(MidiAction::Start));
+        assert_eq!(action(MidiMessage::Continue, &s), None);
+        assert_eq!(action(MidiMessage::Stop, &s), None);
+        s.clock = false;
+        assert_eq!(action(MidiMessage::Start, &s), None);
     }
 
     #[test]

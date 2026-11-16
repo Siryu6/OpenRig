@@ -27,6 +27,7 @@ use tracing::{debug, error, info, warn};
 
 use super::dsp_pool;
 use super::latency::EffectsLatency;
+use super::transport::Transport;
 use crate::midi::RawMidi;
 use crate::plugins::chain::{ChainCommand, ChainIo, ChainSpec, EffectChain};
 use crate::plugins::response::{self, Probe};
@@ -178,6 +179,8 @@ pub struct ChainSwitcher {
     /// Asks the builder for the latest chain again, after a panic
     rebuild_tx: Sender<()>,
     log: CommandLog,
+    /// The musical clock: it keeps running across chain switches
+    transport: Transport,
 }
 
 impl ChainSwitcher {
@@ -233,6 +236,7 @@ impl ChainSwitcher {
             garbage_tx,
             rebuild_tx,
             log: CommandLog::new(),
+            transport: Transport::new(sample_rate),
         };
         info!(
             sample_rate,
@@ -266,6 +270,11 @@ impl ChainSwitcher {
     /// Apply pending commands and pick up freshly built chains (audio thread)
     fn poll(&mut self) {
         while let Ok((generation, command)) = self.command_rx.try_recv() {
+            match command {
+                ChainCommand::SetTempo { bpm } => self.transport.set_bpm(bpm),
+                ChainCommand::Transport(event) => self.transport.event(event),
+                _ => {}
+            }
             self.log.push(generation, command);
             self.active.apply(&command);
             for chain in self.next.iter_mut().chain(self.pending.iter_mut()) {
@@ -287,6 +296,9 @@ impl ChainSwitcher {
             for command in self.log.since(generation) {
                 chain.apply(command);
             }
+            // Its preset's tempo, with the changes since: the clock goes on
+            // from where it is
+            self.transport.set_bpm(chain.bpm());
             if self.next.is_some() {
                 if let Some(previous) = self.pending.replace(chain) {
                     self.discard(previous);
@@ -311,6 +323,8 @@ impl ChainSwitcher {
     /// chain's own.
     pub fn process_io(&mut self, left: &mut [f32], right: &mut [f32], io: &mut ChainIo) -> bool {
         self.poll();
+        io.set_start(Some(self.transport.position()));
+        self.transport.advance(left.len());
         let max_block = self.max_block;
         let mut switching = false;
         // The panic itself is logged by the hook set in `main`
@@ -690,5 +704,38 @@ mod tests {
         };
         assert!(message.contains("keeps failing"));
         assert!(switcher.active.is_empty());
+    }
+
+    #[test]
+    fn the_clock_runs_across_periods_and_follows_tempo_and_taps() {
+        use crate::audio::transport::TransportEvent;
+        let host = Arc::new(Lv2Host::demo());
+        let (mut switcher, control) = ChainSwitcher::new(host, 48000.0, 128, 5.0).unwrap();
+        let mut start = || {
+            let (mut left, mut right) = (vec![0.0; 6000], vec![0.0; 6000]);
+            let mut seen = None;
+            crate::plugins::chain::no_io(|io| {
+                switcher.process_io(&mut left, &mut right, io);
+                seen = io.start();
+            });
+            seen.unwrap()
+        };
+        // 6000 frames at 120 are a quarter of a beat
+        assert_eq!(start().beat, 0.0);
+        let p = start();
+        assert_eq!(p.frame, 6000);
+        assert!((p.bar_beat() - 0.25).abs() < 1e-6);
+        // A tempo change applies from the next period on, from where it is
+        let send = |command| control.command_tx.send((2, command)).unwrap();
+        send(ChainCommand::SetTempo { bpm: 60.0 });
+        assert!((start().beat - 0.5).abs() < 1e-9);
+        assert!((start().beat - 0.625).abs() < 1e-9);
+        // A tap lands on the nearest beat, MIDI Start on the first one
+        send(ChainCommand::Transport(TransportEvent::Beat));
+        assert!((start().beat - 1.0).abs() < 1e-9);
+        send(ChainCommand::Transport(TransportEvent::Start));
+        let p = start();
+        assert_eq!((p.bar(), p.bar_beat()), (0, 0.0));
+        assert_eq!(p.frame, 5 * 6000);
     }
 }

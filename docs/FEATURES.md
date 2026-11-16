@@ -9,8 +9,9 @@ What OpenRig does, in more technical detail than the
   map / unmap, options, bounded-block-length, isLive and the worker
   (`work:schedule`: slow jobs such as loading a model run on a thread of the
   plugin's own) are provided; plugins that need anything else are skipped,
-  with a warning naming the missing feature in the log. Atom inputs get the tempo
-  (`time:Position`) and MIDI. Without any installed plugin, a demo
+  with a warning naming the missing feature in the log. Atom inputs get the
+  transport (`time:Position`: a running bar and beat position at the tempo,
+  in 4/4, at every block) and MIDI. Without any installed plugin, a demo
   catalogue (passthrough) keeps the UI usable for development.
 - **Plugin store** (feature `store`): installs free LV2 plugins from a
   signed index (minisign, anti-rollback serial, expiry), with the archive
@@ -216,7 +217,8 @@ What OpenRig does, in more technical detail than the
 - **Live page**: 8 switch tiles in Stomp (block on/off, assignable),
   Scenes or Setlist mode, tempo display with TAP. The last footswitch taps
   the tempo and, held, opens the tuner. The tempo drives the BPM ports of
-  LV2 plugins.
+  LV2 plugins and the bar position of the plugins that follow the
+  transport: a tap lands on a beat, a MIDI Start on the first beat.
 - **Tails (spillover)**: delays and reverbs keep ringing when bypassed or
   when the scene changes. LV2 plugins with an `lv2:enabled` port keep
   running bypassed with that port at 0, and play their own tail.

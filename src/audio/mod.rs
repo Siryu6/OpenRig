@@ -9,6 +9,7 @@ pub mod master;
 pub mod routing;
 pub mod spectrum;
 pub mod split_chain;
+pub mod transport;
 pub mod tuner;
 
 pub use chain_switcher::{ChainControl, ChainSwitcher};

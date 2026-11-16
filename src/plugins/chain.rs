@@ -38,6 +38,7 @@ use crate::audio::latency::{BlockLatency, DelayLine, EffectsLatency};
 use crate::audio::routing::MAX_SENDS;
 use crate::audio::spectrum::BlockTap;
 use crate::audio::split_chain::{ChainNode, SplitType};
+use crate::audio::transport::{Position, TransportEvent};
 use crate::midi::RawMidi;
 use crate::monitor::BlockMeter;
 use crate::sync::MutexExt;
@@ -71,7 +72,8 @@ pub struct ChainSpec {
 }
 
 /// What the chain reads and writes besides its own signal, for one audio
-/// period: the inputs of the interface (returns) and the send buses (sends)
+/// period: the inputs of the interface (returns), the send buses (sends)
+/// and where the music is (plugins following the transport)
 pub struct ChainIo<'a> {
     /// Buffer of each input, for the whole period
     inputs: &'a [&'a [f32]],
@@ -89,6 +91,9 @@ pub struct ChainIo<'a> {
     /// signal coming back from an effect loop there)
     latency: usize,
     send_mark: Option<usize>,
+    /// Where the music is at the start of the period (none: no transport
+    /// is sent to the plugins)
+    start: Option<Position>,
 }
 
 impl<'a> ChainIo<'a> {
@@ -101,7 +106,23 @@ impl<'a> ChainIo<'a> {
             gain_step: 0.0,
             latency: 0,
             send_mark: None,
+            start: None,
         }
+    }
+
+    /// Set where the music is at the start of the period
+    pub fn set_start(&mut self, start: Option<Position>) {
+        self.start = start;
+    }
+
+    /// Where the music is at the start of the period
+    pub fn start(&self) -> Option<Position> {
+        self.start
+    }
+
+    /// Where the music is at the part being processed
+    fn position(&self) -> Option<Position> {
+        self.start.map(|p| p.after(self.offset))
     }
 
     /// The part of the period starting at `offset`, with the sends going
@@ -123,6 +144,7 @@ impl<'a> ChainIo<'a> {
             gain_step: self.gain_step,
             latency: self.latency,
             send_mark: self.send_mark,
+            start: self.start,
         }
     }
 }
@@ -159,10 +181,13 @@ pub enum ChainCommand {
         instance_id: usize,
         pan: [f32; 2],
     },
-    /// Tempo for every plugin taking the transport (time:Position)
+    /// Tempo of the transport (plugins taking time:Position)
     SetTempo {
         bpm: f32,
     },
+    /// A beat or a bar starts now (a tap, a MIDI Start): for the transport
+    /// clock of the audio thread, nothing in the chain changes
+    Transport(TransportEvent),
 }
 
 impl ChainCommand {
@@ -174,7 +199,7 @@ impl ChainCommand {
             | ChainCommand::SetSplitAb { instance_id, .. }
             | ChainCommand::SetSplitMix { instance_id, .. }
             | ChainCommand::SetSplitPan { instance_id, .. } => instance_id,
-            ChainCommand::SetTempo { .. } => return None,
+            ChainCommand::SetTempo { .. } | ChainCommand::Transport(_) => return None,
         })
     }
 }
@@ -356,8 +381,12 @@ struct PluginProc {
 }
 
 impl PluginProc {
-    fn process(&mut self, l: &mut [f32], r: &mut [f32]) {
+    /// Process the block at `position` of the music
+    fn process(&mut self, l: &mut [f32], r: &mut [f32], position: Option<Position>) {
         let start = Instant::now();
+        for instance in self.instances() {
+            instance.set_position(position);
+        }
         if self.tap.watches(self.left.instance_id) {
             self.tap.record_input(l, r, self.stereo_in);
             self.run(l, r);
@@ -969,7 +998,7 @@ impl ProcNode {
     fn process(&mut self, l: &mut [f32], r: &mut [f32], io: &mut ChainIo) {
         let at = io.latency;
         match self {
-            ProcNode::Plugin(plugin) => plugin.process(l, r),
+            ProcNode::Plugin(plugin) => plugin.process(l, r, io.position()),
             ProcNode::Split(split) => split.process(l, r, io),
             ProcNode::Route(route) => route.process(l, r, io),
         }
@@ -1052,6 +1081,8 @@ struct Wave<'a> {
     part: usize,
     inputs: &'a [&'a [f32]],
     offset: usize,
+    /// Where the music is at the start of the period
+    start: Option<Position>,
     /// Latency of the signal at the start of each stage
     starts: [usize; dsp_pool::MAX_WORKERS + 1],
     /// Sub-blocks each stage has finished
@@ -1067,7 +1098,7 @@ impl<'a> Wave<'a> {
         bounds: &[usize],
         (l, r): (&'a mut [f32], &'a mut [f32]),
         part: usize,
-        (inputs, offset): (&'a [&'a [f32]], usize),
+        (inputs, offset, start): (&'a [&'a [f32]], usize, Option<Position>),
     ) -> Self {
         let stages = std::array::from_fn(|_| Mutex::new(None));
         let blocks = std::array::from_fn(|_| Mutex::new(None));
@@ -1081,6 +1112,7 @@ impl<'a> Wave<'a> {
             part,
             inputs,
             offset,
+            start,
             starts,
             progress: Default::default(),
         };
@@ -1139,6 +1171,7 @@ impl<'a> Wave<'a> {
                     gain_step: 0.0,
                     latency: self.starts.get(k).copied().unwrap_or(0),
                     send_mark: None,
+                    start: self.start,
                 };
                 for (node, spent) in nodes.iter_mut().zip(spent.iter_mut()) {
                     let start = Instant::now();
@@ -1206,7 +1239,9 @@ fn apply_to(nodes: &mut [ProcNode], command: &ChainCommand) -> bool {
                         ChainCommand::SetSplitPan { pan, .. } => {
                             split.pan = pan.map(|p| p.clamp(-1.0, 1.0))
                         }
-                        ChainCommand::SetParameter { .. } | ChainCommand::SetTempo { .. } => {}
+                        ChainCommand::SetParameter { .. }
+                        | ChainCommand::SetTempo { .. }
+                        | ChainCommand::Transport(_) => {}
                     }
                     return true;
                 }
@@ -1235,6 +1270,8 @@ pub struct EffectChain {
     /// A send somewhere: the chain stays on the audio thread, which owns
     /// the send buses
     has_send: bool,
+    /// Tempo of its preset, for the transport (0: none)
+    bpm: f32,
 }
 
 impl EffectChain {
@@ -1249,6 +1286,7 @@ impl EffectChain {
             costs: Vec::new(),
             spent: Vec::new(),
             has_send: false,
+            bpm: 0.0,
         }
     }
 
@@ -1274,9 +1312,7 @@ impl EffectChain {
         if may_be_late(&chain.nodes) {
             add_return_delays(&mut chain.nodes, sample_rate);
         }
-        if spec.bpm > 0.0 {
-            chain.apply(&ChainCommand::SetTempo { bpm: spec.bpm });
-        }
+        chain.bpm = spec.bpm;
         (chain, errors)
     }
 
@@ -1577,7 +1613,7 @@ impl EffectChain {
             &bounds[..=stages.min(bounds.len() - 1)],
             (l, r),
             part,
-            (io.inputs, io.offset),
+            (io.inputs, io.offset, io.start),
         );
         crew.run(&|k| wave.stage(k));
 
@@ -1594,11 +1630,19 @@ impl EffectChain {
 
     /// Apply a live change; returns false if no node has that instance_id
     pub fn apply(&mut self, command: &ChainCommand) -> bool {
-        if let ChainCommand::SetTempo { bpm } = *command {
-            for_each_instance(&mut self.nodes, &mut |i| i.set_tempo(bpm));
-            return true;
+        match *command {
+            ChainCommand::SetTempo { bpm } => {
+                self.bpm = bpm;
+                true
+            }
+            ChainCommand::Transport(_) => true,
+            _ => apply_to(&mut self.nodes, command),
         }
-        apply_to(&mut self.nodes, command)
+    }
+
+    /// Tempo of its preset, with the tempo changes applied since (0: none)
+    pub fn bpm(&self) -> f32 {
+        self.bpm
     }
 
     /// Hand a MIDI message to every plugin with a MIDI input
