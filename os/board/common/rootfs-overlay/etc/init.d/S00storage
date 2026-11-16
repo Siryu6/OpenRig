@@ -115,7 +115,13 @@ else
 fi
 
 mkdir -p /data/pedalboard /data/rauc
-chown pedalboard:pedalboard /data/pedalboard
+# Everything in the app's directory belongs to its user. Older images gave
+# the user other ids, so files kept from them are given back: one walk that
+# changes only what the user does not own. Owners only, modes are kept
+# (secrets stay 0600); -h and no -L: links are changed, never followed.
+find /data/pedalboard -xdev \( ! -user pedalboard -o ! -group pedalboard \) \
+	-exec chown -h pedalboard:pedalboard {} + ||
+	log "some files in /data/pedalboard are not the app's"
 
 # Remote control password and Wi-Fi network written in pedalboard.txt: kept
 # on the data partition (a hash; NetworkManager profiles) and replaced in
