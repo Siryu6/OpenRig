@@ -66,7 +66,9 @@ What OpenRig does, in more technical detail than the
   screws, knobs in its knob style (a steel cap on a very dark plate), values
   in amber readout windows, a view window that stays dark with amber
   lines in both themes (the gear colours of `Theme.plot-gear`), its silk name, tagline and green "on" LED. The
-  web remote draws plates flat, in their colour only.
+  web remote draws plates flat, in their colour only. A plate without a view
+  gives its height to its controls when they fit in two rows: taller cells
+  and knobs up to 104 px, the rows centred on the plate.
   In the rack, a signature block is a mini pedal on its plate: two small
   knobs, the green LED, its silk name and a footswitch (tap, hold and drag
   as on any block; bypassed, it goes dark). Its default colour, on the rack,
