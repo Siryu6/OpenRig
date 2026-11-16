@@ -35,3 +35,156 @@ export component PlateLed inherits Rectangle {
     border-width: 1px;
     border-color: #00000099;
 }
+
+// One horizontal band of a plate name: the name seen through a slit
+// from `top` to `bottom`, moved `shift` sideways
+component NameBand inherits Rectangle {
+    in property <length> top;
+    in property <length> bottom;
+    in property <length> shift;
+    in property <length> box-width;   // the name's box
+    in property <length> line-top;    // where the name's line starts
+    in property <length> line-height;
+    in property <string> text;
+    in property <color> ink;
+    in property <length> font-size;
+    in property <length> letter-spacing;
+    in property <TextHorizontalAlignment> horizontal-alignment;
+    in property <TextOverflow> overflow;
+    // Wide enough for a shifted band to spill out of the name's box
+    private property <length> spill: root.font-size;
+    x: -root.spill;
+    y: root.top;
+    width: root.box-width + 2 * root.spill;
+    height: max(0px, root.bottom - root.top);
+    clip: true;
+    Text {
+        x: root.spill + root.shift;
+        y: root.line-top - root.top;
+        width: root.box-width;
+        height: root.line-height;
+        text: root.text;
+        color: root.ink;
+        font-size: root.font-size;
+        font-weight: 900;
+        letter-spacing: root.letter-spacing;
+        horizontal-alignment: root.horizontal-alignment;
+        vertical-alignment: TextVerticalAlignment.top;
+        overflow: root.overflow;
+    }
+}
+
+// The name printed on a plate, in heavy silk letters, in its style
+// (openrig:plateStyle): "silkscreen", plain; "glitch", cut by two thin
+// bands as a corrupted picture: from 20 to 30 % of the cap height above
+// the baseline moved right by 8 % of it in the accent colour, from 62 to
+// 70 % moved left by 4 %. Fixed: a plate does not move. Edges fall on
+// whole pixels so the bands stay sharp at rack size.
+// `least-font-size`: the size taken when the name does not fit in `room`
+// at `font-size` (0: elided instead)
+export component PlateName {
+    in property <string> text;
+    in property <string> style;
+    in property <color> color: Theme.plate-silk;
+    in property <color> accent: Theme.plot-gear.accent;
+    in property <length> font-size: Theme.font-small;
+    in property <length> least-font-size: 0px;
+    in property <length> room;
+    in property <length> letter-spacing: 1.2px;
+    in property <TextHorizontalAlignment> horizontal-alignment: left;
+    in property <TextOverflow> overflow: elide;
+
+    // The name at its size, measured
+    probe := Text {
+        visible: false;
+        width: 0px;
+        height: 0px;
+        text: root.text;
+        font-size: root.font-size;
+        font-weight: 900;
+        letter-spacing: root.letter-spacing;
+    }
+    private property <length> size: root.least-font-size > 0px && probe.preferred-width > root.room
+        ? root.least-font-size : root.font-size;
+    name := Text {
+        visible: false;
+        width: 0px;
+        height: 0px;
+        text: root.text;
+        font-size: root.size;
+        font-weight: 900;
+        letter-spacing: root.letter-spacing;
+    }
+    private property <length> line-height: name.font-metrics.ascent - name.font-metrics.descent;
+    private property <length> line-top: (root.height - root.line-height) / 2;
+    private property <length> baseline: root.line-top + name.font-metrics.ascent;
+    private property <length> cap: name.font-metrics.cap-height > 0px ? name.font-metrics.cap-height : 0.72 * root.size;
+    // Band edges from the top, on whole pixels, each band at least one high
+    private property <length> low-top: round((root.baseline - 0.30 * root.cap) / 1px) * 1px;
+    private property <length> low-bottom: max(root.low-top + 1px, round((root.baseline - 0.20 * root.cap) / 1px) * 1px);
+    private property <length> high-top: round((root.baseline - 0.70 * root.cap) / 1px) * 1px;
+    private property <length> high-bottom: max(root.high-top + 1px, round((root.baseline - 0.62 * root.cap) / 1px) * 1px);
+
+    preferred-width: probe.preferred-width;
+    min-height: probe.font-metrics.ascent - probe.font-metrics.descent;
+
+    if root.style != "glitch": Text {
+        text: root.text;
+        color: root.color;
+        font-size: root.size;
+        font-weight: 900;
+        letter-spacing: root.letter-spacing;
+        horizontal-alignment: root.horizontal-alignment;
+        vertical-alignment: center;
+        overflow: root.overflow;
+    }
+    if root.style == "glitch": Rectangle {
+        // Above, between and below the bands: the name in place
+        for band in [
+            { top: 0px, bottom: root.high-top },
+            { top: root.high-bottom, bottom: root.low-top },
+            { top: root.low-bottom, bottom: root.height },
+        ]: NameBand {
+            top: band.top;
+            bottom: band.bottom;
+            shift: 0px;
+            box-width: root.width;
+            line-top: root.line-top;
+            line-height: root.line-height;
+            text: root.text;
+            ink: root.color;
+            font-size: root.size;
+            letter-spacing: root.letter-spacing;
+            horizontal-alignment: root.horizontal-alignment;
+            overflow: root.overflow;
+        }
+        NameBand {
+            top: root.high-top;
+            bottom: root.high-bottom;
+            shift: -max(1px, round(0.04 * root.cap / 1px) * 1px);
+            box-width: root.width;
+            line-top: root.line-top;
+            line-height: root.line-height;
+            text: root.text;
+            ink: root.color;
+            font-size: root.size;
+            letter-spacing: root.letter-spacing;
+            horizontal-alignment: root.horizontal-alignment;
+            overflow: root.overflow;
+        }
+        NameBand {
+            top: root.low-top;
+            bottom: root.low-bottom;
+            shift: max(1px, round(0.08 * root.cap / 1px) * 1px);
+            box-width: root.width;
+            line-top: root.line-top;
+            line-height: root.line-height;
+            text: root.text;
+            ink: root.accent;
+            font-size: root.size;
+            letter-spacing: root.letter-spacing;
+            horizontal-alignment: root.horizontal-alignment;
+            overflow: root.overflow;
+        }
+    }
+}

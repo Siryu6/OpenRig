@@ -441,6 +441,7 @@ mod discovery {
             finish: resource("finish"),
             wear: first("wear").as_ref().and_then(number),
             plate_name: text("plateName"),
+            plate_style: resource("plateStyle"),
             tagline: text("tagline"),
             view: resource("view"),
             dynamics: resource("dynamics"),

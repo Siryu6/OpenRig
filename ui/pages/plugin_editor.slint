@@ -6,7 +6,7 @@ import { DynamicsGraph } from "../components/dynamics_graph.slint";
 import { ScopeGraph } from "../components/scope_graph.slint";
 import { Button, Badge, Card, EmptyState, FocusHighlight, Icon, Knob, Segmented, Stepper, Toggle } from "../components/controls.slint";
 import { LogoMark } from "../components/logo.slint";
-import { PlateLed, Screw } from "../components/plate.slint";
+import { PlateLed, PlateName, Screw } from "../components/plate.slint";
 import { Features } from "../features.slint";
 import { T3kMark, T3kPicture } from "../components/tone3000_brand.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
@@ -1487,13 +1487,12 @@ export component PluginEditor {
                 if root.signature: HorizontalLayout {
                     height: root.short ? 22px : 40px;
                     spacing: Theme.space-md;
-                    Text {
+                    PlateName {
                         text: root.face.title.to-uppercase();
-                        color: Theme.plate-silk;
+                        style: root.face.plate-style;
                         font-size: root.short ? Theme.font-title : 28px;
-                        font-weight: 900;
                         letter-spacing: root.short ? 2px : 4px;
-                        vertical-alignment: center;
+                        overflow: clip;
                         horizontal-stretch: 0;
                     }
                     Text {
