@@ -106,6 +106,7 @@ Fields the view reads (everything else is carried untouched):
 | `chain.scene` | Slot the preset opens on |
 | `chain.bpm` | Tempo (120 when absent) |
 | `chain.stomps` | Footswitch slots in stomp mode: instance id or `null` |
+| `chain.stomp_modes` | Optional, same slots: `{"param": "<port symbol>", "momentary": true}`, both optional. `param` plays that switch of the plugin instead of its on/off; `momentary` is on while held. Absent when every switch turns its block on and off |
 | `chain.midi` | Learned MIDI CCs (OpenRig leaves them out of exports unless asked) |
 
 Parameter values are in `chain.params_by_symbol`

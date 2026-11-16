@@ -230,7 +230,7 @@ fn apply(app: &App, state: &Arc<AppState>, board: &mut Board) {
         }
     }
     // A switch held while it was moved or removed never reports its release
-    crate::live_ui::release_footswitches(app);
+    crate::live_ui::release_footswitches(app, state);
     crate::live_ui::refresh(app, state);
 }
 

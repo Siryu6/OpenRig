@@ -73,6 +73,10 @@ pub struct PresetChain {
     /// Block toggled by each footswitch in stomp mode
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stomps: Vec<Option<usize>>,
+    /// How each footswitch in stomp mode plays its block (a switch of the
+    /// plugin, momentary), when one does not just turn it on and off
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stomp_modes: Vec<crate::state::stomp::StompMode>,
     /// MIDI CCs learned by the blocks
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub midi: Vec<SavedMidiAssign>,
@@ -101,6 +105,7 @@ impl Default for PresetChain {
             scene: 0,
             bpm: DEFAULT_BPM,
             stomps: Vec::new(),
+            stomp_modes: Vec::new(),
             midi: Vec::new(),
         }
     }

@@ -736,6 +736,43 @@ pub(crate) fn show_bypass(app: &App, instance_id: i32, bypassed: bool) {
     }
 }
 
+/// Show what a control (a learned MIDI controller, a stomp switch) changed,
+/// in place: the knob moves without rebuilding the page. True when a block
+/// was turned on or off.
+pub(crate) fn show_controlled(
+    app: &App,
+    state: &AppState,
+    changed: impl IntoIterator<Item = (usize, MidiTarget)>,
+) -> bool {
+    let chain = state.chain();
+    let selected = app.get_selected_instance_id();
+    let mut bypass = false;
+    for (id, target) in changed {
+        match target {
+            MidiTarget::Bypass => {
+                show_bypass(app, id as i32, chain.is_enabled(id) == Some(false));
+                bypass = true;
+            }
+            MidiTarget::Parameter(index) if id as i32 == selected => {
+                let Some(value) = chain.params.get(&id).and_then(|p| p.get(index)) else {
+                    continue;
+                };
+                let rows = app.get_selected_parameters();
+                for row in 0..rows.row_count() {
+                    if let Some(mut p) = rows.row_data(row) {
+                        if p.index == index as i32 {
+                            p.value = *value;
+                            rows.set_row_data(row, p);
+                        }
+                    }
+                }
+            }
+            MidiTarget::Parameter(_) => {}
+        }
+    }
+    bypass
+}
+
 /// Update one rack node in place (keeps sliders alive while dragging)
 /// The rack node of `instance_id`
 fn node(app: &App, instance_id: i32) -> Option<PositionedNode> {

@@ -468,10 +468,12 @@ export component App inherits Window {
     callback footswitch-up(int);
     callback live-mode-changed(string);
     callback live-tile-pressed(int);
+    callback live-tile-released(int);
     callback tap-tempo();
     callback set-tempo(float);
     callback rename-scene(int, string);
     callback assign-stomp(int, string);
+    callback stomp-momentary(int, bool);
     callback tap-switch-changed(bool);
     // what: "footswitches" | "footswitch" (index) | "encoder-a" | "encoder-b"
     // | "encoder-button" | "encoder-steps"; delta: +1 / -1
@@ -1690,6 +1692,9 @@ export component App inherits Window {
                 tile-pressed(i) => {
                     root.live-tile-pressed(i);
                 }
+                tile-released(i) => {
+                    root.live-tile-released(i);
+                }
                 tap => {
                     root.tap-tempo();
                 }
@@ -1701,6 +1706,9 @@ export component App inherits Window {
                 }
                 assign-stomp(slot, id) => {
                     root.assign-stomp(slot, id);
+                }
+                stomp-momentary(slot, on) => {
+                    root.stomp-momentary(slot, on);
                 }
                 open-setlists => {
                     root.setlist-view-mode = 1;

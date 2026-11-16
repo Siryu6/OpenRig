@@ -10,6 +10,7 @@
 use anyhow::{anyhow, Result};
 
 use super::app_state::find_in_mut;
+use super::stomp::{Stomp, StompMode};
 use super::EffectChainState;
 use crate::audio::split_chain::walk;
 use crate::audio::ChainNode;
@@ -251,29 +252,33 @@ impl EffectChainState {
     /// of the blocks no switch is assigned to
     pub fn stomp_target(&self, slot: usize) -> Option<usize> {
         let exists = |id: &usize| self.find(*id).is_some();
-        if let Some(Some(id)) = self
-            .stomps
-            .get(slot)
-            .filter(|s| s.is_some_and(|id| exists(&id)))
-        {
-            return Some(*id);
+        let assigned = |s: &Stomp| s.block.filter(exists);
+        if let Some(id) = self.stomps.get(slot).and_then(assigned) {
+            return Some(id);
         }
-        let assigned: Vec<usize> = self
-            .stomps
-            .iter()
-            .flatten()
-            .copied()
-            .filter(exists)
-            .collect();
+        let taken: Vec<usize> = self.stomps.iter().filter_map(assigned).collect();
         // Automatic switches take the free blocks in order
         let automatic = (0..slot)
-            .filter(|s| !matches!(self.stomps.get(*s), Some(Some(id)) if exists(id)))
+            .filter(|s| self.stomps.get(*s).and_then(assigned).is_none())
             .count();
         self.plugins()
             .into_iter()
             .map(ChainNode::instance_id)
-            .filter(|id| !assigned.contains(id))
+            .filter(|id| !taken.contains(id))
             .nth(automatic)
+    }
+
+    /// Block of stomp switch `slot` and how the switch plays it. A switch
+    /// of the plugin is only kept on the block it was chosen on: on an
+    /// automatic block the switch turns it on and off.
+    pub fn stomp(&self, slot: usize) -> Option<(usize, StompMode)> {
+        let block = self.stomp_target(slot)?;
+        let stomp = self.stomps.get(slot).cloned().unwrap_or_default();
+        let mut mode = stomp.mode;
+        if stomp.block != Some(block) {
+            mode.param = None;
+        }
+        Some((block, mode))
     }
 
     /// Set every parameter that follows the tempo to `bpm`; the commands
@@ -391,7 +396,13 @@ mod tests {
         assert_eq!(chain.stomp_target(0), Some(0));
         assert_eq!(chain.stomp_target(2), Some(3));
         assert_eq!(chain.stomp_target(3), None);
-        chain.stomps = vec![None, Some(3)];
+        chain.stomps = vec![
+            Stomp::default(),
+            Stomp {
+                block: Some(3),
+                mode: StompMode::default(),
+            },
+        ];
         assert_eq!(chain.stomp_target(0), Some(0));
         assert_eq!(chain.stomp_target(1), Some(3));
         assert_eq!(chain.stomp_target(2), Some(2));

@@ -218,7 +218,7 @@ impl Gpio {
                 let state = state.clone();
                 crate::ui(&app, move |app| {
                     if high {
-                        crate::live_ui::footswitch_up(app, slot);
+                        crate::live_ui::footswitch_up(app, &state, slot);
                     } else {
                         crate::live_ui::footswitch_down(app, &state, slot);
                     }

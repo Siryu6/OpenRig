@@ -12,7 +12,7 @@
 //! | Program Change n | Preset n of the setlist (slot n), or of the preset list when no setlist is loaded |
 //! | CC 0 (Bank Select MSB) | Group of 128 presets in the preset list: PC n then loads preset 128 × group + n |
 //! | CC 32 (Bank Select LSB) | 0: leave the setlist (PC addresses the preset list); n: load setlist n |
-//! | CC 49–53, 54–56 | Footswitches 1–5, 6–8 (what they do depends on the Live mode) |
+//! | CC 49–53, 54–56 | Footswitches 1–5, 6–8 (what they do depends on the Live mode; a momentary stomp switch is down at 64–127, up at 0–63) |
 //! | CC 60 | Looper: 0–63 overdub, 64–127 record |
 //! | CC 61 | Looper: 0–63 stop, 64–127 play |
 //! | CC 63 | Looper: undo (64–127) |
@@ -179,7 +179,9 @@ pub enum MidiAction {
     BankMsb(u8),
     /// CC 32: 0 = the preset list, n = setlist n
     Bank(u8),
-    Footswitch(usize),
+    /// Footswitch n, and whether the value is high (64–127): a momentary
+    /// stomp switch is held down while high, any value presses the others
+    Footswitch(usize, bool),
     Looper(LooperAction),
     Tap,
     Tuner,
@@ -251,7 +253,8 @@ pub fn action(message: MidiMessage, settings: &MidiSettings) -> Option<MidiActio
             CC_BANK_MSB => Some(MidiAction::BankMsb(value)),
             CC_BANK => Some(MidiAction::Bank(value)),
             c if CC_FOOTSWITCH.contains(&c) => {
-                Some(MidiAction::Footswitch((c - CC_FOOTSWITCH.start()) as usize))
+                let slot = (c - CC_FOOTSWITCH.start()) as usize;
+                Some(MidiAction::Footswitch(slot, high(value)))
             }
             CC_LOOPER_RECORD => Some(MidiAction::Looper(if high(value) {
                 LooperAction::Record
@@ -462,8 +465,8 @@ mod tests {
         assert_eq!(act(cc(69, 8)), Some(MidiAction::SceneStep(Step::Next)));
         assert_eq!(act(cc(64, 127)), Some(MidiAction::Tap));
         assert_eq!(act(cc(64, 0)), None);
-        assert_eq!(act(cc(49, 127)), Some(MidiAction::Footswitch(0)));
-        assert_eq!(act(cc(56, 0)), Some(MidiAction::Footswitch(7)));
+        assert_eq!(act(cc(49, 127)), Some(MidiAction::Footswitch(0, true)));
+        assert_eq!(act(cc(56, 0)), Some(MidiAction::Footswitch(7, false)));
         assert_eq!(
             act(cc(60, 0)),
             Some(MidiAction::Looper(LooperAction::Overdub))

@@ -269,6 +269,8 @@ export struct LiveTile {
     empty: bool,       // nothing on it (never-used scene, no block, free slot)
     color: color,      // LED colour (the block's for stomps)
     switch: int,       // physical footswitch number (1-based), 0 if none
+    momentary: bool,   // stomp: on while held, off on release
+    choice: string,    // stomp: what it is assigned ("" automatic, "id", "id:symbol")
 }
 
 // An output, or a stereo pair of outputs, in the Routing view
