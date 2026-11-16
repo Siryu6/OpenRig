@@ -84,6 +84,22 @@ pub struct PortInfo {
     /// for trusted plugins
     #[serde(default)]
     pub primary: Option<u32>,
+    /// Frames this atom output sends for a view (`openrig:stream`): read
+    /// only for trusted plugins
+    #[serde(default)]
+    pub stream: Option<Stream>,
+}
+
+/// What an atom output sends for a view (`openrig:stream`): `openrig:Frame`
+/// objects, at most `rate` a second, of `channels` rows of `length` values
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Stream {
+    /// `openrig:content`, by its local name ("StepGrid", "ModulationCycle"…)
+    pub content: String,
+    pub length: u32,
+    pub channels: u32,
+    /// Hz
+    pub rate: f32,
 }
 
 impl PortInfo {

@@ -392,6 +392,14 @@ impl PluginProc {
             self.run(l, r);
             self.tap.record_output(l, r, self.stereo_out);
             self.tap.record_controls(self.left.controls());
+            if let Some(frame) = self.left.stream_frame() {
+                self.tap.record_stream(
+                    self.left.instance_id,
+                    frame.channels,
+                    frame.position,
+                    frame.values(),
+                );
+            }
         } else {
             self.run(l, r);
         }

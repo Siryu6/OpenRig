@@ -1,17 +1,17 @@
 import { PlotColors, Theme } from "../theme.slint";
-import { BlockFace, ParameterInfo, ModelChoice, FileSlot, ColorChoice, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive } from "../types.slint";
+import { BlockFace, ParameterInfo, ModelChoice, FileSlot, ColorChoice, EqView, PlotHandle, Spectrum, DynView, DynLive, ScopeView, ScopeLive, StepView, StepLive } from "../types.slint";
 import { EqGraph } from "../components/eq_graph.slint";
 import { PlotEvents } from "../components/plot.slint";
 import { DynamicsGraph } from "../components/dynamics_graph.slint";
 import { ScopeGraph } from "../components/scope_graph.slint";
+import { StepGridGraph } from "../components/step_grid.slint";
 import { Button, Badge, Card, EmptyState, FocusHighlight, Icon, Knob, Segmented, Stepper, Toggle } from "../components/controls.slint";
 import { LogoMark } from "../components/logo.slint";
-import { PlateLed, Screw } from "../components/plate.slint";
+import { PlateLed, PlateName, Screw } from "../components/plate.slint";
 import { Features } from "../features.slint";
 import { T3kMark, T3kPicture } from "../components/tone3000_brand.slint";
 import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 
-// Formats a parameter value for display ("12.5 dB", "40%", "3")
 // Search in a long list of models (Rust: every word in the title or subtitle)
 export global ChoiceSearch {
     pure callback filter(choices: [ModelChoice], query: string) -> [ModelChoice];
@@ -23,14 +23,10 @@ export global ChoiceSearch {
     pure callback start(choices: [ModelChoice]) -> string;
 }
 
+// Formats a parameter value for display ("12.5 dB", "40%", "1 beat")
+// (Rust: pedalboard::ui::param_format)
 export global ParamFormat {
-    pure public function format(v: float, kind: string, unit: string) -> string {
-        if unit == "Hz" && v >= 1000 {
-            return (round(v / 100) / 10) + " kHz";
-        }
-        return (kind == "int" || abs(v) >= 100 ? round(v) : abs(v) >= 10 ? round(v * 10) / 10 : round(v * 100) / 100)
-            + (unit == "" ? "" : unit == "%" ? "%" : " " + unit);
-    }
+    pure callback format(float, string, string) -> string;
 }
 
 // Modal list of ModelChoice rows (title + subtitle), optionally starting
@@ -426,6 +422,9 @@ export component PluginEditor {
     in property <DynLive> dyn-live;
     in property <ScopeView> scope;                  // what a delay, reverb, drive… does to the sound
     in property <ScopeLive> scope-live;
+    in property <StepView> step;                    // the bar of a stutter, slicer or gate
+    in property <StepLive> step-live;
+    in property <float> step-playhead: -1;
     in property <Spectrum> spectrum;                // the sound through it, for the EQ and scope
     in property <int> focused-param: 0;
     // Remove: the first press arms it, the second removes the block
@@ -503,7 +502,7 @@ export component PluginEditor {
     private property <length> card-height: root.short ? 52px : 64px;
     private property <length> card-pad: root.short ? 4px : Theme.space-sm;
     private property <int> cards: (root.uses-file ? 1 : 0) + (root.factory-presets.length > 0 ? 1 : 0) + root.file-slots.length;
-    private property <bool> has-graph: root.scope.shown || root.dyn.shown || root.eq.shown;
+    private property <bool> has-graph: root.step.shown || root.scope.shown || root.dyn.shown || root.eq.shown;
     private property <bool> faced: root.face.look != "";
     private property <bool> signature: root.face.look == "signature";
     // The view: in a signature plate's window, the gear's colours (dark in
@@ -523,7 +522,12 @@ export component PluginEditor {
     private property <int> graph-choice: 0;
     private property <bool> graph-open: !root.short || root.faced || root.graph-choice == 1
         || (root.graph-choice == 0 && root.graph-fit >= 96px);
-    private property <length> graph-height: root.short ? max(96px, root.graph-fit) : min(240px, root.height * 0.36);
+    // Tall screens: the graph leaves room for two whole rows of controls
+    // (one when there are no more), so a paged grid shows whole rows
+    private property <int> param-rows: ceil(root.parameters.length / root.columns);
+    private property <length> rows-room: min(2, max(1, root.param-rows)) * (110px + root.gap) - root.gap;
+    private property <length> graph-height: root.short ? max(96px, root.graph-fit)
+        : max(120px, min(240px, root.height * 0.36, root.room - root.vgap - root.rows-room));
     private property <int> picker-pos: -1;  // position in `parameters` of the open enum picker
     in-out property <bool> model-picker-open: false;
     private property <bool> preset-picker-open: false;
@@ -1081,7 +1085,7 @@ export component PluginEditor {
                         spacing: Theme.space-sm;
                         Text {
                             horizontal-stretch: 1;
-                            text: root.eq.shown ? "EQ CURVE" : root.dyn.shown ? "LEVEL CURVE" : "SCOPE";
+                            text: root.eq.shown ? "EQ CURVE" : root.dyn.shown ? "LEVEL CURVE" : root.step.shown ? "STEPS" : "SCOPE";
                             color: Theme.text-muted;
                             font-size: Theme.font-small;
                             font-weight: Theme.weight-semibold;
@@ -1107,6 +1111,17 @@ export component PluginEditor {
                             root.graph-choice = root.graph-open ? 2 : 1;
                         }
                     }
+                }
+
+                if root.step.shown && root.graph-open: StepGridGraph {
+                    height: root.graph-height;
+                    vertical-stretch: 0;
+                    step: root.step;
+                    live: root.step-live;
+                    playhead: root.step-playhead;
+                    colors: root.plot-colors;
+                    accent: root.plot-accent;
+                    bypassed: root.bypassed;
                 }
 
                 if root.scope.shown && root.graph-open: ScopeGraph {
@@ -1168,20 +1183,22 @@ export component PluginEditor {
                     grid := Flickable {
                         property <length> cell-width: (self.width - (root.columns - 1) * root.gap) / root.columns;
                         property <int> rows: ceil(root.parameters.length / root.columns);
-                        // Up to two rows share the height (smaller knobs) rather than
-                        // scroll; more rows scroll, each at most the visible height
-                        property <length> fit: self.rows <= 2 ? (self.height - (self.rows - 1) * root.gap) / max(1, self.rows) : self.height;
+                        // Rows shown at once: as many as fit at 110 px or more (the
+                        // compact cell). The others go to pages, and a page holds
+                        // whole rows: no row is cut by the bottom edge
+                        property <int> rows-shown: max(1, min(self.rows, floor((self.height + root.gap) / (110px + root.gap))));
+                        property <int> pages: ceil(self.rows / self.rows-shown);
+                        // All rows shown share the height; paged rows fill the page
+                        property <length> fit: (self.height + root.gap) / self.rows-shown - root.gap;
                         // A plate without a view gives its height to its controls
                         // when they fit in two rows: taller cells, bigger knobs, the
                         // rows centred on it
                         property <bool> grow: root.signature && !root.has-graph && self.rows <= 2;
-                        property <length> cell-height: max(100px, min(self.grow ? 184px : 152px, self.fit));
+                        property <length> cell-height: self.pages > 1 ? max(100px, self.fit)
+                            : max(100px, min(self.grow ? 184px : 152px, self.fit));
                         property <length> knob-max: self.grow ? min(104px, self.cell-width - 2 * Theme.space-md) : 80px;
                         property <length> offset: self.grow ? max(0px, (self.height - self.rows * (self.cell-height + root.gap) + root.gap) / 2) : 0px;
                         property <bool> compact: self.cell-height < 152px;
-                        // Pages of the rows shown, when they do not all fit
-                        property <int> rows-shown: max(1, floor((self.height + root.gap) / (self.cell-height + root.gap)));
-                        property <int> pages: ceil(self.rows / self.rows-shown);
                         property <length> page-height: self.rows-shown * (self.cell-height + root.gap);
                         property <int> page: self.content-y <= self.height - self.content-height + 1px ? self.pages - 1
                             : min(self.pages - 1, round(-self.content-y / self.page-height));
@@ -1459,6 +1476,7 @@ export component PluginEditor {
                             Button {
                                 width: 40px;
                                 icon: "chevron-up";
+                                plate: root.signature;
                                 enabled: grid.page > 0;
                                 clicked => {
                                     grid.show-page(grid.page - 1);
@@ -1466,7 +1484,7 @@ export component PluginEditor {
                             }
                             Text {
                                 text: (grid.page + 1) + "/" + grid.pages;
-                                color: Theme.text-secondary;
+                                color: root.signature ? Theme.plate-silk : Theme.text-secondary;
                                 font-size: Theme.font-caption;
                                 font-weight: Theme.weight-bold;
                                 horizontal-alignment: center;
@@ -1474,6 +1492,7 @@ export component PluginEditor {
                             Button {
                                 width: 40px;
                                 icon: "chevron-down";
+                                plate: root.signature;
                                 enabled: grid.page < grid.pages - 1;
                                 clicked => {
                                     grid.show-page(grid.page + 1);
@@ -1487,13 +1506,12 @@ export component PluginEditor {
                 if root.signature: HorizontalLayout {
                     height: root.short ? 22px : 40px;
                     spacing: Theme.space-md;
-                    Text {
+                    PlateName {
                         text: root.face.title.to-uppercase();
-                        color: Theme.plate-silk;
+                        style: root.face.plate-style;
                         font-size: root.short ? Theme.font-title : 28px;
-                        font-weight: 900;
                         letter-spacing: root.short ? 2px : 4px;
-                        vertical-alignment: center;
+                        overflow: clip;
                         horizontal-stretch: 0;
                     }
                     Text {

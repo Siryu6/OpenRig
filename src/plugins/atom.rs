@@ -1,8 +1,10 @@
 //! Events written into the atom input ports of LV2 plugins before each run:
 //! the transport (`time:Position` at every run, so tempo-synced plugins
 //! follow the pedalboard tempo and bar) and MIDI messages, plus the `patch:Set` messages that
-//! give a plugin its files. Plain byte layout from the LV2 atom spec,
-//! written in place without allocating (audio thread).
+//! give a plugin its files; and the `openrig:Frame` objects a plugin sends
+//! on a stream output for its view, read after a run. Plain byte layout
+//! from the LV2 atom spec, written and read in place without allocating
+//! (audio thread).
 
 use crate::audio::transport::{Position, BEATS_PER_BAR, BEAT_UNIT};
 use crate::midi::RawMidi;
@@ -28,6 +30,11 @@ const TIME_BAR: &str = "http://lv2plug.in/ns/ext/time#bar";
 const TIME_BAR_BEAT: &str = "http://lv2plug.in/ns/ext/time#barBeat";
 const TIME_BEAT_UNIT: &str = "http://lv2plug.in/ns/ext/time#beatUnit";
 const TIME_BEATS_PER_BAR: &str = "http://lv2plug.in/ns/ext/time#beatsPerBar";
+const ATOM_VECTOR: &str = "http://lv2plug.in/ns/ext/atom#Vector";
+const STREAM_FRAME: &str = "https://openrig.eu/ns/view#Frame";
+const STREAM_CHANNELS: &str = "https://openrig.eu/ns/view#channels";
+const STREAM_POSITION: &str = "https://openrig.eu/ns/view#position";
+const STREAM_VALUES: &str = "https://openrig.eu/ns/view#values";
 
 /// URIDs used in the events, mapped once per plugin instance
 #[derive(Debug, Clone, Copy, Default)]
@@ -53,6 +60,11 @@ pub struct AtomUrids {
     pub patch_set: u32,
     pub patch_property: u32,
     pub patch_value: u32,
+    pub vector: u32,
+    pub stream_frame: u32,
+    pub stream_channels: u32,
+    pub stream_position: u32,
+    pub stream_values: u32,
 }
 
 impl AtomUrids {
@@ -79,6 +91,11 @@ impl AtomUrids {
             patch_set: map(PATCH_SET),
             patch_property: map(PATCH_PROPERTY),
             patch_value: map(PATCH_VALUE),
+            vector: map(ATOM_VECTOR),
+            stream_frame: map(STREAM_FRAME),
+            stream_channels: map(STREAM_CHANNELS),
+            stream_position: map(STREAM_POSITION),
+            stream_values: map(STREAM_VALUES),
         }
     }
 }
@@ -231,6 +248,93 @@ pub fn write_patch_sets(buf: &mut [u8], urids: &AtomUrids, sets: &[(u32, &str)])
     written
 }
 
+/// A frame a plugin sent on a stream output (`openrig:Frame`): its rows,
+/// position and values, channel after channel, read in place
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Frame<'a> {
+    pub channels: u32,
+    pub position: f32,
+    /// The values as the plugin wrote them, 4 bytes each
+    values: &'a [u8],
+}
+
+impl Frame<'_> {
+    pub fn values(&self) -> impl Iterator<Item = f32> + '_ {
+        self.values
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_ne_bytes(*b))
+    }
+
+    pub fn len(&self) -> usize {
+        self.values.len() / 4
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.len() < 4
+    }
+}
+
+fn u32_in(buf: &[u8], at: usize) -> Option<u32> {
+    let bytes = buf.get(at..at.checked_add(4)?)?;
+    Some(u32::from_ne_bytes(bytes.try_into().ok()?))
+}
+
+/// The atom at `at` in `buf`: its type and body
+fn atom_in(buf: &[u8], at: usize) -> Option<(u32, &[u8])> {
+    let size = u32_in(buf, at)? as usize;
+    let kind = u32_in(buf, at + 4)?;
+    let start = at.checked_add(8)?;
+    Some((kind, buf.get(start..start.checked_add(size)?)?))
+}
+
+/// The last `openrig:Frame` of an output sequence the plugin wrote (`None`
+/// if it sent none in that run). Anything malformed is skipped; never
+/// reads past the buffer (real-time safe).
+pub fn last_frame<'a>(buf: &'a [u8], urids: &AtomUrids) -> Option<Frame<'a>> {
+    let (kind, body) = atom_in(buf, 0)?;
+    if kind != urids.sequence {
+        return None;
+    }
+    // Sequence body: unit and padding, then events (time, atom)
+    let mut at = 8;
+    let mut last = None;
+    while let Some((kind, event)) = atom_in(body, at + 8) {
+        if kind == urids.object && u32_in(event, 4) == Some(urids.stream_frame) {
+            last = Some(event);
+        }
+        at += 16 + event.len().next_multiple_of(8);
+    }
+    let object = last?;
+    // Object body: id and type, then properties (key, context, value atom)
+    let (mut channels, mut position, mut values) = (None, 0.0, None);
+    let mut at = 8;
+    while let Some(key) = u32_in(object, at) {
+        let Some((kind, value)) = atom_in(object, at + 8) else {
+            break;
+        };
+        let word = u32_in(value, 0);
+        if key == urids.stream_channels && kind == urids.int {
+            channels = word;
+        } else if key == urids.stream_position && kind == urids.float {
+            position = word.map_or(0.0, f32::from_bits);
+        } else if key == urids.stream_values
+            && kind == urids.vector
+            && word == Some(4)
+            && u32_in(value, 4) == Some(urids.float)
+        {
+            values = value.get(8..);
+        }
+        at += 16 + value.len().next_multiple_of(8);
+    }
+    Some(Frame {
+        channels: channels.filter(|c| (1..=i32::MAX as u32).contains(c))?,
+        position: if position.is_finite() { position } else { 0.0 },
+        values: values?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,6 +361,11 @@ mod tests {
             PATCH_SET,
             PATCH_PROPERTY,
             PATCH_VALUE,
+            ATOM_VECTOR,
+            STREAM_FRAME,
+            STREAM_CHANNELS,
+            STREAM_POSITION,
+            STREAM_VALUES,
         ];
         AtomUrids::new(1, |uri| {
             names.iter().position(|n| *n == uri).unwrap() as u32 + 2
@@ -385,5 +494,63 @@ mod tests {
             write_patch_sets(&mut buf, &urids(), &[(1, "a"), (2, &long)]),
             1
         );
+    }
+    /// An output sequence as a plugin writes it: a MIDI event, then one
+    /// `openrig:Frame` per (position, values), three rows each
+    fn stream(u: &AtomUrids, frames: &[(f32, &[f32])]) -> Vec<u64> {
+        let mut words = vec![0u64; 256];
+        let buf: &mut [u8] = bytemuck::cast_slice_mut(&mut words);
+        let mut w = Writer { buf, at: 0 };
+        w.u32(0);
+        w.u32(u.sequence);
+        w.u32(0);
+        w.u32(0);
+        w.event(3, u.midi_event);
+        w.bytes(&[0x90, 60, 100]);
+        w.pad();
+        for (position, values) in frames {
+            let vector = 8 + 4 * values.len();
+            let body = 8 + 2 * 24 + (16 + vector).next_multiple_of(8);
+            w.event(body as u32, u.object);
+            w.u32(0);
+            w.u32(u.stream_frame);
+            w.property(u.stream_channels, u.int, &3i32.to_ne_bytes());
+            w.property(u.stream_position, u.float, &position.to_ne_bytes());
+            w.u32(u.stream_values);
+            w.u32(0);
+            w.u32(vector as u32);
+            w.u32(u.vector);
+            w.u32(4);
+            w.u32(u.float);
+            for v in *values {
+                w.bytes(&v.to_ne_bytes());
+            }
+            w.pad();
+        }
+        w.finish();
+        words
+    }
+
+    #[test]
+    fn the_last_frame_of_a_stream_is_read() {
+        let u = urids();
+        let words = stream(&u, &[(0.25, &[1.0, 0.0, 1.0]), (0.5, &[0.5, 2.0, -1.0])]);
+        let buf: &[u8] = bytemuck::cast_slice(&words);
+        let frame = last_frame(buf, &u).expect("a frame");
+        assert_eq!((frame.channels, frame.position), (3, 0.5));
+        assert_eq!(frame.values().collect::<Vec<_>>(), [0.5, 2.0, -1.0]);
+        // No frame: a sequence of MIDI only, an empty one, a cut one
+        let words = stream(&u, &[]);
+        assert_eq!(last_frame(bytemuck::cast_slice(&words), &u), None);
+        let mut empty = [0u8; 64];
+        write_input(&mut empty, &u, None, &[]);
+        assert_eq!(last_frame(&empty, &u), None);
+        let words = stream(&u, &[(0.5, &[1.0; 12])]);
+        let buf: &[u8] = bytemuck::cast_slice(&words);
+        assert_eq!(last_frame(&buf[..80], &u), None);
+        // A size past the buffer stops the read, nothing more
+        let mut bad = buf.to_vec();
+        bad[0..4].copy_from_slice(&u32::MAX.to_ne_bytes());
+        assert_eq!(last_frame(&bad, &u), None);
     }
 }

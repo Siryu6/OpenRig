@@ -58,6 +58,8 @@ struct AtomPort {
     time: bool,
     #[cfg_attr(not(feature = "lv2"), allow(dead_code))]
     patch: bool,
+    /// Output sending frames for a view (`openrig:stream`)
+    stream: bool,
 }
 
 enum Backend {
@@ -397,6 +399,7 @@ impl PluginInstance {
                         midi: port.midi,
                         time: port.time,
                         patch: port.patch,
+                        stream: port.stream.is_some(),
                     });
                     pointer
                 }
@@ -1012,6 +1015,13 @@ impl PluginInstance {
     /// Value of every control port, by port index (outputs too)
     pub fn controls(&self) -> &[f32] {
         &self.controls
+    }
+
+    /// The last frame the plugin sent on its stream output
+    /// (`openrig:stream`) in its last run, if it sent one (real-time safe)
+    pub fn stream_frame(&self) -> Option<atom::Frame<'_>> {
+        let port = self.atoms.iter().find(|p| !p.input && p.stream)?;
+        atom::last_frame(bytemuck::cast_slice(&port.buffer), &self.urids)
     }
 
     /// Current value of a parameter

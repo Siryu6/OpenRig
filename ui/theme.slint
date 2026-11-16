@@ -94,6 +94,10 @@ export global Theme {
     out property <color> plate-edge: #000000a6;        // dark outline
     out property <color> plate-bevel: #ffffff2e;       // lit top edge
     out property <color> plate-window: #08090a;        // recessed windows (views, readouts)
+    // Keys on a plate (page arrows): the dark theme's keys
+    out property <brush> plate-key: @linear-gradient(180deg, #232427 0%, #18191b 100%);
+    out property <brush> plate-key-pressed: @linear-gradient(180deg, #111214 0%, #18191b 100%);
+    out property <color> plate-key-edge: #ffffff14;    // lit top edge of a plate key
     // A view in a plate's window: the dark theme's colours, amber curves
     out property <PlotColors> plot-gear: {
         surface: #08090a, grid: #1e1f22, grid-strong: #36383d, muted: #6f7076,

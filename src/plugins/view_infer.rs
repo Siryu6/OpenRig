@@ -12,7 +12,7 @@
 use super::dynamics::{Dynamics, Kind};
 use super::eq_curve::{Band, Display, QUnit, Shape, ShapeChoice, Value};
 use super::faceplate::View;
-use super::scanner::{PluginCategory, PluginInfo, PortInfo, PortType};
+use super::scanner::{PluginCategory, PluginInfo, PortInfo, PortType, Stream};
 use super::scope::{Echoes, Level, Scope, ScopeKind};
 
 /// LV2 classes drawn as an EQ
@@ -451,6 +451,23 @@ pub fn scope(info: &PluginInfo) -> Option<Scope> {
     Some(Scope { kind, echoes })
 }
 
+/// The rows of a step grid frame: level, source, speed
+pub const STEP_ROWS: u32 = 3;
+
+/// The step grid of a plugin stating `openrig:StepGridView`: its
+/// `openrig:StepGrid` stream, which alone draws it (there is nothing to
+/// infer). `None` without such a stream of three rows.
+pub fn step_grid(info: &PluginInfo) -> Option<Stream> {
+    if stated_view(info) != Some(View::StepGrid) {
+        return None;
+    }
+    info.ports
+        .iter()
+        .filter(|p| p.port_type == PortType::AtomOutput)
+        .filter_map(|p| p.stream.clone())
+        .find(|s| s.content == "StepGrid" && s.channels == STEP_ROWS)
+}
+
 /// The view a trusted plugin states, if the app draws it
 fn stated_view(info: &PluginInfo) -> Option<View> {
     info.faceplate.as_ref().and_then(|f| f.view)
@@ -863,6 +880,46 @@ mod tests {
             }),
             ..plugin("", ports)
         }
+    }
+
+    #[test]
+    fn a_step_grid_is_drawn_from_its_stream_alone() {
+        // OR Splinter: a stutter whose grid port streams one bar in 96 cells
+        let grid = |content: &str, channels| PortInfo {
+            index: 21,
+            symbol: "grid".into(),
+            port_type: PortType::AtomOutput,
+            stream: Some(Stream {
+                content: content.into(),
+                length: 96,
+                channels,
+                rate: 30.0,
+            }),
+            ..PortInfo::default()
+        };
+        let slice = control("Slice", "slice", None);
+        let splinter = stated(
+            Some(View::StepGrid),
+            vec![(slice.clone(), None), (grid("StepGrid", 3), None)],
+        );
+        let stream = step_grid(&splinter).expect("step grid");
+        assert_eq!((stream.length, stream.rate), (96, 30.0));
+        // Its class says delay: no echoes drawn from guesses
+        assert_eq!(scope(&splinter), None);
+        assert_eq!((eq(&splinter), dynamics(&splinter)), (None, None));
+        // Stated without such a stream: no view at all
+        for ports in [
+            vec![(slice.clone(), None)],
+            vec![(slice.clone(), None), (grid("ModulationCycle", 3), None)],
+            vec![(slice.clone(), None), (grid("StepGrid", 2), None)],
+        ] {
+            assert_eq!(step_grid(&stated(Some(View::StepGrid), ports)), None);
+        }
+        // A stream alone does not make a step grid
+        assert_eq!(
+            step_grid(&stated(None, vec![(grid("StepGrid", 3), None)])),
+            None
+        );
     }
 
     #[test]

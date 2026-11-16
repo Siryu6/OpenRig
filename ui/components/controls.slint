@@ -38,6 +38,8 @@ export component Button inherits Rectangle {
     in property <length> icon-size: Theme.icon-size;
     in property <image> logo;                       // brand mark before the text (none = empty)
     in property <length> logo-height: 12px;
+    // On a signature plate: a dark key with silk-screened text in both themes
+    in property <bool> plate: false;
     out property <bool> pressed: root.down;
     private property <bool> down: ta.pressed && root.enabled;
 
@@ -51,6 +53,7 @@ export component Button inherits Rectangle {
         root.variant == "success" ? Theme.success :
         root.variant == "warning" ? Theme.warning :
         root.variant == "ghost" ? Theme.text-secondary :
+        root.plate ? Theme.plate-silk :
         Theme.text-primary;
 
     // Physical key look: raised gradient with a lit top edge, sunk when pressed
@@ -67,10 +70,12 @@ export component Button inherits Rectangle {
         : root.variant == "danger" ? Theme.danger.with-alpha(0.45)
         : root.variant == "success" ? Theme.success.with-alpha(0.45)
         : root.variant == "warning" ? Theme.warning.with-alpha(0.45)
+        : root.plate ? Theme.plate-edge
         : Theme.edge-dark-soft;
     background:
         root.variant == "solid-danger" ? (root.down ? Theme.danger.darker(0.2) : Theme.danger) :
         root.variant == "ghost" ? (root.down ? Theme.surface-hover : transparent) :
+        root.plate ? (root.down ? Theme.plate-key-pressed : Theme.plate-key) :
         (root.down ? Theme.key-pressed : Theme.key);
 
     // Lit top edge (hidden while pressed: the key is down)
@@ -79,7 +84,7 @@ export component Button inherits Rectangle {
         y: 1px;
         width: parent.width - root.border-radius;
         height: 1px;
-        background: Theme.edge-light;
+        background: root.plate ? Theme.plate-key-edge : Theme.edge-light;
     }
     // Lit key (toggle on, main action): LED strip under the label
     if root.active || (root.variant == "primary" && root.enabled): Rectangle {

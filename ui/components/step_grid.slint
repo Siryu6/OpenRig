@@ -1,0 +1,85 @@
+import { PlotColors, Theme } from "../theme.slint";
+import { StepView, StepLive } from "../types.slint";
+import { BlockPlot, Caption } from "plot.slint";
+
+// The bar of a stutter, slicer or rhythmic gate, as its plugin streams it:
+// a line on each beat, the cells (the live input grey, the slice captured
+// outlined, its repeats filled), the playback speed where it is not 1,
+// arrows where it plays backward, and the playhead. Rust lays out the
+// boxes; all are rectangles, so the software renderer redraws only the
+// strip the playhead crosses (a path is drawn whole again).
+export component StepGridGraph inherits Rectangle {
+    in property <StepView> step;
+    in property <StepLive> live;
+    in property <float> playhead: -1;
+    in property <PlotColors> colors: Theme.plot;
+    in property <color> accent: root.colors.accent;
+    in property <bool> bypassed: false;
+
+    private property <color> line: !root.bypassed ? root.accent : root.colors.muted;
+
+    border-radius: Theme.radius-lg;
+    background: root.colors.surface;
+    border-width: 1px;
+    border-color: root.colors.grid;
+
+    bar := BlockPlot {
+        x: 12px;
+        y: 12px;
+        width: root.width - 24px;
+        height: root.height - 24px;
+        rows: [];
+        colors: root.colors;
+
+        // The beats, under the cells
+        for k in max(0, root.step.beats - 1): Rectangle {
+            x: (k + 1) * bar.width / root.step.beats;
+            width: 1px;
+            background: root.colors.grid-strong;
+        }
+        for cell in root.live.cells: Rectangle {
+            x: cell.x * bar.width;
+            y: cell.y * bar.height;
+            width: cell.width * bar.width;
+            height: cell.height * bar.height;
+            background: cell.source == 0 ? root.colors.muted.with-alpha(0.22)
+                : cell.source == 1 ? root.line.with-alpha(0.12) : root.line.with-alpha(0.5);
+            border-width: cell.source == 0 ? 0 : cell.source == 1 ? 1.5px : 1px;
+            border-color: root.line;
+        }
+        // The speed: level strokes joined upright
+        for line in root.live.speed: Rectangle {
+            x: line.x * bar.width - (line.width == 0 ? 1px : 0);
+            y: line.y * bar.height - (line.height == 0 ? 1px : 0);
+            width: max(2px, line.width * bar.width);
+            height: max(2px, line.height * bar.height);
+            background: root.line;
+        }
+        // Backward: an arrow pointing left
+        for mark in root.live.reverse: Path {
+            x: mark.x * bar.width - 6px;
+            y: mark.y * bar.height - 8px;
+            width: 12px;
+            height: 16px;
+            viewbox-width: 12;
+            viewbox-height: 16;
+            commands: "M 10 1 L 2 8 L 10 15";
+            stroke: root.colors.text;
+            stroke-width: 2px;
+        }
+        if root.playhead >= 0: Rectangle {
+            x: root.playhead * bar.width - 1px;
+            width: 2px;
+            background: root.colors.text;
+        }
+        Caption {
+            x: 6px;
+            y: 6px;
+            text: root.step.summary;
+            input: "live";
+            output: "repeat";
+            accent: root.line;
+            colors: root.colors;
+        }
+    }
+}

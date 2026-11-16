@@ -466,10 +466,21 @@ function format(p, v) {
     const o = p.options.find((o) => o.value === v);
     return o ? o.label : String(v);
   }
-  if (p.kind === "int") return String(Math.round(v)) + (p.unit ? " " + p.unit : "");
+  if (p.kind === "int") return withUnit(String(Math.round(v)), p.unit);
   const abs = Math.abs(v);
   const text = abs >= 100 ? v.toFixed(0) : abs >= 10 ? v.toFixed(1) : v.toFixed(2);
-  return text + (p.unit ? " " + p.unit : "");
+  return withUnit(text, p.unit);
+}
+
+// Units with a singular form (same list as pedalboard::ui::param_format)
+const PLURALS = [["beat", "beats"], ["bar", "bars"], ["frame", "frames"], ["sample", "samples"]];
+
+// A shown value with its unit: "1 beat", "0.50 beats"
+function withUnit(text, unit) {
+  if (!unit) return text;
+  const pair = PLURALS.find((pair) => pair.includes(unit));
+  if (pair) unit = Math.abs(Number(text)) === 1 ? pair[0] : pair[1];
+  return text + " " + unit;
 }
 
 function paramRow(b, p) {

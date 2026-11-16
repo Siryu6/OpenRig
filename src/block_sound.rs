@@ -1,6 +1,7 @@
 //! The sound going through the selected block, shown by its view while it is
 //! (the audio thread only records that block, and only meanwhile): the
-//! spectrum in and out, and what the dynamics and scope views measure.
+//! spectrum in and out, what the dynamics and scope views measure, and the
+//! frames the block's plugin streams for its step grid.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -11,7 +12,7 @@ use pedalboard::audio::spectrum::{Analyzer, BlockTap, WINDOW};
 use pedalboard::state::AppState;
 
 use crate::plugin_view::{self, area, freq, VIEW};
-use crate::{dynamics_ui, id, scope_ui, App, Spectrum, View};
+use crate::{dynamics_ui, id, scope_ui, step_ui, App, Spectrum, View};
 
 /// Frames
 const FRAME_MS: u64 = 40;
@@ -39,6 +40,7 @@ struct Watch {
     output: Vec<f32>,
     dynamics: dynamics_ui::Live,
     scope: scope_ui::Live,
+    step: step_ui::Live,
 }
 
 /// Show the sound going through the selected block while its view is shown
@@ -61,8 +63,10 @@ pub(crate) fn start(app: &App, state: &Arc<AppState>) -> slint::Timer {
             let eq_shown = app.get_selected_eq().shown;
             let dyn_shown = app.get_selected_dyn().shown;
             let scope = app.get_selected_scope();
+            let step_shown = app.get_selected_step().shown;
             let watched = id(app.get_selected_instance_id()).filter(|_| {
-                app.get_current_view() == View::Editor && (eq_shown || dyn_shown || scope.shown)
+                app.get_current_view() == View::Editor
+                    && (eq_shown || dyn_shown || scope.shown || step_shown)
             });
             if watched != shown.as_ref().map(|s| s.block) {
                 tap.watch(watched);
@@ -75,10 +79,13 @@ pub(crate) fn start(app: &App, state: &Arc<AppState>) -> slint::Timer {
                     output: vec![BOTTOM; freqs.len()],
                     dynamics: dynamics_ui::Live::default(),
                     scope: scope_ui::Live::default(),
+                    step: step_ui::Live::default(),
                 });
                 app.set_selected_spectrum(Spectrum::default());
                 app.set_selected_dyn_live(Default::default());
                 app.set_selected_scope_live(Default::default());
+                app.set_selected_step_live(Default::default());
+                app.set_selected_step_playhead(-1.0);
             }
             let Some(watch) = shown.as_mut() else {
                 return;
@@ -102,6 +109,9 @@ pub(crate) fn start(app: &App, state: &Arc<AppState>) -> slint::Timer {
             }
             if scope.shown {
                 watch.scope.frame(&app, recent, elapsed);
+            }
+            if step_shown {
+                watch.step.frame(&app, tap);
             }
             if !eq_shown && scope.right != "spectrum" {
                 return;

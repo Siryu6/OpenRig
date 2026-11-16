@@ -3,6 +3,7 @@ import { Theme } from "../theme.slint";
 import { BlockFace } from "../types.slint";
 import { T3kMark } from "tone3000_brand.slint";
 import { LogoMark } from "logo.slint";
+import { PlateName } from "plate.slint";
 
 // Rack block drawn after the gear it stands for, so the chain reads at a
 // glance: an amp head is a flat box with its control panel, a combo adds a
@@ -306,18 +307,16 @@ export component BlockShape {
                 background: root.faceplate.knob-style == "domed" ? Theme.knob-black : Theme.knob-line;
             }
         }
-        Text {
+        PlateName {
+            x: 2px;
             y: 22px;
-            width: parent.width;
+            width: parent.width - 4px;
             height: 16px;
             text: root.faceplate.name;
-            color: Theme.plate-silk;
-            font-size: Theme.font-small;
-            font-weight: 900;
-            letter-spacing: 1.2px;
+            style: root.faceplate.plate-style;
+            least-font-size: 10px;
+            room: self.width;
             horizontal-alignment: center;
-            vertical-alignment: center;
-            overflow: elide;
         }
         // Footswitch
         Rectangle {

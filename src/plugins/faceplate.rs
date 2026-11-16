@@ -35,6 +35,8 @@ pub enum View {
     Limiter,
     Gate,
     EchoTimeline,
+    /// One bar in steps, from the plugin's `openrig:StepGrid` stream
+    StepGrid,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +74,27 @@ pub enum Finish {
     Brushed,
 }
 
+/// `openrig:plateStyle`: how the name is printed on a signature plate
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PlateStyle {
+    /// Plain silk-screened letters
+    #[default]
+    Silkscreen,
+    /// The letters cut in two thin bands, one shifted right in the accent
+    /// colour, one shifted left: a fixed print, never animated
+    Glitch,
+}
+
+impl PlateStyle {
+    /// Name of the style as the UI takes it
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Silkscreen => "silkscreen",
+            Self::Glitch => "glitch",
+        }
+    }
+}
+
 /// The material of a signature plate, from which its picture is drawn
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Plate {
@@ -83,6 +106,9 @@ pub struct Plate {
     pub wear: f32,
     /// Seed of the grain and wear, from the URI: the same plate every time
     pub seed: u64,
+    /// How its name is printed
+    #[serde(default)]
+    pub style: PlateStyle,
 }
 
 impl Plate {
@@ -165,6 +191,7 @@ pub struct Terms {
     pub finish: Option<String>,
     pub wear: Option<f32>,
     pub plate_name: Option<String>,
+    pub plate_style: Option<String>,
     pub tagline: Option<String>,
     pub view: Option<String>,
     pub dynamics: Option<String>,
@@ -205,6 +232,10 @@ impl Terms {
                     .unwrap_or(0.0)
                     .clamp(0.0, 1.0),
                 seed: seed(uri),
+                style: match self.plate_style.as_deref() {
+                    Some("Glitch") => PlateStyle::Glitch,
+                    _ => PlateStyle::Silkscreen,
+                },
             });
         let plate_name = self
             .plate_name
@@ -233,6 +264,7 @@ impl Terms {
             (Some("DynamicsView"), Some("Limiter")) => Some(View::Limiter),
             (Some("DynamicsView"), Some("Gate" | "Expander")) => Some(View::Gate),
             (Some("EchoTimelineView"), _) => Some(View::EchoTimeline),
+            (Some("StepGridView"), _) => Some(View::StepGrid),
             _ => None,
         };
         Some(Faceplate {
@@ -503,6 +535,26 @@ mod tests {
     }
 
     #[test]
+    fn a_plate_prints_its_name_in_its_style() {
+        let style = |style: Option<&str>| {
+            let terms = Terms {
+                plate_style: style.map(str::to_string),
+                ..green_terms()
+            };
+            terms
+                .faceplate(GREEN, "OR Green Drive")
+                .and_then(|f| f.plate)
+                .map(|p| p.style)
+        };
+        assert_eq!(style(Some("Glitch")), Some(PlateStyle::Glitch));
+        // Silk-screened unless stated, or of a style the app does not know
+        assert_eq!(style(None), Some(PlateStyle::Silkscreen));
+        assert_eq!(style(Some("Silkscreen")), Some(PlateStyle::Silkscreen));
+        assert_eq!(style(Some("Neon")), Some(PlateStyle::Silkscreen));
+        assert_eq!(PlateStyle::Glitch.as_str(), "glitch");
+    }
+
+    #[test]
     fn the_stated_view_is_kept_when_the_app_draws_it() {
         let view = |view: &str, dynamics: Option<&str>| {
             let terms = Terms {
@@ -517,6 +569,7 @@ mod tests {
         assert_eq!(view("EqView", None), Some(View::Eq));
         assert_eq!(view("DynamicsView", Some("Gate")), Some(View::Gate));
         assert_eq!(view("EchoTimelineView", None), Some(View::EchoTimeline));
+        assert_eq!(view("StepGridView", None), Some(View::StepGrid));
         // Not drawn by the app, or a level curve of no known kind
         assert_eq!(view("LfoView", None), None);
         assert_eq!(view("DynamicsView", None), None);
@@ -608,6 +661,7 @@ mod tests {
             finish: Finish::Painted,
             wear: 0.0,
             seed: 0,
+            style: PlateStyle::Silkscreen,
         };
         assert!(steel.steel_caps());
     }
@@ -620,6 +674,7 @@ mod tests {
             finish: Finish::Painted,
             wear: 0.55,
             seed: seed("https://openrig.eu/plugins/green-drive"),
+            style: PlateStyle::Silkscreen,
         };
         let a = plate.render(120, 80);
         assert_eq!(a.len(), 120 * 80 * 4);
@@ -649,6 +704,7 @@ mod tests {
             finish: Finish::Painted,
             wear: 0.0,
             seed: 1,
+            style: PlateStyle::Silkscreen,
         };
         // A mid colour stays as it is, a near-black one turns grey
         assert_eq!(plate(0x2E7A4A).tint(), 0x2E7A4A);
