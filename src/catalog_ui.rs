@@ -17,6 +17,7 @@ use pedalboard::state::AppState;
 use pedalboard::store::index::{Index, Package, Plugin};
 use pedalboard::store::install::Installed;
 use pedalboard::store::{self, Status, Store};
+use pedalboard::ui::search;
 use pedalboard::ui::slint_bridge::{block_color, rack_color};
 
 use crate::{model, plates, rgb, spawn, ui, App, CatalogFamily, CatalogItem};
@@ -108,9 +109,9 @@ fn colour(plugin: &Plugin) -> Color {
     rgb(block_color(name).unwrap_or(0x696c72))
 }
 
-/// Whether the entry matches every word of the search
-fn matches(plugin: &Plugin, query: &str) -> bool {
-    let text = format!(
+/// The words the search looks in: name, maker, family, tags, inspiration…
+fn search_words(plugin: &Plugin) -> String {
+    format!(
         "{} {} {} {} {} {} {}",
         plugin.name,
         plugin.author,
@@ -120,10 +121,26 @@ fn matches(plugin: &Plugin, query: &str) -> bool {
         plugin.tags.join(" "),
         plugin.summary
     )
-    .to_lowercase();
-    query
-        .split_whitespace()
-        .all(|w| text.contains(&w.to_lowercase()))
+}
+
+/// Whether the entry matches every word of the search
+fn matches(plugin: &Plugin, query: &str) -> bool {
+    search::matches(&search::fold(&search_words(plugin)), query)
+}
+
+/// The store's words for installed plugin `uri` (family, tags, inspiration…),
+/// so the Add effect page finds it by them too; empty if the store has no
+/// entry for it
+pub fn search_words_for(uri: &str) -> String {
+    with_page(|p| {
+        p.index
+            .as_ref()?
+            .entries()
+            .find(|(_, e)| e.uri == uri)
+            .map(|(_, e)| search_words(e))
+    })
+    .flatten()
+    .unwrap_or_default()
 }
 
 impl Page {
@@ -267,6 +284,7 @@ fn redraw(app: &App, state: &AppState) {
 }
 
 pub fn setup(app: &App, state: &Arc<AppState>) {
+    app.global::<crate::Features>().set_store(true);
     let store = Store::new(&pedalboard::state::data_dir());
     store::install::clean(&store.lv2_dir);
     let index = store.cached();
@@ -287,6 +305,8 @@ pub fn setup(app: &App, state: &Arc<AppState>) {
     PAGE.with(|p| *p.borrow_mut() = Some(page));
     load_pictures(app, state);
     redraw(app, state);
+    // The Add effect page also searches by the store's words
+    crate::browser_ui::set_plugins(app, state);
 
     let weak = app.as_weak();
     let st = state.clone();
@@ -396,9 +416,8 @@ fn refresh(app: &App, state: &Arc<AppState>, rescan: bool) {
                     }
                 }
             });
-            if rescan {
-                crate::set_available_plugins(app, &st);
-            }
+            // New plugins after a rescan; new store words to search by
+            crate::browser_ui::set_plugins(app, &st);
             redraw(app, &st);
             load_pictures(app, &st);
         });
@@ -457,7 +476,7 @@ fn load_pictures(app: &App, state: &Arc<AppState>) {
                         with_page(|p| p.pictures.insert(plugin.id.clone(), image));
                         redraw(app, &st);
                         if here {
-                            crate::set_available_plugins(app, &st);
+                            crate::browser_ui::set_plugins(app, &st);
                             crate::refresh_chain(app, &st);
                         }
                     }
@@ -590,7 +609,7 @@ fn finish(
             name
         })
         .unwrap_or_default();
-        crate::set_available_plugins(app, &st);
+        crate::browser_ui::set_plugins(app, &st);
         redraw(app, &st);
         let message = match &result {
             Ok(()) => format!("{name} {done}"),

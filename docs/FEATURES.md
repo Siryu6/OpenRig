@@ -21,6 +21,19 @@ What OpenRig does, in more technical detail than the
   picture of a catalog plugin also shows on the Add effect page, and stands
   for the block in the rack when it is the gear's face. See
   [STORE.md](STORE.md).
+- **Add effect page** (Rack → +): the built-in blocks, then the installed
+  plugins by family. Family chips and a search field narrow the list. The
+  search keeps the entries holding every word typed, in the name, the
+  maker, the family (Amp & cab, EQ, Other…), the built-in block's
+  description and, for a plugin the store catalog lists, its tags and
+  what inspired it. Case and accents do not count: "echo" finds "Écho".
+  The store and the model lists search the same way. A tap on the field
+  opens the on-screen keyboard. On a computer, or in the web remote, typing
+  anywhere on the page goes to the search (digits and `t` too, instead of
+  the footswitch keys); Backspace erases, Escape clears the search, then
+  closes the page; the arrows move through the results and Return adds the
+  one in focus, the first match after typing. With no match, the page says
+  so and offers to search the store for the same text.
 - **Plugin views**: above an LV2 block's controls, the editor draws an EQ's
   response, a compressor's level curve or a delay's echoes (each with its
   fading tail, over the beats of the tempo), with points to drag, over the sound measured in and out of that block (spectrum, levels).

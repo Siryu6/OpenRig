@@ -161,6 +161,10 @@ export component App inherits Window {
     private property <int> hw-i2c-start: root.hw-tap-start + (root.footswitch-count >= 2 ? 1 : 0);
     private property <EncoderStop> hardware-stop: root.hardware-stop-at(root.page-focus);
     private property <int> browser-selected-index: 0;
+    // Add effect page: its search and family, the on-screen keyboard open
+    in-out property <string> browser-query: "";
+    in-out property <string> browser-category: "All";
+    private property <bool> browser-typing: false;
 
     // Split chain insertion mode: 0 = main, 1 = top branch, 2 = bottom branch
     private property <int> split-insertion-mode: 0;
@@ -206,7 +210,10 @@ export component App inherits Window {
     in-out property <float> looper-click-level: 0.5;
 
     // Plugins / chain
-    in-out property <[PluginItem]> available-plugins: [];
+    // Add effect page: the plugins that match its family and search, out
+    // of browser-total
+    in property <[PluginItem]> browser-plugins: [];
+    in property <int> browser-total: 0;
     in-out property <[PositionedNode]> positioned-nodes: [];
     in-out property <[Connector]> connectors: [];
     in-out property <[DropSlotView]> drop-slots: [];
@@ -428,6 +435,7 @@ export component App inherits Window {
 
     // ------------------------------------------------------------ callbacks
     callback add-plugin-to-chain(string);
+    callback browser-filter();                        // browser-query or browser-category changed
     callback catalog-search(string);
     callback catalog-pick-family(string);
     callback catalog-install(string);
@@ -660,7 +668,30 @@ export component App inherits Window {
         root.split-insertion-mode = mode;
         root.target-split-index = split-id;
         root.browser-selected-index = 0;
+        root.browser-query = "";
+        root.browser-category = "All";
+        root.browser-typing = false;
         root.current-view = View.browser;
+    }
+
+    // A key typed on the Add effect page edits its search: printable text
+    // is added, Backspace erases the last character. False for other keys.
+    function browser-type(event: KeyEvent) -> bool {
+        if (event.modifiers.control || event.modifiers.alt || event.modifiers.meta) {
+            return false;
+        }
+        if (event.text == Key.Backspace) {
+            root.browser-query = TextEditing.erase(root.browser-query, 2147483647, 2147483647).text;
+            return true;
+        }
+        // One character, not a control one nor a special key (Slint gives
+        // those private-use characters from U+F700)
+        if (event.text.character-count == 1 && event.text >= " " && event.text != Key.Delete
+                && (event.text < "\u{F700}" || event.text > "\u{F8FF}")) {
+            root.browser-query += event.text;
+            return true;
+        }
+        return false;
     }
 
     function add-plugin(uri: string) {
@@ -1111,6 +1142,22 @@ export component App inherits Window {
         }
     }
 
+    // The search of the Add effect page shows another list
+    changed browser-query => {
+        root.browser-selected-index = 0;
+        root.browser-filter();
+    }
+    changed browser-category => {
+        root.browser-selected-index = 0;
+        root.browser-filter();
+    }
+    // Its on-screen keyboard closed and took the focus with it
+    changed browser-typing => {
+        if (!root.browser-typing) {
+            keys.focus();
+        }
+    }
+
     // A keyboard of the Settings closed: its text field had the focus and
     // took it away with it, so turns and presses went nowhere until the
     // page changed; it goes back to the encoder
@@ -1410,7 +1457,11 @@ export component App inherits Window {
             }
 
             if root.current-view == View.browser: PluginBrowser {
-                plugins: root.available-plugins;
+                plugins: root.browser-plugins;
+                total: root.browser-total;
+                query <=> root.browser-query;
+                category-filter <=> root.browser-category;
+                typing <=> root.browser-typing;
                 selected-index: root.browser-selected-index;
                 demo-plugins: root.demo-plugins;
                 target-label: root.split-insertion-mode == 1 ? "Top branch of the split" :
@@ -1420,6 +1471,13 @@ export component App inherits Window {
                     root.add-plugin(uri);
                 }
                 open-store => {
+                    root.catalog-open = -1;
+                    root.current-view = View.store;
+                    root.catalog-opened();
+                }
+                search-store(q) => {
+                    root.catalog-pick-family("All");
+                    root.catalog-search(q);
                     root.catalog-open = -1;
                     root.current-view = View.store;
                     root.catalog-opened();
@@ -2188,7 +2246,7 @@ export component App inherits Window {
                     }
                     root.add-focused = next == n;
                 } else if (root.current-view == View.browser) {
-                    root.browser-selected-index = max(0, min(root.available-plugins.length - 1, root.browser-selected-index + d));
+                    root.browser-selected-index = max(0, min(root.browser-plugins.length - 1, root.browser-selected-index + d));
                 }
                 root.encoder-used();
                 return accept;
@@ -2247,11 +2305,17 @@ export component App inherits Window {
                 } else if (root.page-slots > 0) {
                     root.page-press();
                 } else if (root.current-view == View.browser) {
-                    if (root.browser-selected-index >= 0 && root.browser-selected-index < root.available-plugins.length) {
-                        root.add-plugin(root.available-plugins[root.browser-selected-index].uri);
+                    if (root.browser-selected-index >= 0 && root.browser-selected-index < root.browser-plugins.length) {
+                        root.add-plugin(root.browser-plugins[root.browser-selected-index].uri);
                     }
                 }
                 root.encoder-used();
+                return accept;
+            }
+            // Add effect page: typing searches (digits and "t" included:
+            // plugin names have them)
+            if (root.current-view == View.browser && !root.pages-open && !root.dialog-open
+                    && root.browser-type(event)) {
                 return accept;
             }
             // Footswitches 1-8 and tap tempo, from a computer keyboard
@@ -2338,6 +2402,9 @@ export component App inherits Window {
                     }
                 } else if (root.current-view == View.setlists) {
                     root.current-view = View.presets;
+                } else if (root.current-view == View.browser && root.browser-query != "") {
+                    // Clears the search first
+                    root.browser-query = "";
                 } else if (root.current-view == View.editor || root.current-view == View.browser) {
                     root.current-view = View.rack;
                 } else {
