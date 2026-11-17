@@ -89,7 +89,7 @@ says to set `remote_password`.
 
 | Value | |
 |---|---|
-| `auto` (default) | Started when the pedal has no Ethernet or Wi-Fi connection 45 s after starting, then kept |
+| `auto` (default) | Started when the pedal has no Ethernet or Wi-Fi connection for 45 s. It stays on until you join a network from Settings → Wi-Fi, and starts again 45 s after that network is lost or the join fails |
 | `on` | Always: the Wi-Fi card is the hotspot, it joins no network then |
 | `off` | Never |
 
