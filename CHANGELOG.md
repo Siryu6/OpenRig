@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0](https://github.com/Siryu6/OpenRig/compare/v0.17.1...v0.18.0) - 2026-11-17
+
+### Added
+
+- *(ui)* search the Add effect page as you type ([#238](https://github.com/Siryu6/OpenRig/pull/238))
+
 ## [0.17.1](https://github.com/Siryu6/OpenRig/compare/v0.17.0...v0.17.1) - 2026-11-17
 
 ### Fixed
