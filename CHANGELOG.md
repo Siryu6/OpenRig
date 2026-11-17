@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.1](https://github.com/Siryu6/OpenRig/compare/v0.17.0...v0.17.1) - 2026-11-17
+
+### Fixed
+
+- *(os)* let the hotspot give the Wi-Fi card to a network being joined ([#235](https://github.com/Siryu6/OpenRig/pull/235))
+- *(os)* keep chrony's state on /data owned by chrony across updates ([#233](https://github.com/Siryu6/OpenRig/pull/233))
+- *(os)* keep the app's files on /data owned by its user across updates ([#230](https://github.com/Siryu6/OpenRig/pull/230))
+
 ## [0.17.0](https://github.com/Siryu6/OpenRig/compare/v0.16.0...v0.17.0) - 2026-11-16
 
 ### Added
