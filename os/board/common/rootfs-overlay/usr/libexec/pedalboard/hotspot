@@ -6,7 +6,7 @@
 #
 # remote_hotspot (pedalboard.txt):
 #   auto  started when the pedal has no Ethernet or Wi-Fi connection for
-#         WAIT seconds
+#         WAIT seconds, then kept until a network is joined from Settings
 #   on    always started
 #   off   never started
 #
@@ -94,10 +94,13 @@ if [ "$(nmcli -g 802-11-wireless.ssid connection show id "$ID" 2>/dev/null)" != 
 		connection.interface-name "$dev" >/dev/null 2>&1
 fi
 
-# Connected to a network over Ethernet or Wi-Fi (not the hotspot)
-connected() {
+# On a network over Ethernet or Wi-Fi (not the hotspot), or joining one:
+# Settings -> Wi-Fi takes the card from the hotspot to join a network, and
+# that takes up to 45 s. Starting the hotspot then would cut the join short
+# ("the base network connection was interrupted").
+on_network() {
 	nmcli -t -f TYPE,STATE,CONNECTION device 2>/dev/null |
-		awk -F: -v id="$ID" '($1 == "ethernet" || $1 == "wifi") && $2 == "connected" && $3 != id { found = 1 } END { exit !found }'
+		awk -F: -v id="$ID" '($1 == "ethernet" || $1 == "wifi") && $2 ~ /^connect/ && $3 != id { found = 1 } END { exit !found }'
 }
 
 start() {
@@ -119,16 +122,29 @@ if [ "$remote_hotspot" = on ]; then
 	done
 fi
 
-# auto: started after WAIT seconds without a connection, then kept
+# auto: started after WAIT seconds without a network, then kept until a
+# network is joined from Settings; started again WAIT seconds after that
+# network is lost or the join fails
 since=0
+was_active=false
 while [ -e "$PROFILE" ]; do
 	if active; then
+		was_active=true
 		status "On: $ssid (http://10.42.0.1)"
-	elif connected; then
+		sleep 5
+		continue
+	fi
+	# Taken down to join a network: wait again before taking the card back
+	if $was_active; then
+		was_active=false
 		since=0
-		status "Standby: the pedal is on a network"
+	fi
+	if on_network; then
+		since=0
+		status "Standby: the pedal is on a network or joining one"
 	elif [ $since -ge $WAIT ]; then
 		start
+		was_active=true
 	else
 		status "Waiting: started after $WAIT s without a network"
 	fi

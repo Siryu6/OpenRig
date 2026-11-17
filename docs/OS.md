@@ -112,7 +112,7 @@ The first partition (FAT, readable from any computer) holds
 | `wifi_country` | empty | Two letters (`FR`, `US`…): the Wi-Fi channels allowed there |
 | `keyboard_layout` | `us` | Layout of a USB keyboard, xkb names: `us`, `fr`, `de`, `gb`, `ch`… |
 | `remote_password` | empty (off) | Remote control password, 8 to 63 characters, also the hotspot's key; `off` turns it off |
-| `remote_hotspot` | `auto` | The remote control's Wi-Fi hotspot: `auto` (after 45 s without a network), `on` or `off` |
+| `remote_hotspot` | `auto` | The remote control's Wi-Fi hotspot: `auto` (after 45 s without a network, until a network is joined), `on` or `off` |
 | `wifi_ssid`, `wifi_password` | empty | A Wi-Fi network to join without a screen |
 
 `remote_password`, `wifi_ssid` and `wifi_password` are read once, at the
