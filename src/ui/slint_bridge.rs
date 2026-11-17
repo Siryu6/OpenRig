@@ -10,6 +10,7 @@ use crate::monitor::Levels;
 use crate::plugins::faceplate::Faceplate;
 use crate::plugins::scanner::{self, PluginCategory, PluginInfo, PortInfo};
 use crate::state::AppState;
+use crate::ui::search;
 
 /// One entry of the plugin browser
 #[derive(Clone, Debug)]
@@ -26,6 +27,25 @@ pub struct PluginView {
     pub color: u32,
     /// OpenRig FX look, if it is one of them
     pub faceplate: Option<Faceplate>,
+}
+
+impl PluginView {
+    /// What the browser's search looks in, folded (see [`search::fold`]):
+    /// name, maker, family and its other names, the built-in block's gear
+    /// and hint, and `extra` (the store entry's words, when it has one)
+    pub fn search_text(&self, extra: &str) -> String {
+        let family = match self.category.as_str() {
+            "Simulator" => "simulator amp cab",
+            "Filter" => "filter eq",
+            "Routing" => "routing send return i/o",
+            "Unknown" => "other",
+            other => other,
+        };
+        search::fold(&format!(
+            "{} {} {} {} {} {}",
+            self.name, self.author, family, self.kind, self.hint, extra
+        ))
+    }
 }
 
 /// How a parameter is edited

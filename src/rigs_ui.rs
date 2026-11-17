@@ -584,7 +584,7 @@ fn finish(app: &App, state: &Arc<AppState>, plan: &Plan, result: anyhow::Result<
         }
     };
     if outcome.plugins_installed {
-        crate::set_available_plugins(app, state);
+        crate::browser_ui::set_plugins(app, state);
     }
     // What happened to each item
     let items: Vec<RigItem> = plan

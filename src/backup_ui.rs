@@ -515,7 +515,7 @@ fn get_missing(app: &App, state: &Arc<AppState>) {
             g.set_busy(false);
             g.set_progress("".into());
             if installed > 0 {
-                crate::set_available_plugins(app, &st);
+                crate::browser_ui::set_plugins(app, &st);
             }
             let mut text = format!(
                 "{} installed, {} downloaded",

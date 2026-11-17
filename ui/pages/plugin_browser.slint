@@ -3,6 +3,7 @@ import { Theme } from "../theme.slint";
 import { PluginItem } from "../types.slint";
 import { Badge, Button, Chip, EmptyState, Icon, SectionHeader } from "../components/controls.slint";
 import { BlockShape } from "../components/block_shape.slint";
+import { VirtualKeyboard } from "../components/virtual_keyboard.slint";
 
 // Short code shown in the category tile of a plugin row
 export global CategoryCode {
@@ -21,16 +22,24 @@ export global CategoryCode {
     }
 }
 
-// Plugin browser: category filter chips + list of available plugins.
+// Plugin browser: search, category filter chips and the plugins that
+// match them (Rust filters: `plugins` is already narrowed, out of `total`).
+// A computer keyboard types into the search from anywhere on the page
+// (app.slint); a tap on the field opens the on-screen keyboard.
 export component PluginBrowser {
     in property <[PluginItem]> plugins: [];
+    in property <int> total: 0;
     in property <int> selected-index: 0;
     in property <string> target-label: "Main chain";
     in property <bool> demo-plugins: false;
+    in-out property <string> query: "";
     in-out property <string> category-filter: "All";
+    // The on-screen keyboard is open
+    in-out property <bool> typing: false;
 
     callback plugin-selected(int, string); // index, uri
     callback open-store();
+    callback search-store(string);         // look for the search in the store
 
     private property <[string]> categories: ["All", "Distortion", "Dynamics", "Filter", "Modulation",
         "Pitch", "Delay", "Reverb", "Simulator", "Utility", "Generator", "Routing", "Unknown"];
@@ -44,8 +53,8 @@ export component PluginBrowser {
         // A short list leaves the free space below it, not in the header
         alignment: start;
 
-        // Header
-        HorizontalLayout {
+        // Header (left out while typing: the on-screen keyboard needs the room)
+        if !root.typing: HorizontalLayout {
             vertical-stretch: 0;
             padding-left: Theme.space-lg;
             padding-right: Theme.space-lg;
@@ -77,11 +86,12 @@ export component PluginBrowser {
             VerticalLayout {
                 alignment: center;
                 Badge {
-                    text: root.plugins.length + " AVAILABLE";
+                    text: root.plugins.length == root.total ? root.total + " AVAILABLE"
+                        : root.plugins.length + " OF " + root.total;
                 }
             }
 
-            VerticalLayout {
+            if Features.store: VerticalLayout {
                 alignment: center;
                 Button {
                     height: 30px;
@@ -97,8 +107,64 @@ export component PluginBrowser {
             }
         }
 
+        // Search field, as in the store
+        HorizontalLayout {
+            vertical-stretch: 0;
+            padding-left: Theme.space-lg;
+            padding-right: Theme.space-lg;
+
+            Rectangle {
+                horizontal-stretch: 1;
+                height: Theme.touch-target;
+                border-radius: Theme.radius-md;
+                background: Theme.display;
+                border-width: 1px;
+                border-color: root.typing || root.query != "" ? Theme.accent : Theme.border;
+
+                TouchArea {
+                    clicked => {
+                        root.typing = true;
+                    }
+                }
+                HorizontalLayout {
+                    padding-left: Theme.space-md;
+                    padding-right: Theme.space-sm;
+                    spacing: Theme.space-sm;
+                    VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            name: "search";
+                            size: 18px;
+                            color: root.query != "" ? Theme.accent : Theme.text-muted;
+                        }
+                    }
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.query != "" ? root.query : "Search: name, family, maker, \"fuzz\"…";
+                        color: root.query != "" ? Theme.text-primary : Theme.text-muted;
+                        font-size: Theme.font-body;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    if root.query != "": Rectangle {
+                        width: 36px;
+                        Icon {
+                            name: "close";
+                            size: 16px;
+                            color: Theme.text-secondary;
+                        }
+                        TouchArea {
+                            clicked => {
+                                root.query = "";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Category chips (horizontal scroll)
-        Flickable {
+        if !root.typing: Flickable {
             min-width: 0px;
             height: Theme.touch-target;
             content-width: chips.preferred-width;
@@ -119,7 +185,7 @@ export component PluginBrowser {
         }
 
         // Plugin list
-        if root.plugins.length == 0: Rectangle {
+        if root.total == 0: Rectangle {
             vertical-stretch: 1;
             EmptyState {
                 icon: "plug";
@@ -128,9 +194,47 @@ export component PluginBrowser {
             }
         }
 
+        // Nothing matches the search or the family
+        if root.total > 0 && root.plugins.length == 0: VerticalLayout {
+            vertical-stretch: 1;
+            alignment: center;
+            spacing: Theme.space-md;
+            EmptyState {
+                icon: "search";
+                title: root.query != "" ? "No effect matches “" + root.query + "”" : "No effect in this family";
+                message: root.query != "" && root.category-filter != "All" ? "Try another word, or All families."
+                    : root.query != "" ? "Try another word." : "Pick another family.";
+            }
+            if Features.store && root.query != "": HorizontalLayout {
+                alignment: center;
+                Button {
+                    text: "SEARCH THE STORE";
+                    icon: "download";
+                    clicked => {
+                        root.search-store(root.query);
+                    }
+                }
+            }
+        }
+
         if root.plugins.length > 0: list := Flickable {
             vertical-stretch: 1;
             min-height: 0px;
+            // Another search or family: back to the top of the list
+            private property <string> filter: root.query + "\n" + root.category-filter;
+            changed filter => {
+                self.content-y = 0;
+            }
+            // Keeps the row picked with the encoder or the arrows in sight
+            private property <int> picked: root.selected-index;
+            changed picked => {
+                let y = self.picked * (64px + Theme.space-sm);
+                if (y < -self.content-y) {
+                    self.content-y = -y;
+                } else if (y + 64px > self.height - self.content-y) {
+                    self.content-y = self.height - y - 64px;
+                }
+            }
             content-height: max(self.height, rows.preferred-height);
             interactive: rows.preferred-height > self.height;
 
@@ -139,114 +243,128 @@ export component PluginBrowser {
                 padding-right: Theme.space-lg;
                 padding-bottom: Theme.space-lg;
 
-                for plugin[idx] in root.plugins: VerticalLayout {
-                    if root.category-filter == "All" || plugin.category == root.category-filter: Rectangle {
-                        height: 64px + Theme.space-sm;
+                for plugin[idx] in root.plugins: Rectangle {
+                    height: 64px + Theme.space-sm;
 
-                        Rectangle {
-                            y: 0;
-                            height: 64px;
-                            border-radius: Theme.radius-lg;
-                            background: row-ta.pressed ? Theme.surface-hover : Theme.surface;
-                            border-width: 1px;
-                            border-color: idx == root.selected-index ? Theme.accent : Theme.border;
+                    Rectangle {
+                        y: 0;
+                        height: 64px;
+                        border-radius: Theme.radius-lg;
+                        background: row-ta.pressed ? Theme.surface-hover : Theme.surface;
+                        border-width: 1px;
+                        border-color: idx == root.selected-index ? Theme.accent : Theme.border;
 
-                            HorizontalLayout {
-                                padding: Theme.space-sm + 2px;
-                                padding-left: Theme.space-md;
-                                padding-right: Theme.space-md;
-                                spacing: Theme.space-md;
+                        HorizontalLayout {
+                            padding: Theme.space-sm + 2px;
+                            padding-left: Theme.space-md;
+                            padding-right: Theme.space-md;
+                            spacing: Theme.space-md;
 
-                                // Built-in blocks and OpenRig FX plugins show their
-                                // block as in the rack
-                                if plugin.kind != "" || plugin.faceplate.look != "": Rectangle {
-                                    width: 56px;
-                                    gear := BlockShape {
-                                        kind: plugin.kind;
-                                        name: "";
-                                        tint: plugin.color;
-                                        faceplate: plugin.faceplate;
-                                        transform-origin: { x: self.width / 2, y: self.height / 2 };
-                                        transform-scale: min(parent.width / self.shape-width, parent.height / self.shape-height);
-                                    }
-                                }
-
-                                // Store plugins show their picture
-                                if plugin.kind == "" && plugin.faceplate.look == "" && plugin.has-picture: Image {
-                                    width: 56px;
-                                    source: plugin.picture;
-                                    image-fit: contain;
-                                }
-
-                                if plugin.kind == "" && plugin.faceplate.look == "" && !plugin.has-picture: Rectangle {
-                                    width: 56px;
-                                    border-radius: Theme.radius-md;
-                                    background: Features.flat ? plugin.color : @linear-gradient(180deg, plugin.color.brighter(0.18) 0%, plugin.color.darker(0.12) 100%);
-                                    border-width: 1px;
-                                    border-color: plugin.color.brighter(0.5);
-                                    Text {
-                                        text: CategoryCode.code(plugin.category);
-                                        color: #ffffff;
-                                        font-size: Theme.font-caption;
-                                        font-weight: Theme.weight-bold;
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
-                                    }
-                                }
-
-                                VerticalLayout {
-                                    horizontal-stretch: 1;
-                                    alignment: center;
-                                    spacing: 2px;
-                                    HorizontalLayout {
-                                        spacing: Theme.space-sm;
-                                        Text {
-                                            horizontal-stretch: 1;
-                                            text: plugin.name;
-                                            color: Theme.text-primary;
-                                            font-size: Theme.font-body;
-                                            font-weight: Theme.weight-semibold;
-                                            overflow: elide;
-                                            vertical-alignment: center;
-                                        }
-                                        if plugin.faceplate.suite: Badge {
-                                            text: "OR FX";
-                                            tone: "accent";
-                                        }
-                                    }
-                                    Text {
-                                        text: plugin.hint != "" ? plugin.hint
-                                            : plugin.author == "" ? plugin.category : plugin.author + "  ·  " + plugin.category;
-                                        color: Theme.text-secondary;
-                                        font-size: Theme.font-small;
-                                        overflow: elide;
-                                    }
-                                }
-
-                                VerticalLayout {
-                                    alignment: center;
-                                    Rectangle {
-                                        width: 32px;
-                                        height: 32px;
-                                        border-radius: Theme.radius-md;
-                                        background: Theme.surface-raised;
-                                        Icon {
-                                            name: "plus";
-                                            size: 18px;
-                                            color: Theme.accent;
-                                        }
-                                    }
+                            // Built-in blocks and OpenRig FX plugins show their
+                            // block as in the rack
+                            if plugin.kind != "" || plugin.faceplate.look != "": Rectangle {
+                                width: 56px;
+                                gear := BlockShape {
+                                    kind: plugin.kind;
+                                    name: "";
+                                    tint: plugin.color;
+                                    faceplate: plugin.faceplate;
+                                    transform-origin: { x: self.width / 2, y: self.height / 2 };
+                                    transform-scale: min(parent.width / self.shape-width, parent.height / self.shape-height);
                                 }
                             }
 
-                            row-ta := TouchArea {
-                                clicked => {
-                                    root.plugin-selected(idx, plugin.uri);
+                            // Store plugins show their picture
+                            if plugin.kind == "" && plugin.faceplate.look == "" && plugin.has-picture: Image {
+                                width: 56px;
+                                source: plugin.picture;
+                                image-fit: contain;
+                            }
+
+                            if plugin.kind == "" && plugin.faceplate.look == "" && !plugin.has-picture: Rectangle {
+                                width: 56px;
+                                border-radius: Theme.radius-md;
+                                background: Features.flat ? plugin.color : @linear-gradient(180deg, plugin.color.brighter(0.18) 0%, plugin.color.darker(0.12) 100%);
+                                border-width: 1px;
+                                border-color: plugin.color.brighter(0.5);
+                                Text {
+                                    text: CategoryCode.code(plugin.category);
+                                    color: #ffffff;
+                                    font-size: Theme.font-caption;
+                                    font-weight: Theme.weight-bold;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
                                 }
+                            }
+
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                spacing: 2px;
+                                HorizontalLayout {
+                                    spacing: Theme.space-sm;
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: plugin.name;
+                                        color: Theme.text-primary;
+                                        font-size: Theme.font-body;
+                                        font-weight: Theme.weight-semibold;
+                                        overflow: elide;
+                                        vertical-alignment: center;
+                                    }
+                                    if plugin.faceplate.suite: Badge {
+                                        text: "OR FX";
+                                        tone: "accent";
+                                    }
+                                }
+                                Text {
+                                    text: plugin.hint != "" ? plugin.hint
+                                        : plugin.author == "" ? plugin.category : plugin.author + "  ·  " + plugin.category;
+                                    color: Theme.text-secondary;
+                                    font-size: Theme.font-small;
+                                    overflow: elide;
+                                }
+                            }
+
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 32px;
+                                    height: 32px;
+                                    border-radius: Theme.radius-md;
+                                    background: Theme.surface-raised;
+                                    Icon {
+                                        name: "plus";
+                                        size: 18px;
+                                        color: Theme.accent;
+                                    }
+                                }
+                            }
+                        }
+
+                        row-ta := TouchArea {
+                            clicked => {
+                                root.plugin-selected(idx, plugin.uri);
                             }
                         }
                     }
                 }
+            }
+        }
+
+        if root.typing: VirtualKeyboard {
+            current-text: root.query;
+            placeholder: "Search effects";
+            submit-label: "Done";
+            text-changed(t) => {
+                root.query = t;
+            }
+            submit => {
+                root.typing = false;
+            }
+            cancel => {
+                root.query = "";
+                root.typing = false;
             }
         }
     }

@@ -107,6 +107,15 @@ plugins already on the board first. Once downloaded, it also shows:
   face (`block_face` in the index: a pedal, an amp). It is fitted in the
   block's cell, framed in the block's colour, and faded when bypassed.
 
+## Search
+
+The Store page keeps the entries holding every word of the search, in the
+name, maker, family, subcategory, tags, inspiration and summary; case and
+accents do not count (`pedalboard::ui::search`). The Add effect page
+searches the installed plugins by the same catalog words, and with no match
+offers *Search the store*: the Store page opens on all families with the
+same text.
+
 ## Plugins copied by hand
 
 Copy the bundle into `<data>/lv2`, then press the refresh button of the
