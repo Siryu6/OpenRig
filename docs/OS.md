@@ -324,10 +324,19 @@ boot does it too).
 
 ## Troubleshooting
 
-- **Black screen, nothing on SSH.** Edit `cmdline.txt` from a computer
-  (Pi: on the `SYSTEM` partition in use, 2 on a new card; x86_64:
-  `EFI/BOOT/grub.cfg`): remove `quiet loglevel=3` and add `console=tty1`
-  to see the boot messages on the display. Keep it on one line.
+- **Black screen, nothing on SSH.** See the boot messages:
+  - Pi: edit `cmdline.txt` from a computer (on the `SYSTEM` partition in
+    use, 2 on a new card): remove `quiet loglevel=3` and add
+    `console=tty1`. Keep it on one line.
+  - x86_64: press F4 repeatedly while the PC starts (Escape works too, but
+    some PCs open their firmware setup with it), then choose
+    **Pedalboard (boot messages)**. The kernel has no text
+    console, so they are drawn on the firmware's framebuffer
+    (`earlycon=efifb`), and an error stays on screen (`panic=0`). On images
+    older than this menu, edit `EFI/BOOT/grub.cfg` on the EFI partition:
+    replace `quiet loglevel=3` with `loglevel=7 earlycon=efifb keep_bootcon`.
+  - The data partition is created on the first boot: if the disk still has
+    only 2 partitions afterwards, Linux stopped before the system started.
 - **Wrong resolution, or no picture from an HDMI screen powered by the Pi.**
   Some small panels send no or wrong display data (EDID), or are not ready
   when the Pi starts. Add the mode at the end of `cmdline.txt`, e.g.
