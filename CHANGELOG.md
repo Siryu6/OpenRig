@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0](https://github.com/Siryu6/OpenRig/compare/v0.18.0...v0.19.0) - 2026-11-19
+
+### Added
+
+- *(os)* boot messages entry in a hidden GRUB menu on x86_64 ([#244](https://github.com/Siryu6/OpenRig/pull/244))
+
+### Fixed
+
+- *(os)* ship firmware for older Intel Wi-Fi chips on x86_64 ([#241](https://github.com/Siryu6/OpenRig/pull/241))
+
 ## [0.18.0](https://github.com/Siryu6/OpenRig/compare/v0.17.1...v0.18.0) - 2026-11-17
 
 ### Added
