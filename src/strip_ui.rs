@@ -9,6 +9,13 @@
 //!   picks; closed, turning steps through it and holding puts it back;
 //! - factory presets and model, after the parameters: a press or a turn
 //!   opens their list, a press picks, holding closes it.
+//!
+//! Pots (M5Stack 8Angle, [`pot`]) set the parameter at their place instead,
+//! once they reach its value ([`pedalboard::ui::pots`]); the 6th pot picks
+//! the page; the board's switch turns the block shown on or off. Its LEDs
+//! say which pots drive their parameter ([`pot_leds`]). The factory presets
+//! and model fields are left to touch and encoders: a pot sweeping through
+//! them would load every file on its way.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -18,6 +25,8 @@ use slint::{ComponentHandle, Model};
 
 use crate::{App, View};
 use pedalboard::ui::encoder;
+#[cfg(feature = "gpio")]
+use pedalboard::ui::pots;
 
 /// Knobs on a page of the strip (the rack's `per-page`)
 const PER_PAGE: i32 = 5;
@@ -162,16 +171,22 @@ pub fn setup(app: &App) {
 
 /// `before` is only borrowed for a moment: the callbacks invoked here may
 /// come back to this one
-fn event(
-    app: &App,
-    before: &RefCell<HashMap<(i32, i32), f32>>,
-    encoder: i32,
-    action: i32,
-    detents: i32,
-) {
+/// The strip of the block shown on the rack page
+struct Strip {
+    instance: i32,
+    page: i32,
+    pages: i32,
+    factory_pos: Option<i32>,
+    model_pos: Option<i32>,
+    factory: i32,
+    models: i32,
+}
+
+/// None off the rack page, or without a block selected
+fn strip(app: &App) -> Option<Strip> {
     let instance = app.get_selected_instance_id();
     if app.get_current_view() != View::Rack || instance < 0 {
-        return;
+        return None;
     }
     // The parameters in the strip, then the list fields
     let strip_count = app.get_selected_strip_count();
@@ -183,7 +198,36 @@ fn event(
         .then_some(strip_count + i32::from(factory > 0));
     let fields = strip_count + i32::from(factory_pos.is_some()) + i32::from(model_pos.is_some());
     let pages = ((fields + PER_PAGE - 1) / PER_PAGE).max(1);
-    let page = app.get_strip_page().clamp(0, pages - 1);
+    Some(Strip {
+        instance,
+        page: app.get_strip_page().clamp(0, pages - 1),
+        pages,
+        factory_pos,
+        model_pos,
+        factory,
+        models,
+    })
+}
+
+fn event(
+    app: &App,
+    before: &RefCell<HashMap<(i32, i32), f32>>,
+    encoder: i32,
+    action: i32,
+    detents: i32,
+) {
+    let Some(Strip {
+        instance,
+        page,
+        pages,
+        factory_pos,
+        model_pos,
+        factory,
+        models,
+    }) = strip(app)
+    else {
+        return;
+    };
     if encoder == PER_PAGE {
         let next = (page + detents).clamp(0, pages - 1);
         if action == TURN && next != page {
@@ -266,6 +310,152 @@ fn event(
     if let Some(value) = response.value {
         app.invoke_set_parameter(instance, p.index, value);
     }
+}
+
+/// Pickup of each pot of the strip's fields (UI thread only)
+#[cfg(feature = "gpio")]
+#[derive(Default)]
+struct Pots {
+    fields: [pots::Pickup<(i32, i32)>; PER_PAGE as usize],
+}
+
+#[cfg(feature = "gpio")]
+thread_local! {
+    static POTS: RefCell<Pots> = RefCell::default();
+}
+
+/// The parameter under pot `pot` (0–4) of the strip shown: its row, kind,
+/// range, options and value
+#[cfg(feature = "gpio")]
+struct Under {
+    row: i32,
+    index: i32,
+    kind: slint::SharedString,
+    min: f32,
+    max: f32,
+    value: f32,
+    options: Vec<f32>,
+}
+
+#[cfg(feature = "gpio")]
+impl Under {
+    fn find(app: &App, strip: &Strip, pot: i32) -> Option<Self> {
+        let slot = strip.page * PER_PAGE + pot;
+        app.get_selected_parameters()
+            .iter()
+            .enumerate()
+            .find(|(_, p)| p.strip_pos == slot)
+            .map(|(row, p)| Self {
+                row: row as i32,
+                index: p.index,
+                options: p.option_values.iter().collect(),
+                kind: p.kind,
+                min: p.min,
+                max: p.max,
+                value: p.value,
+            })
+    }
+
+    fn target(&self, instance: i32) -> pots::Target<'_, (i32, i32)> {
+        pots::Target {
+            key: (instance, self.index),
+            field: pots::Field {
+                kind: &self.kind,
+                min: self.min,
+                max: self.max,
+                options: &self.options,
+            },
+            value: self.value,
+        }
+    }
+}
+
+/// Pot `pot` moved to `position` (0–1): pots 1–5 set the parameter at
+/// their place on the page shown once picked up, the 6th picks the page
+#[cfg(feature = "gpio")]
+pub fn pot(app: &App, pot: i32, position: f32) {
+    let strip = strip(app);
+    if pot == PER_PAGE {
+        let Some(strip) = strip else {
+            return;
+        };
+        let next = pots::page_at(position, strip.page, strip.pages);
+        if next != strip.page {
+            app.set_strip_list_row(-1);
+            app.set_strip_page(next);
+        }
+        return;
+    }
+    let Some(pickup) = usize::try_from(pot).ok().filter(|&p| p < PER_PAGE as usize) else {
+        return;
+    };
+    let under = strip.as_ref().and_then(|s| Under::find(app, s, pot));
+    let target = strip
+        .as_ref()
+        .zip(under.as_ref())
+        .map(|(s, u)| u.target(s.instance));
+    // Every move counts, even away from the rack: a crossing is only seen
+    // from where the pot really was. Borrowed for a moment: setting the
+    // parameter calls back into the UI
+    let value = POTS.with_borrow_mut(|pots| {
+        pots.fields
+            .get_mut(pickup)
+            .and_then(|p| p.moved(target.as_ref(), position))
+    });
+    let (Some(strip), Some(under), Some(value)) = (strip, under, value) else {
+        return;
+    };
+    let list_row = app.get_strip_list_row();
+    if list_row != -1 && list_row != under.row {
+        app.set_strip_list_row(-1);
+    }
+    app.invoke_set_parameter(strip.instance, under.index, value);
+}
+
+/// The board's switch moved: it turns the block shown on or off
+#[cfg(feature = "gpio")]
+pub fn pot_switch(app: &App) {
+    if let Some(strip) = strip(app) {
+        app.invoke_toggle_node_bypass(strip.instance);
+    }
+}
+
+/// The 8Angle's LEDs: one per pot, then the switch's. A pot driving its
+/// parameter is amber, one waiting to reach the value dim white, one with
+/// nothing to drive off; the page pot is lit when there are pages to
+/// pick, the switch when the block shown is on. All off away from the rack
+#[cfg(feature = "gpio")]
+pub fn pot_leds(app: &App) -> Vec<pedalboard::i2c_encoders::Led> {
+    use pedalboard::i2c_encoders::Led;
+    let mut leds = vec![Led::OFF; 9];
+    let Some(strip) = strip(app) else {
+        return leds;
+    };
+    POTS.with_borrow_mut(|pots| {
+        for (pot, (led, pickup)) in leds.iter_mut().zip(pots.fields.iter_mut()).enumerate() {
+            let under = Under::find(app, &strip, pot as i32);
+            let target = under.as_ref().map(|u| u.target(strip.instance));
+            *led = match target {
+                None => {
+                    pickup.sync(None);
+                    Led::OFF
+                }
+                Some(target) if pickup.sync(Some(&target)) => Led::LIVE,
+                Some(_) => Led::WAITING,
+            };
+        }
+    });
+    if let Some(led) = leds.get_mut(PER_PAGE as usize) {
+        *led = if strip.pages > 1 { Led::LIVE } else { Led::OFF };
+    }
+    if let Some(led) = leds.last_mut() {
+        *led = if app.get_selected_plugin_bypassed() {
+            Led::OFF
+        } else {
+            Led::LIVE
+        };
+    }
+    leds
 }
 
 /// Open, move or close the list of row `row`

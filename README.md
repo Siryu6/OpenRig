@@ -163,7 +163,7 @@ with audio disabled.
 | `PEDALBOARD_FOOTSWITCH_PINS` | `17,27,22,23` | Footswitch GPIOs (BCM), until set in Settings → Hardware (empty: none) |
 | `PEDALBOARD_ENCODER_PINS` | `5,6,13` | Encoder A, B and button, until set in Settings (`A,B`: no button; empty: no encoder) |
 | `PEDALBOARD_ENCODER_STEPS` | `4` | Quadrature steps per detent (1, 2 or 4), until set in Settings |
-| `PEDALBOARD_I2C_ENCODERS` | unset | External encoder boards on I2C (`seesaw`, `seesaw-quad`, `m5-stack8`), until set in Settings |
+| `PEDALBOARD_I2C_ENCODERS` | unset | External encoder boards on I2C (`seesaw`, `seesaw-quad`, `m5-stack8`, `m5-stack8-angle`), until set in Settings |
 | `PEDALBOARD_UPDATE_URL` | GitHub's latest release | Release read by "Check for updates", to test with another server (plain HTTP allowed) |
 | `LV2_PATH` | system | Where LV2 bundles are searched |
 | `RUST_LOG` | `info` | Log level |
@@ -245,7 +245,7 @@ src/
 ├── catalog_ui.rs        Store page (worker threads: index, pictures, install, removal)
 ├── monitor.rs           DSP meter, xruns, CPU / RAM / temperature / throttling
 ├── hardware.rs          What is wired (footswitch / encoder GPIOs, I2C boards): hardware.json, environment defaults
-├── i2c_encoders.rs      I2C encoder boards (seesaw, M5Stack 8Encoder): protocol, events, a simulated bus
+├── i2c_encoders.rs      I2C encoder boards (seesaw, M5Stack 8Encoder, 8Angle pots): protocol, events, LEDs, a simulated bus
 ├── audio/
 │   ├── jack_client.rs   JACK callback: tuner → effects → looper
 │   ├── chain_switcher.rs  Builder thread, crossfade, live commands

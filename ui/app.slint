@@ -108,7 +108,7 @@ export component App inherits Window {
         : root.current-view == View.looper ? 18
         : root.current-view == View.tuner ? 2
         : root.current-view == View.settings ? root.hardware-start + 1
-        : root.current-view == View.hardware ? root.hw-i2c-start + (Features.gpio ? 1 : 0) + (Features.gpio && root.hardware-i2c ? 3 : 0) : 0;
+        : root.current-view == View.hardware ? root.hw-i2c-start + (Features.gpio ? 1 : 0) + (Features.gpio && root.hardware-i2c ? (root.hardware-i2c-pots ? 2 : 3) : 0) : 0;
     // Settings → Audio & system: the list open (row, -1 none) and the
     // choice the encoder is on
     private property <int> system-picker: -1;
@@ -308,6 +308,8 @@ export component App inherits Window {
     in-out property <string> hardware-i2c-module: "";
     in-out property <int> hardware-i2c-steps: 1;
     in-out property <bool> hardware-i2c-reverse: false;
+    // The board has pots (no counts per detent)
+    in-out property <bool> hardware-i2c-pots: false;
     in-out property <string> hardware-i2c-found: "";
     in-out property <string> hardware-message: "";  // error
     // MIDI
@@ -1082,7 +1084,8 @@ export component App inherits Window {
             return { what: "tap", index: 0 };
         }
         let r = i - root.hw-i2c-start;
-        return { what: r == 0 ? "i2c" : r == 1 ? "i2c-module" : r == 2 ? "i2c-steps" : "i2c-reverse", index: 0 };
+        // A board of pots has no steps per detent
+        return { what: r == 0 ? "i2c" : r == 1 ? "i2c-module" : r == 2 && !root.hardware-i2c-pots ? "i2c-steps" : "i2c-reverse", index: 0 };
     }
 
     // Encoder press on Settings → Hardware: a toggle switches, a stepper is
@@ -1848,6 +1851,7 @@ export component App inherits Window {
                 hardware-i2c-module: root.hardware-i2c-module;
                 hardware-i2c-steps: root.hardware-i2c-steps;
                 hardware-i2c-reverse: root.hardware-i2c-reverse;
+                hardware-i2c-pots: root.hardware-i2c-pots;
                 hardware-i2c-found: root.hardware-i2c-found;
                 hardware-set-i2c(on) => {
                     root.hardware-set-i2c(on);

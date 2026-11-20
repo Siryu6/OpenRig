@@ -355,6 +355,20 @@ What OpenRig does, in more technical detail than the
   detent, reverse; it says which addresses answered. Without boards, keys
   `a s d f g h` turn encoders 1–6 (shifted: the other way) and `z x c v b n`
   press them (shifted: hold), on the rack page.
+  The M5Stack 8Angle (0x43) has potentiometers instead: pots 1–5 set the
+  parameters of the strip's page shown across their range (log scale for
+  frequencies, rounded for integers, a list's options first to last, a
+  switch off below the middle and on above), pot 6 picks the page by its
+  position, pots 7–8 are not used, and the board's toggle switch turns the
+  block shown on or off. A pot takes a parameter over only once it reaches
+  its value (pickup): after a page, block, preset or scene change, or a
+  change by touch, MIDI or the remote, nothing jumps. Its LEDs show it:
+  amber when the pot drives its parameter, dim white while it waits to
+  reach the value, off with nothing to drive (the switch's LED is amber
+  when the block is on). The readings are smoothed with a deadband, so a
+  pot left alone sends nothing; the factory presets and model fields stay
+  with touch and encoders. Counts per detent do not apply; reverse flips
+  the pots' direction.
 - **OS image** (`os/`): Buildroot image for the Pi 5 and x86_64 mini PCs,
   `PREEMPT_RT` kernel, read-only system, boot logo, the UI full screen
   without X11 / Wayland, signed A/B updates (RAUC) that roll back when the

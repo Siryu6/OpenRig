@@ -201,6 +201,7 @@ fn apply(app: &App, state: &Arc<AppState>, board: &mut Board) {
     app.set_hardware_i2c(i2c.is_some());
     let i2c = i2c.unwrap_or(I2cEncoders::new(I2cModule::Seesaw));
     app.set_hardware_i2c_module(i2c.module.name().into());
+    app.set_hardware_i2c_pots(i2c.module.pots());
     app.set_hardware_i2c_steps(i2c.steps.into());
     app.set_hardware_i2c_reverse(i2c.reverse);
     app.set_hardware_i2c_found("".into());
@@ -300,7 +301,7 @@ mod tests {
         let i2c = h.i2c_encoders.unwrap();
         assert_eq!(
             (i2c.module, i2c.steps, i2c.reverse),
-            (I2cModule::M5Stack8, 4, true)
+            (I2cModule::M5Stack8Angle, 4, true)
         );
         step(&mut h, "i2c-steps", 0, -1);
         step(&mut h, "i2c-reverse", 0, -1);
