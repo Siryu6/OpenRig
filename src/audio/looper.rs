@@ -9,7 +9,9 @@
 //! beats (a metronome), count one bar in before recording (or overdubbing
 //! from a stop), and round the first recording to whole bars
 //! (see [`LooperSettings`]). The bar grid starts where the recording starts;
-//! its tempo is fixed for the loop when recording starts.
+//! its tempo is fixed for the loop when recording starts. A fixed length
+//! (1, 2, 4 or 8 bars) ends the first recording by itself on the last bar
+//! line, sample-accurately, and the loop plays on at once.
 //!
 //! The loop can be multiplied (repeated n times: each layer keeps its own
 //! length and repeats, so this is instant), played at half speed (an octave
@@ -42,6 +44,8 @@ const RECORD_POINTS: usize = 2048;
 
 pub const MIN_BEATS_PER_BAR: u8 = 2;
 pub const MAX_BEATS_PER_BAR: u8 = 12;
+/// Fixed loop lengths in bars, after Free (0)
+pub const LENGTH_BARS: [u8; 4] = [1, 2, 4, 8];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LooperState {
@@ -53,7 +57,8 @@ pub enum LooperState {
     Overdubbing,
 }
 
-/// Count-in, bar quantization and click, kept with the session
+/// Count-in, bar quantization, click and fixed length, kept with the
+/// session
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct LooperSettings {
@@ -70,6 +75,12 @@ pub struct LooperSettings {
     pub click: bool,
     /// Click level, 0.0 to 1.0
     pub click_level: f32,
+    /// Bars the first recording lasts: 0 (Free) ends it at the stop, else
+    /// one of [`LENGTH_BARS`]: it ends by itself on that bar line and the
+    /// loop plays. A length too long for the buffer at the tempo of the
+    /// recording is shortened to the longest one that fits, or Free when
+    /// none does (see [`fitting_bars`]); the setting itself is kept.
+    pub length_bars: u8,
 }
 
 impl Default for LooperSettings {
@@ -80,6 +91,7 @@ impl Default for LooperSettings {
             quantize: false,
             click: false,
             click_level: 0.5,
+            length_bars: 0,
         }
     }
 }
@@ -95,6 +107,11 @@ impl LooperSettings {
         } else {
             LooperSettings::default().click_level
         };
+        // The longest length not above the one asked for
+        self.length_bars = LENGTH_BARS
+            .into_iter()
+            .rfind(|&bars| bars <= self.length_bars)
+            .unwrap_or(0);
         self
     }
 }
@@ -114,6 +131,8 @@ pub struct LooperStatus {
     /// Bars in the loop, 0 when not whole bars
     pub bars: usize,
     pub ending: bool,
+    /// Bars the recording ends at while `ending` (see [`Looper::ending_bars`])
+    pub ending_bars: usize,
     pub half_speed: bool,
     /// The loop can be doubled (it fits the buffer twice)
     pub can_double: bool,
@@ -148,6 +167,17 @@ pub enum SnapshotError {
 pub fn beat_samples(sample_rate: f32, bpm: f32) -> usize {
     let bpm = crate::state::tempo::clamp_bpm(bpm);
     ((sample_rate * 60.0 / bpm).round() as usize).max(1)
+}
+
+/// The fixed length a recording gets: the longest of [`LENGTH_BARS`] up to
+/// `bars` whose `bars × bar` samples fit `max_samples`; 0 (Free) for 0 or
+/// when not even one bar fits
+pub fn fitting_bars(bars: u8, bar: usize, max_samples: usize) -> u8 {
+    LENGTH_BARS
+        .into_iter()
+        .filter(|&b| b <= bars)
+        .rfind(|&b| (b as usize).saturating_mul(bar) <= max_samples)
+        .unwrap_or(0)
 }
 
 /// Samples a recording lasts once rounded to whole bars of `bar` samples:
@@ -650,6 +680,13 @@ impl Looper {
         self.end_at = None;
         self.beat_length = beat_samples(self.sample_rate, self.bpm);
         self.bar_length = self.beat_length * self.settings.beats_per_bar as usize;
+        // A fixed length ends the recording by itself (from its first frame,
+        // after the count-in), then the loop plays
+        let bars = fitting_bars(self.settings.length_bars, self.bar_length, self.max_samples);
+        if bars > 0 {
+            self.end_at = Some(bars as usize * self.bar_length);
+            self.after_end = LooperState::Playing;
+        }
         self.click_beat = usize::MAX;
         self.record_wave = [0.0; RECORD_POINTS];
         self.wave = [0.0; WAVE_POINTS];
@@ -665,7 +702,9 @@ impl Looper {
 
     /// End the first recording, then go to `next` (playing, stopped or
     /// overdubbing). Quantized, it ends at the end of the bar: now if it
-    /// just crossed a bar line, else when the bar is over.
+    /// just crossed a bar line, else when the bar is over. With an end
+    /// already set (a fixed length, or a stop waiting for the bar line),
+    /// only `next` changes: the recording keeps its length.
     fn end_recording(&mut self, next: LooperState) {
         if next == LooperState::Overdubbing && self.spare.is_none() {
             // Normally prepared by `control`: the audio thread takes it
@@ -901,6 +940,13 @@ impl Looper {
         self.settings = settings.clamped();
     }
 
+    /// Longest of [`LENGTH_BARS`] a recording at `bpm` in the bars of the
+    /// settings can last (0: not even one bar fits the buffer)
+    pub fn longest_length(&self, bpm: f32) -> u8 {
+        let bar = beat_samples(self.sample_rate, bpm) * self.settings.beats_per_bar as usize;
+        fitting_bars(u8::MAX, bar, self.max_samples)
+    }
+
     pub fn state(&self) -> LooperState {
         self.state
     }
@@ -953,9 +999,16 @@ impl Looper {
         }
     }
 
-    /// The recording goes on to the end of the bar
+    /// The recording has an end set: a fixed length, or a stop waiting for
+    /// the end of the bar
     pub fn ending(&self) -> bool {
         self.end_at.is_some()
+    }
+
+    /// Bars the recording ends at, when its end is set (a fixed length, or
+    /// a quantized stop waiting for the bar line), else 0
+    pub fn ending_bars(&self) -> usize {
+        self.end_at.map_or(0, |end| end / self.bar_length.max(1))
     }
 
     /// Number of overdubs on top of the first recording
@@ -983,6 +1036,7 @@ impl Looper {
             beats_per_bar: self.beats_per_bar(),
             bars: self.loop_bars(),
             ending: self.ending(),
+            ending_bars: self.ending_bars(),
             half_speed: self.half_speed,
             can_double: self.loop_length > 0
                 && 2 * self.loop_length <= self.max_samples
@@ -1477,6 +1531,159 @@ mod tests {
         feed(&mut looper, std::iter::repeat_n(0.5, 1701));
         assert_eq!(looper.state(), LooperState::Overdubbing);
         assert_eq!(looper.overdub_count(), 1);
+    }
+
+    fn fixed(bars: u8) -> LooperSettings {
+        LooperSettings {
+            length_bars: bars,
+            click_level: 0.0,
+            ..LooperSettings::default()
+        }
+    }
+
+    #[test]
+    fn fixed_lengths_fit_the_buffer_or_get_shorter() {
+        // 30 000 samples at 1000 Hz: bars of 4000 (60 BPM) fit 7 times
+        assert_eq!(fitting_bars(8, 4000, 30000), 4);
+        assert_eq!(fitting_bars(4, 4000, 30000), 4);
+        assert_eq!(fitting_bars(2, 4000, 30000), 2);
+        assert_eq!(fitting_bars(8, 3750, 30000), 8);
+        // Free stays free, and a bar longer than the buffer leaves Free
+        assert_eq!(fitting_bars(0, 4000, 30000), 0);
+        assert_eq!(fitting_bars(1, 30001, 30000), 0);
+        let mut looper = timed(fixed(8));
+        assert_eq!(looper.longest_length(120.0), 8);
+        assert_eq!(looper.longest_length(60.0), 4);
+        // 12/8 at 40 BPM: bars of 18 s
+        looper.set_settings(LooperSettings {
+            beats_per_bar: 12,
+            ..fixed(8)
+        });
+        assert_eq!(looper.longest_length(40.0), 1);
+        // The setting is kept as asked (within the lengths offered)
+        assert_eq!(looper.settings().length_bars, 8);
+        looper.set_settings(fixed(3));
+        assert_eq!(looper.settings().length_bars, 2);
+        looper.set_settings(fixed(200));
+        assert_eq!(looper.settings().length_bars, 8);
+    }
+
+    #[test]
+    fn a_fixed_length_ends_the_recording_on_its_last_bar_line() {
+        let mut looper = timed(fixed(2));
+        looper.record();
+        assert!(looper.ending());
+        assert_eq!(looper.ending_bars(), 2);
+        feed(&mut looper, (0..3999).map(|i| 1.0 + i as f32));
+        assert_eq!(looper.state(), LooperState::Recording);
+        assert_eq!(looper.beat(), Some((2, 4)));
+        // The last frame of bar 2 is recorded, the next one plays the loop
+        let out = feed(&mut looper, [4000.0, 0.0, 0.0].into_iter());
+        assert_eq!(out[0], 4000.0);
+        assert_eq!(looper.state(), LooperState::Playing);
+        assert_eq!(out[1], 1.0);
+        assert_eq!(out[2], 2.0);
+        assert_eq!(looper.loop_length_seconds(), 4.0);
+        assert_eq!(looper.loop_bars(), 2);
+        assert!(!looper.ending());
+
+        // Overdubs keep the length
+        looper.overdub();
+        feed(&mut looper, std::iter::repeat_n(0.1, 9000));
+        looper.play();
+        assert_eq!(looper.loop_length_seconds(), 4.0);
+        assert_eq!(looper.overdub_count(), 1);
+    }
+
+    #[test]
+    fn a_fixed_length_counts_from_the_downbeat_after_the_count_in() {
+        let mut looper = timed(LooperSettings {
+            count_in: true,
+            click: true,
+            ..fixed(1)
+        });
+        looper.record();
+        assert_eq!(looper.state(), LooperState::CountIn);
+        feed(&mut looper, std::iter::repeat_n(9.0, 2000));
+        assert_eq!(looper.state(), LooperState::CountIn);
+        feed(&mut looper, (0..2000).map(|i| 1.0 + i as f32));
+        assert_eq!(looper.state(), LooperState::Recording);
+        let out = feed(&mut looper, std::iter::repeat_n(0.0, 2));
+        assert_eq!(looper.state(), LooperState::Playing);
+        assert_eq!(out, vec![1.0, 2.0]);
+        assert_eq!(looper.loop_length_seconds(), 2.0);
+    }
+
+    #[test]
+    fn a_fixed_length_too_long_for_the_buffer_is_shortened() {
+        // 60 BPM: 8 bars would last 32 s, 4 bars (16 s) fit
+        let mut looper = timed(fixed(8));
+        looper.set_tempo(60.0);
+        looper.record();
+        assert_eq!(looper.ending_bars(), 4);
+        feed(&mut looper, std::iter::repeat_n(0.5, 16001));
+        assert_eq!(looper.state(), LooperState::Playing);
+        assert_eq!(looper.loop_length_seconds(), 16.0);
+        assert_eq!(looper.loop_bars(), 4);
+
+        // Not even one bar fits: a free recording, up to the full buffer
+        let mut looper = Looper::new(1000.0);
+        looper.set_tempo(40.0);
+        looper.set_settings(LooperSettings {
+            beats_per_bar: 12,
+            ..fixed(1)
+        });
+        looper.max_samples = 10000;
+        looper.record();
+        assert!(!looper.ending());
+        feed(&mut looper, std::iter::repeat_n(0.5, 500));
+        looper.play();
+        assert_eq!(looper.loop_length_seconds(), 0.5);
+    }
+
+    #[test]
+    fn keys_during_a_fixed_length_choose_what_follows_it() {
+        // Play: nothing changes, the loop plays at the end
+        let mut looper = timed(fixed(1));
+        looper.record();
+        feed(&mut looper, std::iter::repeat_n(0.5, 500));
+        looper.cycle();
+        assert_eq!(looper.state(), LooperState::Recording);
+        feed(&mut looper, std::iter::repeat_n(0.5, 1501));
+        assert_eq!(looper.state(), LooperState::Playing);
+        assert_eq!(looper.loop_length_seconds(), 2.0);
+
+        // Stop: stopped at the end
+        looper.record();
+        feed(&mut looper, std::iter::repeat_n(0.5, 500));
+        looper.stop();
+        assert_eq!(looper.state(), LooperState::Recording);
+        feed(&mut looper, std::iter::repeat_n(0.5, 1501));
+        assert_eq!(looper.state(), LooperState::Stopped);
+        assert_eq!(looper.loop_length_seconds(), 2.0);
+
+        // Overdub: overdubbing from the end
+        looper.record();
+        feed(&mut looper, std::iter::repeat_n(0.5, 500));
+        looper.overdub();
+        feed(&mut looper, std::iter::repeat_n(0.5, 1501));
+        assert_eq!(looper.state(), LooperState::Overdubbing);
+        assert_eq!(looper.overdub_count(), 1);
+
+        // Record again: starts over with the full length
+        looper.record();
+        feed(&mut looper, std::iter::repeat_n(0.5, 1500));
+        looper.record();
+        feed(&mut looper, std::iter::repeat_n(0.5, 1999));
+        assert_eq!(looper.state(), LooperState::Recording);
+    }
+
+    #[test]
+    fn sessions_without_a_length_load_as_free() {
+        let settings: LooperSettings =
+            serde_json::from_str(r#"{"beats_per_bar":3,"count_in":true}"#).unwrap();
+        assert_eq!(settings.length_bars, 0);
+        assert_eq!(settings.beats_per_bar, 3);
     }
 
     #[test]

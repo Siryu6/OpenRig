@@ -12,7 +12,7 @@ import { PresetManager } from "pages/preset_manager.slint";
 import { Rigs, RigFileInfo, RigItem, RigsOnline } from "pages/rigs_view.slint";
 import { OnlineRig, OnlineDep } from "pages/rigs_online.slint";
 import { SceneManager } from "pages/scene_manager.slint";
-import { LooperView } from "pages/looper_view.slint";
+import { LooperView, LoopLength } from "pages/looper_view.slint";
 import { LiveView } from "pages/live_view.slint";
 import { CatalogView } from "pages/catalog_view.slint";
 import { SettingsView } from "pages/settings_view.slint";
@@ -105,7 +105,7 @@ export component App inherits Window {
     private property <int> page-focus: 0;
     private property <int> page-slots: root.current-view == View.presets ? root.presets.length
         : root.current-view == View.live ? root.live-tiles.length + 3
-        : root.current-view == View.looper ? 17
+        : root.current-view == View.looper ? 18
         : root.current-view == View.tuner ? 2
         : root.current-view == View.settings ? root.hardware-start + 1
         : root.current-view == View.hardware ? root.hw-i2c-start + (Features.gpio ? 1 : 0) + (Features.gpio && root.hardware-i2c ? 3 : 0) : 0;
@@ -208,6 +208,11 @@ export component App inherits Window {
     in-out property <bool> looper-quantize: false;
     in-out property <bool> looper-click: false;
     in-out property <float> looper-click-level: 0.5;
+    // Fixed loop length in bars (0: free), as set; the longest that fits
+    // the looper at the tempo (0: none), and the bars the recording ends at
+    in-out property <int> looper-length-bars: 0;
+    in-out property <int> looper-longest-length: 8;
+    in-out property <int> looper-ending-bars: 0;
 
     // Plugins / chain
     // Add effect page: the plugins that match its family and search, out
@@ -554,7 +559,7 @@ export component App inherits Window {
     callback looper-undo();
     callback looper-clear();
     callback looper-level-changed(float);
-    callback looper-settings-changed(int, bool, bool, bool, float);
+    callback looper-settings-changed(int, bool, bool, bool, float, int);
     callback looper-multiply();
     callback looper-half-speed-changed(bool);
     callback looper-loops-opened();
@@ -729,36 +734,42 @@ export component App inherits Window {
         }
     }
 
-    // The value a page's encoder adjusts: tempo, looper tempo / bar / click
-    // level / level, reference pitch
+    // The value a page's encoder adjusts: tempo, looper tempo / bar / length
+    // (its place in the list) / click level / level, reference pitch
     function page-value() -> float {
         root.current-view == View.live ? root.tempo
             : root.current-view == View.looper ? (root.page-focus == 9 ? root.tempo : root.page-focus == 11 ? root.looper-beats-per-bar
-                : root.page-focus == 15 ? root.looper-click-level : root.looper-level)
+                : root.page-focus == 12 ? LoopLength.index(LoopLength.shown(root.looper-length-bars, root.looper-longest-length))
+                : root.page-focus == 16 ? root.looper-click-level : root.looper-level)
             : root.tuner-reference-pitch
     }
 
     // Encoder steps per unit of the page value (levels move by 5 %)
     function page-scale() -> float {
-        root.current-view == View.looper && (root.page-focus == 15 || root.page-focus == 16) ? 20 : 1
+        root.current-view == View.looper && (root.page-focus == 16 || root.page-focus == 17) ? 20 : 1
     }
 
-    function set-looper-settings(beats: int, count-in: bool, quantize: bool, click: bool, click-level: float) {
+    function set-looper-settings(beats: int, count-in: bool, quantize: bool, click: bool, click-level: float, length: int) {
         root.looper-beats-per-bar = max(2, min(12, beats));
         root.looper-count-in = count-in;
         root.looper-quantize = quantize;
         root.looper-click = click;
         root.looper-click-level = max(0, min(1, click-level));
-        root.looper-settings-changed(root.looper-beats-per-bar, count-in, quantize, click, root.looper-click-level);
+        root.looper-length-bars = max(0, min(8, length));
+        root.looper-settings-changed(root.looper-beats-per-bar, count-in, quantize, click, root.looper-click-level, root.looper-length-bars);
     }
 
     function set-page-value(v: float) {
         if (root.current-view == View.live || (root.current-view == View.looper && root.page-focus == 9)) {
             root.set-tempo(max(40, min(240, v)));
         } else if (root.current-view == View.looper && root.page-focus == 11) {
-            root.set-looper-settings(v, root.looper-count-in, root.looper-quantize, root.looper-click, root.looper-click-level);
-        } else if (root.current-view == View.looper && root.page-focus == 15) {
-            root.set-looper-settings(root.looper-beats-per-bar, root.looper-count-in, root.looper-quantize, root.looper-click, v);
+            root.set-looper-settings(v, root.looper-count-in, root.looper-quantize, root.looper-click, root.looper-click-level, root.looper-length-bars);
+        } else if (root.current-view == View.looper && root.page-focus == 12) {
+            // Up to the longest length that fits
+            root.set-looper-settings(root.looper-beats-per-bar, root.looper-count-in, root.looper-quantize, root.looper-click, root.looper-click-level,
+                LoopLength.at(max(0, min(LoopLength.index(root.looper-longest-length), round(v)))));
+        } else if (root.current-view == View.looper && root.page-focus == 16) {
+            root.set-looper-settings(root.looper-beats-per-bar, root.looper-count-in, root.looper-quantize, root.looper-click, v, root.looper-length-bars);
         } else if (root.current-view == View.looper) {
             root.looper-level = max(0, min(1, v));
             root.looper-level-changed(root.looper-level);
@@ -808,17 +819,18 @@ export component App inherits Window {
             }
         } else if (root.current-view == View.looper && i == 10) {
             root.tap-tempo();
-        } else if (root.current-view == View.looper && i == 12) {
-            root.set-looper-settings(root.looper-beats-per-bar, !root.looper-count-in, root.looper-quantize, root.looper-click, root.looper-click-level);
         } else if (root.current-view == View.looper && i == 13) {
-            root.set-looper-settings(root.looper-beats-per-bar, root.looper-count-in, !root.looper-quantize, root.looper-click, root.looper-click-level);
+            root.set-looper-settings(root.looper-beats-per-bar, !root.looper-count-in, root.looper-quantize, root.looper-click, root.looper-click-level, root.looper-length-bars);
         } else if (root.current-view == View.looper && i == 14) {
-            root.set-looper-settings(root.looper-beats-per-bar, root.looper-count-in, root.looper-quantize, !root.looper-click, root.looper-click-level);
+            root.set-looper-settings(root.looper-beats-per-bar, root.looper-count-in, !root.looper-quantize, root.looper-click, root.looper-click-level, root.looper-length-bars);
+        } else if (root.current-view == View.looper && i == 15) {
+            root.set-looper-settings(root.looper-beats-per-bar, root.looper-count-in, root.looper-quantize, !root.looper-click, root.looper-click-level, root.looper-length-bars);
         } else if (root.current-view == View.tuner && i == 0) {
             root.tuner-mute-enabled = !root.tuner-mute-enabled;
             root.tuner-mute-toggled(root.tuner-mute-enabled);
         } else {
-            // Tempo, looper tempo / bar / click level / level, reference pitch
+            // Tempo, looper tempo / bar / length / click level / level,
+            // reference pitch
             root.adjust-from = root.page-value();
             root.adjusting = true;
         }
@@ -1581,6 +1593,9 @@ export component App inherits Window {
                 quantize: root.looper-quantize;
                 click: root.looper-click;
                 click-level: root.looper-click-level;
+                length-bars: root.looper-length-bars;
+                longest-length: root.looper-longest-length;
+                ending-bars: root.looper-ending-bars;
                 half-speed: root.looper-half-speed;
                 can-double: root.looper-can-double;
                 wave: root.looper-wave;
@@ -1594,8 +1609,8 @@ export component App inherits Window {
                 tap => {
                     root.tap-tempo();
                 }
-                settings-changed(beats, count-in, quantize, click, click-level) => {
-                    root.set-looper-settings(beats, count-in, quantize, click, click-level);
+                settings-changed(beats, count-in, quantize, click, click-level, length) => {
+                    root.set-looper-settings(beats, count-in, quantize, click, click-level, length);
                 }
                 multiply-clicked => {
                     root.looper-multiply();

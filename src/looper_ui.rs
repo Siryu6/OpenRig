@@ -193,11 +193,16 @@ fn load(app: &App, state: &Arc<AppState>, id: String) {
 pub fn poll(app: &App, state: &AppState) {
     // (copied out in one lock: the audio thread skips the looper for a
     // cycle when the lock is taken)
-    let (status, wave) = {
+    let bpm = state.tempo();
+    let (status, wave, longest) = {
         let looper = state.looper.locked();
         let status = looper.status();
         let changed = WAVE_SHOWN.get() != status.wave_version;
-        (status, changed.then(|| looper.waveform()))
+        (
+            status,
+            changed.then(|| looper.waveform()),
+            looper.longest_length(bpm),
+        )
     };
     app.set_looper_state(match status.state {
         Engine::Stopped => LooperState::Stopped,
@@ -215,6 +220,8 @@ pub fn poll(app: &App, state: &AppState) {
     app.set_looper_beats(status.beats_per_bar as i32);
     app.set_looper_bars(status.bars as i32);
     app.set_looper_ending(status.ending);
+    app.set_looper_ending_bars(status.ending_bars as i32);
+    app.set_looper_longest_length(longest as i32);
     app.set_looper_half_speed(status.half_speed);
     app.set_looper_can_double(status.can_double);
     if let Some(wave) = wave {
