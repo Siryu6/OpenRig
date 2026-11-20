@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0](https://github.com/Siryu6/OpenRig/compare/v0.19.0...v0.20.0) - 2026-11-20
+
+### Added
+
+- *(hardware)* M5Stack 8Angle potentiometer board ([#249](https://github.com/Siryu6/OpenRig/pull/249))
+- *(looper)* fixed loop length in bars ([#246](https://github.com/Siryu6/OpenRig/pull/246))
+
 ## [0.19.0](https://github.com/Siryu6/OpenRig/compare/v0.18.0...v0.19.0) - 2026-11-19
 
 ### Added
