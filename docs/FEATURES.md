@@ -280,7 +280,15 @@ What OpenRig does, in more technical detail than the
   and quantize the first recording: stopping it carries on to the end of
   the bar, so the loop is a whole number of bars, or ends on the bar line
   just crossed when the stop comes within an eighth of a beat (100 ms at
-  most) after it. A metronome click can run while recording, playing and
+  most) after it. A fixed length (Free, 1, 2, 4 or 8 bars) ends the first
+  recording by itself, to the sample, on the last bar line counted from
+  the first recorded beat (after the count-in), and the loop plays at once;
+  Stop or Overdub pressed before then choose what follows the end instead
+  (stopped, or overdubbing), Record starts over. Lengths that do not fit
+  the 30 s at the tempo and bar cannot be picked; when a tempo or bar change
+  makes the length set too long, the recording gets the longest length
+  that fits (Free when not even one bar fits), and the length set comes
+  back once it fits again. A metronome click can run while recording, playing and
   overdubbing (the bars are then always quantized). The click has its own
   level, is heard on the main mix and never recorded. The page shows the
   bar and beat large, and the loop's waveform with its bar lines and the
@@ -291,8 +299,8 @@ What OpenRig does, in more technical detail than the
   under a name (the date and time by default) as a WAV file with its bar
   grid in `loops/` of the data directory, and loaded back or deleted from
   the Loops list; a WAV file copied there is listed too, as a free-length
-  loop. The count-in, quantize and click settings are kept with the
-  session.
+  loop. The count-in, quantize, click and length settings are kept with
+  the session.
 - **Resource monitor**: the top bar shows the DSP load (time spent in the
   audio callback vs. the buffer period) and the SoC temperature, coloured
   green / orange / red. Tapping it opens the details: DSP average and peak,
@@ -323,7 +331,7 @@ What OpenRig does, in more technical detail than the
   load. Live: the switches (a press acts like the footswitch), then the
   tempo (press, then turn), tap and the mode. Looper: Record, Overdub,
   Play, Stop, Undo, Clear, Loop ×2, ½ Speed, Loops, the tempo, tap, the
-  bar, count-in, quantize, the click, the click level and the level. Tuner: mute and the reference
+  bar, the length, count-in, quantize, the click, the click level and the level. Tuner: mute and the reference
   pitch. Holding on a main page opens a page switcher (Rack, Presets,
   Live, Tuner, Looper, Settings). Settings → Hardware sets what is wired: from
   no footswitch to 8, the GPIO of each (with a LED that lights while it is

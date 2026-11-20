@@ -1308,13 +1308,14 @@ fn setup_callbacks(app: &App, state: &Arc<AppState>) {
         app,
         state,
         on_looper_settings_changed,
-        |app, state, beats, count_in, quantize, click, click_level| {
+        |app, state, beats, count_in, quantize, click, click_level, length| {
             state.set_looper_settings(pedalboard::audio::LooperSettings {
                 beats_per_bar: beats.clamp(0, u8::MAX as i32) as u8,
                 count_in,
                 quantize,
                 click,
                 click_level,
+                length_bars: length.clamp(0, u8::MAX as i32) as u8,
             });
             show_looper_settings(&app, state);
         }
@@ -1422,7 +1423,7 @@ pub(crate) fn setlist_slot(app: &App, state: &AppState, slot: usize) {
     }
 }
 
-/// Show the count-in, quantization and click settings of the looper
+/// Show the count-in, quantization, click and length settings of the looper
 fn show_looper_settings(app: &App, state: &AppState) {
     let settings = state.looper_settings();
     app.set_looper_beats_per_bar(settings.beats_per_bar as i32);
@@ -1430,6 +1431,7 @@ fn show_looper_settings(app: &App, state: &AppState) {
     app.set_looper_quantize(settings.quantize);
     app.set_looper_click(settings.click);
     app.set_looper_click_level(settings.click_level);
+    app.set_looper_length_bars(settings.length_bars as i32);
 }
 
 /// A client of the web remote has its tuner open
