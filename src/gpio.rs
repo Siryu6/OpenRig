@@ -13,9 +13,10 @@
 //! Footswitches report both edges: what they do is chosen on the Live page,
 //! and holding the tap switch opens the tuner.
 //!
-//! External encoder boards on the I2C bus ([`pedalboard::i2c_encoders`])
-//! are polled from a thread and drive the rack's knob strip
-//! ([`crate::strip_ui`]).
+//! External encoder (or pot) boards on the I2C bus
+//! ([`pedalboard::i2c_encoders`]) are polled from a thread and drive the
+//! rack's knob strip ([`crate::strip_ui`]); a board with LEDs gets their
+//! colours from the UI thread every [`LED_REFRESH`].
 
 use anyhow::{Context, Result};
 use gpiocdev::line::{Bias, EdgeDetection, EdgeKind, Value};
@@ -60,6 +61,10 @@ const STOP_POLL: Duration = Duration::from_millis(100);
 
 /// How often the I2C encoders are read
 const I2C_POLL: Duration = Duration::from_millis(10);
+
+/// How often a board's LEDs are asked from the UI (they are written only
+/// when they change)
+const LED_REFRESH: Duration = Duration::from_millis(100);
 
 /// The I2C bus of the 40-pin header (GPIO 2 and 3)
 struct I2cBus(rppal::i2c::I2c);
@@ -106,12 +111,7 @@ impl I2cPolling {
             rppal::i2c::I2c::new().context("Cannot open the I2C bus (enable it in config.txt)")?;
         let mut bus = I2cBus(i2c);
         let mut encoders = Encoders::open(&mut bus, settings)?;
-        let found = format!(
-            "{} encoder{} found ({})",
-            encoders.count(),
-            if encoders.count() == 1 { "" } else { "s" },
-            encoders.addresses()
-        );
+        let found = encoders.found();
         info!(found = %found, "External encoders opened");
         let stop = Arc::new(AtomicBool::new(false));
         let (app, halt) = (app.clone(), stop.clone());
@@ -119,7 +119,29 @@ impl I2cPolling {
             .name("i2c-encoders".into())
             .spawn(move || {
                 let mut failing = false;
+                // LED colours from the UI thread: one request at a time,
+                // the next one LED_REFRESH after the last
+                let (leds_tx, leds_rx) =
+                    std::sync::mpsc::channel::<Vec<pedalboard::i2c_encoders::Led>>();
+                let mut waiting = false;
+                let mut asked: Option<Instant> = None;
                 while !halt.load(Ordering::Relaxed) {
+                    if encoders.has_leds() {
+                        while let Ok(leds) = leds_rx.try_recv() {
+                            encoders.set_leds(&leds);
+                            waiting = false;
+                        }
+                        let due = asked.is_none_or(|at| at.elapsed() >= LED_REFRESH);
+                        if !waiting && due {
+                            let tx = leds_tx.clone();
+                            crate::ui(&app, move |app| {
+                                // The thread may have stopped meanwhile
+                                let _ = tx.send(crate::strip_ui::pot_leds(app));
+                            });
+                            waiting = true;
+                            asked = Some(Instant::now());
+                        }
+                    }
                     match encoders.poll(&mut bus, Instant::now()) {
                         Ok(events) if !events.is_empty() => {
                             crate::ui(&app, move |app| {
@@ -128,6 +150,14 @@ impl I2cPolling {
                                         Event::Turn { index, detents } => (index, 0, detents),
                                         Event::Press { index } => (index, 1, 0),
                                         Event::LongPress { index } => (index, 2, 0),
+                                        Event::Set { index, value } => {
+                                            crate::strip_ui::pot(app, index as i32, value);
+                                            continue;
+                                        }
+                                        Event::Switch { .. } => {
+                                            crate::strip_ui::pot_switch(app);
+                                            continue;
+                                        }
                                     };
                                     app.invoke_strip_encoder(index as i32, action, detents);
                                 }
@@ -145,6 +175,11 @@ impl I2cPolling {
                         }
                     }
                     std::thread::sleep(I2C_POLL);
+                }
+                if encoders.has_leds() {
+                    if let Err(e) = encoders.leds_off(&mut bus) {
+                        warn!(error = %e, "External board LEDs not turned off");
+                    }
                 }
             })
             .context("I2C polling thread")?;

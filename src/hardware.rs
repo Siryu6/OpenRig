@@ -12,7 +12,8 @@
 //! - `PEDALBOARD_ENCODER_PINS`: A,B[,button], empty for no encoder
 //! - `PEDALBOARD_ENCODER_STEPS`: quadrature steps per detent
 //! - `PEDALBOARD_I2C_ENCODERS`: external encoders on I2C (`seesaw`,
-//!   `seesaw-quad` or `m5-stack8`), none by default
+//!   `seesaw-quad`, `m5-stack8`, or `m5-stack8-angle` for the 8Angle's
+//!   pots), none by default
 
 use std::path::Path;
 use std::time::Duration;
@@ -398,6 +399,36 @@ mod tests {
         );
         let unknown = Hardware::from_env(env(&[("PEDALBOARD_I2C_ENCODERS", "other")]));
         assert_eq!(unknown.i2c_encoders, None);
+        let pots = Hardware::from_env(env(&[("PEDALBOARD_I2C_ENCODERS", "m5-stack8-angle")]));
+        assert_eq!(
+            pots.i2c_encoders,
+            Some(I2cEncoders::new(I2cModule::M5Stack8Angle))
+        );
+    }
+
+    #[test]
+    fn files_from_before_the_8angle_still_read() {
+        let old = r#"{"footswitches":[17,27],"encoder":null,
+            "i2c_encoders":{"module":"m5-stack8","steps":2,"reverse":true}}"#;
+        let h: Hardware = serde_json::from_str(old).unwrap();
+        assert_eq!(
+            h.i2c_encoders,
+            Some(I2cEncoders {
+                module: I2cModule::M5Stack8,
+                steps: 2,
+                reverse: true
+            })
+        );
+        let none: Hardware = serde_json::from_str(r#"{"footswitches":[],"encoder":null}"#).unwrap();
+        assert_eq!(none.i2c_encoders, None);
+        let pots: Hardware = serde_json::from_str(
+            r#"{"footswitches":[],"encoder":null,"i2c_encoders":{"module":"m5-stack8-angle"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            pots.i2c_encoders,
+            Some(I2cEncoders::new(I2cModule::M5Stack8Angle))
+        );
     }
 
     #[test]
@@ -495,6 +526,9 @@ mod tests {
         h.save(&dir).unwrap();
         assert_eq!(Hardware::load(&dir), h);
         h.i2c_encoders = Some(I2cEncoders::new(I2cModule::SeesawQuad));
+        h.save(&dir).unwrap();
+        assert_eq!(Hardware::load(&dir), h);
+        h.i2c_encoders = Some(I2cEncoders::new(I2cModule::M5Stack8Angle));
         h.save(&dir).unwrap();
         assert_eq!(Hardware::load(&dir), h);
         std::fs::write(dir.join(FILE), "{").unwrap();

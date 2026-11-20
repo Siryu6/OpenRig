@@ -20,6 +20,7 @@ export component HardwareView inherits Rectangle {
     in property <string> hardware-i2c-module: "";
     in property <int> hardware-i2c-steps: 1;
     in property <bool> hardware-i2c-reverse: false;
+    in property <bool> hardware-i2c-pots: false;    // pots: no steps per detent
     in property <string> hardware-i2c-found: "";   // boards found, or why not
     in property <string> hardware-message: "";
     callback tap-switch-changed(bool);
@@ -292,7 +293,7 @@ export component HardwareView inherits Rectangle {
                                 }
                             }
                         }
-                        SettingRow {
+                        if !root.hardware-i2c-pots: SettingRow {
                             property <bool> focused: root.encoder-what == "i2c-steps";
                             changed focused => {
                                 if (self.focused) {
@@ -339,7 +340,13 @@ export component HardwareView inherits Rectangle {
                             font-size: Theme.font-small;
                             wrap: word-wrap;
                         }
-                        Text {
+                        if root.hardware-i2c-pots: Text {
+                            text: "On SDA/SCL (GPIO 2 and 3). Pots 1-5 set the knobs of the rack's strip, pot 6 picks the strip's page, the switch turns the block on or off. A pot takes over a knob only once it reaches the knob's value: its LED is dim until then, amber after. Reverse flips the direction of the pots.";
+                            color: Theme.text-muted;
+                            font-size: Theme.font-small;
+                            wrap: word-wrap;
+                        }
+                        if !root.hardware-i2c-pots: Text {
                             text: "On SDA/SCL (GPIO 2 and 3). Encoders 1-5 turn the knobs of the rack's strip: press swaps with the value before turning, hold goes back to the default; on a list, press opens it and picks. A 6th encoder turns the strip's pages. Chain several boards with different addresses.";
                             color: Theme.text-muted;
                             font-size: Theme.font-small;
